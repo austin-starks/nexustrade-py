@@ -1,0 +1,720 @@
+{
+  "$comment": "SHARED CONFORMANCE FIXTURE. Byte-identical copies live at sdk/python/tests/conformance/ and sdk/typescript/test/conformance/; checkSdkClientParity.ts fails the build if they diverge. Each case drives a client method through a recording fake transport and pins the exact wire traffic, so the two SDKs cannot silently disagree about what they send. `method` is snake_case; the TypeScript runner camel-cases it.",
+  "cases": [
+    {
+      "name": "create_portfolio sends the book verbatim",
+      "method": "create_portfolio",
+      "input": {
+        "name": "Book",
+        "strategies": [
+          {
+            "name": "s"
+          }
+        ]
+      },
+      "idempotency_key": "book-v1",
+      "responses": [
+        {
+          "portfolio": {
+            "portfolioId": "p-1"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "portfolios",
+          "body": {
+            "name": "Book",
+            "strategies": [
+              {
+                "name": "s"
+              }
+            ]
+          },
+          "idempotency_key": "book-v1"
+        }
+      ],
+      "expected_result": {
+        "portfolioId": "p-1"
+      }
+    },
+    {
+      "name": "create_backtests passes raw API input through untouched",
+      "method": "create_backtests",
+      "input": [
+        {
+          "portfolio": {
+            "name": "Book"
+          },
+          "startDate": "2024-01-01",
+          "endDate": "2024-12-31"
+        }
+      ],
+      "idempotency_key": "bt-v1",
+      "responses": [
+        {
+          "operations": [
+            {
+              "id": "bt-1",
+              "status": "running"
+            }
+          ]
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "backtests/batch",
+          "body": {
+            "backtests": [
+              {
+                "portfolio": {
+                  "name": "Book"
+                },
+                "startDate": "2024-01-01",
+                "endDate": "2024-12-31"
+              }
+            ]
+          },
+          "idempotency_key": "bt-v1"
+        }
+      ],
+      "expected_result": [
+        {
+          "id": "bt-1",
+          "status": "running"
+        }
+      ]
+    },
+    {
+      "name": "create_backtest normalizes every generated handle arg to wire names",
+      "method": "create_backtest",
+      "input": {
+        "tool": "backtest_portfolio",
+        "portfolio": {
+          "name": "Book",
+          "strategies": [
+            {
+              "name": "s"
+            }
+          ]
+        },
+        "args": {
+          "start_date": "2024-01-01",
+          "end_date": "2024-12-31",
+          "baseline_symbol": "QQQ",
+          "interval": "1d",
+          "initial_value": 25000,
+          "generate_events": true,
+          "fee_config": {
+            "commission": 0.5
+          }
+        }
+      },
+      "idempotency_key": "bt-generated-v1",
+      "responses": [
+        {
+          "operations": [
+            {
+              "id": "bt-1"
+            }
+          ]
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "backtests/batch",
+          "body": {
+            "backtests": [
+              {
+                "portfolio": {
+                  "name": "Book",
+                  "strategies": [
+                    {
+                      "name": "s"
+                    }
+                  ]
+                },
+                "startDate": "2024-01-01",
+                "endDate": "2024-12-31",
+                "baseline": "QQQ",
+                "interval": "1d",
+                "initialValue": 25000,
+                "generateEvents": true,
+                "feeConfig": {
+                  "commission": 0.5
+                }
+              }
+            ]
+          },
+          "idempotency_key": "bt-generated-v1"
+        }
+      ],
+      "expected_result": {
+        "id": "bt-1"
+      }
+    },
+    {
+      "name": "create_backtest omits handle args that are absent",
+      "method": "create_backtest",
+      "input": {
+        "tool": "backtest_portfolio",
+        "portfolio": {
+          "name": "Book"
+        },
+        "args": {
+          "start_date": "2024-01-01"
+        }
+      },
+      "idempotency_key": "bt-sparse-v1",
+      "responses": [
+        {
+          "operations": [
+            {
+              "id": "bt-2"
+            }
+          ]
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "backtests/batch",
+          "body": {
+            "backtests": [
+              {
+                "portfolio": {
+                  "name": "Book"
+                },
+                "startDate": "2024-01-01"
+              }
+            ]
+          },
+          "idempotency_key": "bt-sparse-v1"
+        }
+      ],
+      "expected_result": {
+        "id": "bt-2"
+      }
+    },
+    {
+      "name": "create_optimization sends portfolio and args without the tool name",
+      "method": "create_optimization",
+      "input": {
+        "tool": "optimize_portfolio",
+        "portfolio": {
+          "name": "Book"
+        },
+        "args": {
+          "start_date": "2022-01-01"
+        }
+      },
+      "idempotency_key": "opt-v1",
+      "responses": [
+        {
+          "operation": {
+            "id": "opt-1",
+            "status": "running"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "optimizations",
+          "body": {
+            "portfolio": {
+              "name": "Book"
+            },
+            "args": {
+              "start_date": "2022-01-01"
+            }
+          },
+          "idempotency_key": "opt-v1"
+        }
+      ],
+      "expected_result": {
+        "id": "opt-1",
+        "status": "running"
+      }
+    },
+    {
+      "name": "portfolio jobs default missing args to an empty object",
+      "method": "create_optimization",
+      "input": {
+        "tool": "optimize_portfolio",
+        "portfolio": {
+          "name": "Book"
+        }
+      },
+      "idempotency_key": "opt-noargs-v1",
+      "responses": [
+        {
+          "operation": {
+            "id": "opt-2"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "optimizations",
+          "body": {
+            "portfolio": {
+              "name": "Book"
+            },
+            "args": {}
+          },
+          "idempotency_key": "opt-noargs-v1"
+        }
+      ],
+      "expected_result": {
+        "id": "opt-2"
+      }
+    },
+    {
+      "name": "create_walk_forward posts to the studies path",
+      "method": "create_walk_forward",
+      "input": {
+        "tool": "run_walk_forward_study",
+        "portfolio": {
+          "name": "Book"
+        },
+        "args": {
+          "global_start_date": "2022-01-01"
+        }
+      },
+      "idempotency_key": "wf-v1",
+      "responses": [
+        {
+          "operation": {
+            "id": "wf-1"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "walk-forward-studies",
+          "body": {
+            "portfolio": {
+              "name": "Book"
+            },
+            "args": {
+              "global_start_date": "2022-01-01"
+            }
+          },
+          "idempotency_key": "wf-v1"
+        }
+      ],
+      "expected_result": {
+        "id": "wf-1"
+      }
+    },
+    {
+      "name": "get_backtest reads an owner-scoped path with no body",
+      "method": "get_backtest",
+      "input": "bt-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "bt-1",
+            "status": "completed"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "bt-1",
+        "status": "completed"
+      }
+    },
+    {
+      "name": "get_optimization reads an owner-scoped path",
+      "method": "get_optimization",
+      "input": "opt-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "opt-1"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "optimizations/opt-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "opt-1"
+      }
+    },
+    {
+      "name": "get_walk_forward reads an owner-scoped path",
+      "method": "get_walk_forward",
+      "input": "wf-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "wf-1"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "walk-forward-studies/wf-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "wf-1"
+      }
+    },
+    {
+      "name": "identifiers are percent-encoded identically in both SDKs",
+      "method": "get_backtest",
+      "input": "bt 1/2?x=y&z#f+g%h!'()*~_.-",
+      "responses": [
+        {
+          "operation": {
+            "id": "weird"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt%201%2F2%3Fx%3Dy%26z%23f%2Bg%25h%21%27%28%29%2A~_.-",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "weird"
+      }
+    },
+    {
+      "name": "a non-backtest generated handle is rejected before any request",
+      "method": "create_backtests",
+      "input": [
+        {
+          "tool": "optimize_portfolio",
+          "portfolio": {},
+          "args": {}
+        }
+      ],
+      "idempotency_key": "wrong-handle",
+      "responses": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "backtest"
+      },
+      "expected_calls": []
+    },
+    {
+      "name": "a missing operation envelope raises a stable api error",
+      "method": "get_backtest",
+      "input": "bt-1",
+      "responses": [
+        {
+          "notAnOperation": true
+        }
+      ],
+      "expected_error": {
+        "kind": "api_error",
+        "code": "invalid_response"
+      },
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ]
+    },
+    {
+      "name": "a missing portfolio envelope raises a stable api error",
+      "method": "create_portfolio",
+      "input": {
+        "name": "Book"
+      },
+      "idempotency_key": "book-bad-v1",
+      "responses": [
+        {
+          "notAPortfolio": true
+        }
+      ],
+      "expected_error": {
+        "kind": "api_error",
+        "code": "invalid_response"
+      },
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "portfolios",
+          "body": {
+            "name": "Book"
+          },
+          "idempotency_key": "book-bad-v1"
+        }
+      ]
+    },
+    {
+      "name": "wait_for_backtest polls until the operation is terminal",
+      "method": "wait_for_backtest",
+      "input": "bt-9",
+      "responses": [
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "queued"
+          }
+        },
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "running"
+          }
+        },
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "completed",
+            "result": {
+              "totalReturn": 1.23
+            }
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        },
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        },
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "bt-9",
+        "kind": "backtest",
+        "status": "completed",
+        "result": {
+          "totalReturn": 1.23
+        }
+      }
+    },
+    {
+      "name": "wait_for_backtest returns immediately when already terminal",
+      "method": "wait_for_backtest",
+      "input": "bt-9",
+      "responses": [
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "completed",
+            "result": {
+              "totalReturn": 0.0
+            }
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "bt-9",
+        "kind": "backtest",
+        "status": "completed",
+        "result": {
+          "totalReturn": 0.0
+        }
+      }
+    },
+    {
+      "name": "a failed operation raises the envelope's error code",
+      "method": "wait_for_backtest",
+      "input": "bt-9",
+      "responses": [
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "running"
+          }
+        },
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "failed",
+            "error": {
+              "code": "insufficient_data",
+              "message": "no bars",
+              "retryable": false
+            }
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        },
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_error": {
+        "kind": "api_error",
+        "code": "insufficient_data"
+      }
+    },
+    {
+      "name": "a cancelled operation raises operation_cancelled",
+      "method": "wait_for_backtest",
+      "input": "bt-9",
+      "responses": [
+        {
+          "operation": {
+            "id": "bt-9",
+            "kind": "backtest",
+            "status": "cancelled"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-9",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_error": {
+        "kind": "api_error",
+        "code": "operation_cancelled"
+      }
+    },
+    {
+      "name": "wait_for_optimization polls the optimizations path",
+      "method": "wait_for_optimization",
+      "input": "opt-3",
+      "responses": [
+        {
+          "operation": {
+            "id": "opt-3",
+            "kind": "optimization",
+            "status": "running"
+          }
+        },
+        {
+          "operation": {
+            "id": "opt-3",
+            "kind": "optimization",
+            "status": "completed"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "optimizations/opt-3",
+          "body": null,
+          "idempotency_key": null
+        },
+        {
+          "method": "GET",
+          "path": "optimizations/opt-3",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "opt-3",
+        "kind": "optimization",
+        "status": "completed"
+      }
+    },
+    {
+      "name": "wait_for_walk_forward polls the studies path",
+      "method": "wait_for_walk_forward",
+      "input": "wf-4",
+      "responses": [
+        {
+          "operation": {
+            "id": "wf-4",
+            "kind": "walk_forward",
+            "status": "queued"
+          }
+        },
+        {
+          "operation": {
+            "id": "wf-4",
+            "kind": "walk_forward",
+            "status": "completed"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "walk-forward-studies/wf-4",
+          "body": null,
+          "idempotency_key": null
+        },
+        {
+          "method": "GET",
+          "path": "walk-forward-studies/wf-4",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "wf-4",
+        "kind": "walk_forward",
+        "status": "completed"
+      }
+    }
+  ]
+}
