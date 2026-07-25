@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from typing import Any, Mapping, Union
 from nexustrade.client import (
     NexusTradeApiError,
     NexusTradeClient,
+    _NO_HTTP_STATUS,
     wait_for_operation,
 )
 
@@ -40,6 +42,39 @@ class LakeQueryFailed(RuntimeError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+
+
+class LakeSubmitFailed(NexusTradeApiError):
+    """Submission failed without telling us whether the server accepted it.
+
+    Deliberately NOT a ``LakeQueryFailed``. This whole mechanism exists to stop
+    blind resubmits from double-billing, and a broad ``except LakeQueryFailed``
+    retry that re-calls ``sql()`` without a key would do exactly that. Keeping
+    it under ``NexusTradeApiError`` also preserves the behaviour callers already
+    had, since submit errors were ``NexusTradeApiError`` before this existed.
+
+    A transport error leaves the outcome unknown: the query may be queued and
+    billing, or it may never have arrived. Retrying with a NEW idempotency key
+    would launch a second paid query, so the key this attempt used is attached
+    here — retry with it and the server returns the original operation instead
+    of starting another.
+
+        try:
+            result = nt.lake.sql(sql, params)
+        except nt.lake.LakeSubmitFailed as error:
+            result = nt.lake.sql(sql, params, idempotency_key=error.idempotency_key)
+    """
+
+    def __init__(
+        self, status: int, code: str, message: str, idempotency_key: str
+    ) -> None:
+        super().__init__(
+            status,
+            code,
+            f"{message} Retry with idempotency_key={idempotency_key!r} so the "
+            "server returns the original query rather than starting a new one.",
+        )
+        self.idempotency_key = idempotency_key
 
 
 @dataclass(frozen=True)
@@ -63,6 +98,123 @@ def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
         for block in iter(lambda: handle.read(chunk_size), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+#: DuckDB types a manifest may name. Anything else is refused rather than
+#: interpolated: `type` comes off the wire and lands in SQL.
+_SIMPLE_SQL_TYPES = frozenset(
+    {
+        "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT",
+        "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT",
+        "FLOAT", "DOUBLE", "REAL",
+        "VARCHAR", "TEXT", "STRING", "BLOB", "UUID", "JSON",
+        "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "INTERVAL",
+        "TIMESTAMP WITH TIME ZONE", "TIME WITH TIME ZONE",
+    }
+)
+
+_SQL_TYPE_PATTERN = re.compile(
+    r"""^
+    (?:
+        DECIMAL\s*\(\s*\d{1,3}\s*,\s*\d{1,3}\s*\)   # DECIMAL(p,s)
+      | NUMERIC\s*\(\s*\d{1,3}\s*,\s*\d{1,3}\s*\)
+      | VARCHAR\s*\(\s*\d{1,6}\s*\)
+    )$""",
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def _safe_sql_type(raw: Any) -> str:
+    """Validate a manifest column type before it reaches SQL.
+
+    Column NAMES were quote-escaped but types were interpolated verbatim, so a
+    malformed or hostile manifest could inject SQL through `type`. Arrays and
+    nested types are allowed one level deep by recursing on the element type.
+    """
+    text = str(raw or "VARCHAR").strip()
+    upper = text.upper()
+    if upper in _SIMPLE_SQL_TYPES:
+        return upper
+    if _SQL_TYPE_PATTERN.match(text):
+        return upper
+    if upper.endswith("[]"):
+        return f"{_safe_sql_type(text[:-2])}[]"
+    # Unrecognized: fall back rather than interpolate something unvetted.
+    return "VARCHAR"
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    """Write via a temp file, flush, fsync, then replace.
+
+    The download manifest was written in place, so an interruption could leave
+    it truncated — and a corrupt manifest breaks resume for every part.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def _validated_parts(result: Mapping[str, Any]) -> list[tuple[int, str, int]]:
+    """Parse and validate the manifest's parts.
+
+    Previously indexed straight into each entry, so a malformed response raised
+    a bare KeyError/ValueError, and duplicate or non-contiguous part numbers
+    were accepted — which silently downloads the wrong set of files.
+    """
+    raw = result.get("parts")
+    if not isinstance(raw, list):
+        raise LakeQueryFailed(
+            "invalid_response", "Lake manifest parts is not a list."
+        )
+    if not raw:
+        # A query that matched no rows. Valid, and the helpers below build an
+        # empty relation from the manifest schema rather than failing.
+        return []
+
+    parsed: list[tuple[int, str, int]] = []
+    seen: set[int] = set()
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            raise LakeQueryFailed(
+                "invalid_response", "Lake manifest part is not an object."
+            )
+        try:
+            index = int(entry["part"])
+            digest = str(entry["sha256"])
+            size = int(entry["byteSize"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise LakeQueryFailed(
+                "invalid_response",
+                f"Lake manifest part is malformed: {error}",
+            ) from error
+        if index < 0 or size < 0:
+            raise LakeQueryFailed(
+                "invalid_response",
+                f"Lake manifest part {index} has a negative index or size.",
+            )
+        if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
+            raise LakeQueryFailed(
+                "invalid_response",
+                f"Lake manifest part {index} has a malformed sha256.",
+            )
+        if index in seen:
+            raise LakeQueryFailed(
+                "invalid_response", f"Lake manifest repeats part {index}."
+            )
+        seen.add(index)
+        parsed.append((index, digest, size))
+
+    parsed.sort(key=lambda item: item[0])
+    if [item[0] for item in parsed] != list(range(len(parsed))):
+        raise LakeQueryFailed(
+            "invalid_response",
+            "Lake manifest part numbers are not contiguous from 0; "
+            "downloading it would silently fetch the wrong set of files.",
+        )
+    return parsed
 
 
 def _client(client: NexusTradeClient | None) -> NexusTradeClient:
@@ -94,10 +246,14 @@ def _from_operation(
 
 @dataclass
 class LakeQueryHandle:
+    """A submitted query. `idempotency_key` is the key this submission used —
+    reuse it to re-request the same operation rather than start a new one."""
+
     id: str
     status: str
     _client: NexusTradeClient
     error: dict[str, Any] | None = None
+    idempotency_key: str | None = None
 
     def refresh(self) -> "LakeQueryHandle | LakeQueryResult":
         return get(self.id, client=self._client)
@@ -169,16 +325,11 @@ class LakeQueryResult:
             except (OSError, json.JSONDecodeError):
                 completed = {}
 
-        parts = self.result.get("parts") or []
-        if not isinstance(parts, list):
-            raise LakeQueryFailed("invalid_response", "manifest parts missing")
-
-        for part in parts:
-            if not isinstance(part, Mapping):
-                continue
-            index = int(part["part"])
-            expected_sha = str(part["sha256"])
-            expected_size = int(part["byteSize"])
+        validated = _validated_parts(self.result)
+        if not validated:
+            # Nothing to fetch, but callers expect the directory to exist.
+            return root
+        for index, expected_sha, expected_size in validated:
             final_name = f"part-{index:05d}.parquet"
             final_path = root / final_name
             entry = completed.get(final_name)
@@ -188,6 +339,10 @@ class LakeQueryResult:
                 and entry.get("sha256") == expected_sha
                 and final_path.exists()
                 and final_path.stat().st_size == expected_size
+                # Rehash before trusting it. Size plus a manifest entry accepts
+                # same-size local corruption, and the manifest is just a file we
+                # wrote — it is not evidence about the bytes on disk.
+                and _sha256_file(final_path) == expected_sha
             ):
                 continue
             self._download_part(
@@ -201,9 +356,7 @@ class LakeQueryResult:
                 "sha256": expected_sha,
                 "byteSize": expected_size,
             }
-            manifest_path.write_text(
-                json.dumps(completed, indent=2, sort_keys=True)
-            )
+            _write_json_atomic(manifest_path, completed)
         return root
 
     def _download_part(
@@ -258,12 +411,40 @@ class LakeQueryResult:
                 yield batch
 
     def duckdb_relation(self, connection: Any | None = None) -> Any:
+        """Lazy relation over the downloaded parts.
+
+        A query matching no rows produces zero parts, and globbing
+        `part-*.parquet` over an empty directory fails. The manifest still
+        carries the schema, so an empty result becomes a typed zero-row
+        relation — projections and joins against it still bind.
+        """
         import duckdb
 
-        directory = self.download()
-        glob = str(directory / "part-*.parquet")
         con = connection or duckdb.connect()
-        return con.from_parquet(glob)
+        directory = self.download()
+        files = sorted(directory.glob("part-*.parquet"))
+        if not files:
+            return con.sql(self._empty_relation_sql())
+        return con.from_parquet(str(directory / "part-*.parquet"))
+
+    def _empty_relation_sql(self) -> str:
+        columns = self.result.get("schema")
+        if not isinstance(columns, list) or not columns:
+            # No schema to honour; a bare empty relation is still better than
+            # a glob error, but callers cannot project against it.
+            return "SELECT 1 WHERE FALSE"
+        selected: list[str] = []
+        for column in columns:
+            if not isinstance(column, Mapping):
+                continue
+            name = str(column.get("name", "")).replace('"', '""')
+            sql_type = _safe_sql_type(column.get("type"))
+            if not name:
+                continue
+            selected.append(f'CAST(NULL AS {sql_type}) AS "{name}"')
+        if not selected:
+            return "SELECT 1 WHERE FALSE"
+        return f"SELECT {', '.join(selected)} WHERE FALSE"
 
     def to_pandas(
         self,
@@ -337,11 +518,33 @@ def submit(
     }
     if limits:
         body["limits"] = limits
+    # Minted BEFORE the request so a failure can hand it back. Generating a
+    # fresh uuid on every call meant a lost response could not be retried
+    # safely: the second attempt looked like a new query and was billed as one.
     key = idempotency_key or f"lake-{uuid.uuid4()}"
-    operation = nt.create_lake_query(body, idempotency_key=key)
+    try:
+        operation = nt.create_lake_query(body, idempotency_key=key)
+    except NexusTradeApiError as error:
+        # Only wrap outcomes that are genuinely UNKNOWN: the request never
+        # reached the API (status 0), or the server failed after possibly
+        # accepting it (5xx). A 4xx was rejected outright — telling the caller
+        # to "retry with this key" would be wrong, and wrapping it would strip
+        # the status they need to tell auth from validation.
+        if error.status == _NO_HTTP_STATUS or error.status >= 500:
+            raise LakeSubmitFailed(
+                error.status, error.code, error.message, key
+            ) from error
+        raise
+
     handle = _from_operation(operation, nt)
     if isinstance(handle, LakeQueryResult):
-        return LakeQueryHandle(id=handle.id, status=handle.status, _client=nt)
+        return LakeQueryHandle(
+            id=handle.id,
+            status=handle.status,
+            _client=nt,
+            idempotency_key=key,
+        )
+    handle.idempotency_key = key
     return handle
 
 
@@ -354,21 +557,51 @@ def get(
     return _from_operation(nt.get_lake_query(query_id), nt)
 
 
+#: How long the client keeps polling beyond the server's execution budget, to
+#: cover queue time plus a little slack. A query can sit queued behind others;
+#: that wait is not part of its execution allowance.
+DEFAULT_QUEUE_ALLOWANCE_SECONDS = 300
+
+
 def sql(
     query: str,
     params: Sequence[LakeBindValue] | None = None,
     *,
     wait: bool = True,
-    timeout_seconds: int | None = None,
+    query_timeout_seconds: int | None = None,
+    wait_timeout_seconds: float | None = None,
     max_rows: int | None = None,
     max_result_bytes: int | None = None,
     idempotency_key: str | None = None,
     client: NexusTradeClient | None = None,
+    timeout_seconds: int | None = None,
 ) -> LakeQueryHandle | LakeQueryResult:
+    """Submit a lake query and, by default, wait for it.
+
+    Two different clocks, deliberately separate:
+
+    * ``query_timeout_seconds`` — how long the SERVER may spend executing.
+    * ``wait_timeout_seconds``  — how long THIS CALL keeps polling.
+
+    They were one value, which meant queue time was charged against the client's
+    patience but not the server's budget: a query that waited two minutes to
+    start would have the caller give up while the server was still well inside
+    its allowance. Waiting now defaults to the execution budget plus
+    ``DEFAULT_QUEUE_ALLOWANCE_SECONDS``.
+
+    A client-side timeout never cancels the query. The durable id remains valid,
+    so ``nt.lake.get(id)`` resumes.
+
+    ``timeout_seconds`` is the old single-clock name, kept working as the server
+    budget.
+    """
+    if timeout_seconds is not None and query_timeout_seconds is None:
+        query_timeout_seconds = timeout_seconds
+
     handle = submit(
         query,
         params,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=query_timeout_seconds,
         max_rows=max_rows,
         max_result_bytes=max_result_bytes,
         idempotency_key=idempotency_key,
@@ -376,11 +609,12 @@ def sql(
     )
     if not wait:
         return handle
-    return handle.wait(
-        timeout_seconds=float(timeout_seconds)
-        if timeout_seconds is not None
-        else None
-    )
+
+    if wait_timeout_seconds is None and query_timeout_seconds is not None:
+        wait_timeout_seconds = float(
+            query_timeout_seconds + DEFAULT_QUEUE_ALLOWANCE_SECONDS
+        )
+    return handle.wait(timeout_seconds=wait_timeout_seconds)
 
 
 def catalog(*, client: NexusTradeClient | None = None) -> list[LakeTable]:
@@ -413,11 +647,13 @@ def describe(
 
 
 __all__ = [
+    "DEFAULT_QUEUE_ALLOWANCE_SECONDS",
     "LakeBindValue",
     "LakeQueryFailed",
     "LakeQueryHandle",
     "LakeQueryResult",
     "LakeResultLimitError",
+    "LakeSubmitFailed",
     "LakeTable",
     "catalog",
     "describe",

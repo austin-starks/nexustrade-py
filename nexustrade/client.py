@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_BYTES = 64 * 1024
@@ -116,6 +116,7 @@ def _urlopen(
     )
 
 
+@runtime_checkable
 class Transport(Protocol):
     def request(
         self,
@@ -125,6 +126,26 @@ class Transport(Protocol):
         body: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class BinaryTransport(Transport, Protocol):
+    """A transport that can also return raw bytes.
+
+    Lake result parts are Parquet, so they do not fit ``Transport``, which is a
+    JSON contract. Declaring the capability lets custom and test transports
+    implement downloads against a typed interface instead of being probed with
+    ``hasattr``. Mirrors ``BinaryTransport`` in the TypeScript SDK.
+    """
+
+    def request_bytes(
+        self,
+        method: str,
+        path: str,
+        *,
+        byte_range: tuple[int, int] | None = None,
+        max_bytes: int = _MAX_PART_BYTES,
+    ) -> bytes: ...
 
 
 @dataclass(frozen=True)
@@ -649,7 +670,7 @@ class NexusTradeClient:
     ) -> bytes:
         """Download one Parquet part (optionally via HTTP Range). Bound every read."""
         transport = self._transport
-        if not hasattr(transport, "request_bytes"):
+        if not isinstance(transport, BinaryTransport):
             raise NexusTradeApiError(
                 _NO_HTTP_STATUS,
                 "unsupported_transport",
