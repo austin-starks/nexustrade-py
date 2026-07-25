@@ -37,7 +37,98 @@ _MAX_PART_READ = 64 * 1024 * 1024
 # which is a worse outcome than a generous ceiling: the guard exists to stop a
 # runaway result from OOMing the sandbox, and it does that just as well with a
 # default. Callers who want a tighter budget still pass `max_bytes`.
-DEFAULT_TO_PANDAS_MAX_BYTES = 512 * 1024 * 1024
+# Fraction of container memory a single DataFrame may claim by default.
+#
+# The guard is not what decides whether a result fits — a multi-GB frame cannot
+# live in a 1 GiB sandbox either way. It decides what you SEE when it does not:
+# a LakeResultLimitError naming the size and pointing at iter_batches(), rather
+# than an OOM kill that takes the session and its work with it and explains
+# nothing.
+#
+# A fixed ceiling was wrong in both directions — too generous on a 1 GiB tier,
+# and it rejected perfectly reasonable multi-GB options frames on a 16 GiB one.
+# A third leaves headroom for pandas, which commonly needs 2-3x the final frame
+# size while constructing it.
+_TO_PANDAS_MEMORY_FRACTION = 1 / 3
+
+# Used only when the container's limit cannot be read.
+_TO_PANDAS_FALLBACK_MAX_BYTES = 512 * 1024 * 1024
+
+_CGROUP_LIMIT_PATHS = (
+    "/sys/fs/cgroup/memory.max",  # cgroup v2
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroup v1
+)
+
+
+def _container_memory_bytes() -> int | None:
+    """The container's memory limit, or None outside a limited container."""
+    for path in _CGROUP_LIMIT_PATHS:
+        try:
+            with open(path) as handle:
+                raw = handle.read().strip()
+        except OSError:
+            continue
+        if raw == "max":  # cgroup v2 for "unlimited"
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        # cgroup v1 reports a sentinel near 2^63 when unlimited.
+        if value <= 0 or value >= 1 << 62:
+            continue
+        return value
+    return None
+
+
+def default_to_pandas_max_bytes() -> int:
+    """Default in-memory ceiling for ``to_pandas``, scaled to the container."""
+    limit = _container_memory_bytes()
+    if limit is None:
+        return _TO_PANDAS_FALLBACK_MAX_BYTES
+    return max(64 * 1024 * 1024, int(limit * _TO_PANDAS_MEMORY_FRACTION))
+
+
+def _human_bytes(value: int) -> str:
+    """Bytes as something a reader can act on. `1431655765` tells nobody much."""
+    size = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if abs(size) < 1024 or unit == "GiB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} GiB"
+
+
+def _limit_remedy(max_bytes: int) -> str:
+    """Say where the budget came from and what can actually be done about it.
+
+    An agent that sees only `max_bytes=1431655765` cannot tell whether that is a
+    tunable knob, a container property, or a bug. Naming the container makes the
+    next move obvious.
+
+    The escalation named here is `memory`, not a different profile: `memory`
+    raises the RAM tier while keeping the lean compute image and its warm pool,
+    whereas switching profiles would also swap the image and cold-start.
+    """
+    container = _container_memory_bytes()
+    if container is None:
+        return (
+            "Aggregate with duckdb_relation() or stream with iter_batches(), or "
+            "raise the ceiling with to_pandas(max_bytes=...)."
+        )
+    return (
+        f"That budget is {_TO_PANDAS_MEMORY_FRACTION:.0%} of this sandbox's "
+        f"{_human_bytes(container)} of RAM, leaving room for pandas to build the "
+        "frame. Prefer duckdb_relation() to aggregate server-side or "
+        "iter_batches() to stream in constant memory. A running job cannot "
+        "resize itself, so if the whole frame is genuinely needed, the work must "
+        "be re-submitted with run_compute memory='large' (16 GiB). Only override "
+        "with to_pandas(max_bytes=...) if you know the frame really fits."
+    )
+
+
+# Kept as a module attribute for callers that want the number without a call.
+DEFAULT_TO_PANDAS_MAX_BYTES = default_to_pandas_max_bytes()
 
 # Where downloaded parts land when the caller names no directory. Cwd-relative
 # is the right default for someone running a script locally, but it is the
@@ -474,9 +565,19 @@ class LakeQueryResult:
     def to_pandas(
         self,
         *,
-        max_bytes: int = DEFAULT_TO_PANDAS_MAX_BYTES,
+        max_bytes: int | None = None,
         max_rows: int | None = None,
     ) -> Any:
+        """Materialize as a DataFrame, bounded by container memory.
+
+        ``max_bytes`` defaults to a third of the container's memory limit, so a
+        16 GiB sandbox will happily build a multi-GB options frame while a 1 GiB
+        one refuses early. Pass an explicit value to override, or use
+        ``iter_batches`` / ``duckdb_relation`` to avoid materializing at all.
+        """
+        # Resolved per call, not at import: the same wheel runs on every tier.
+        if max_bytes is None:
+            max_bytes = default_to_pandas_max_bytes()
         if not isinstance(max_bytes, int) or max_bytes <= 0:
             raise ValueError("max_bytes must be a positive int")
         if max_rows is not None and self.row_count > max_rows:
@@ -489,8 +590,9 @@ class LakeQueryResult:
         # no pyarrow.
         if self.byte_size > max_bytes:
             raise LakeResultLimitError(
-                f"Result is {self.byte_size} compressed bytes; max_bytes={max_bytes}. "
-                "Use iter_batches() or duckdb_relation() instead."
+                f"Result is {_human_bytes(self.byte_size)} compressed, over the "
+                f"{_human_bytes(max_bytes)} in-memory budget. "
+                + _limit_remedy(max_bytes)
             )
 
         # Then bound the size of the DataFrame itself. `byte_size` is
@@ -510,9 +612,9 @@ class LakeQueryResult:
                     uncompressed += row_group.column(column).total_uncompressed_size
         if uncompressed > max_bytes:
             raise LakeResultLimitError(
-                f"Result expands to ~{uncompressed} bytes in memory "
-                f"({self.byte_size} compressed); max_bytes={max_bytes}. "
-                "Use iter_batches() or duckdb_relation() instead."
+                f"Result expands to ~{_human_bytes(uncompressed)} in memory "
+                f"({_human_bytes(self.byte_size)} compressed), over the "
+                f"{_human_bytes(max_bytes)} budget. " + _limit_remedy(max_bytes)
             )
 
         relation = self.duckdb_relation()

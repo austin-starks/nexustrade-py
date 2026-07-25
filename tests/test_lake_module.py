@@ -76,21 +76,46 @@ class LakePackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             result.to_pandas(max_bytes=0)
 
-    def test_to_pandas_max_bytes_defaults_but_still_bounds(self) -> None:
-        # The obvious call must work; the guard must still be in force.
-        default = inspect.signature(
-            nt.lake.LakeQueryResult.to_pandas
-        ).parameters["max_bytes"].default
-        self.assertEqual(default, nt.lake.DEFAULT_TO_PANDAS_MAX_BYTES)
-        self.assertIsInstance(default, int)
-        self.assertGreater(default, 0)
+    def test_to_pandas_bound_scales_with_container_memory(self) -> None:
+        # A constant ceiling was wrong in both directions: too generous on a
+        # 1 GiB tier, and it rejected reasonable multi-GB frames on a 16 GiB one.
+        with mock.patch.object(nt.lake, "_container_memory_bytes", lambda: None):
+            self.assertEqual(
+                nt.lake.default_to_pandas_max_bytes(),
+                nt.lake._TO_PANDAS_FALLBACK_MAX_BYTES,
+            )
+        with mock.patch.object(
+            nt.lake, "_container_memory_bytes", lambda: 1024 * 1024 * 1024
+        ):
+            small = nt.lake.default_to_pandas_max_bytes()
+        with mock.patch.object(
+            nt.lake, "_container_memory_bytes", lambda: 16 * 1024 * 1024 * 1024
+        ):
+            large = nt.lake.default_to_pandas_max_bytes()
+        # Headroom for pandas' 2-3x construction spike on the small tier...
+        self.assertLess(small, 1024 * 1024 * 1024 // 2)
+        # ...and enough room for a multi-GB options frame on the large one.
+        self.assertGreater(large, 4 * 1024 * 1024 * 1024)
 
+    def test_to_pandas_resolves_the_default_per_call(self) -> None:
+        # Bound at import time, the same wheel would carry one tier's ceiling
+        # onto every other tier.
+        self.assertIsNone(
+            inspect.signature(nt.lake.LakeQueryResult.to_pandas)
+            .parameters["max_bytes"]
+            .default
+        )
+
+    def test_to_pandas_still_bounds_with_no_explicit_limit(self) -> None:
+        # Pinned to a known container size so the assertion does not depend on
+        # whatever machine happens to run the suite.
+        bound = 1024 * 1024 * 1024 // 3
         oversized = nt.lake.LakeQueryResult(
             id="lq_test",
             status="completed",
             result={
                 "rowCount": 1,
-                "byteSize": nt.lake.DEFAULT_TO_PANDAS_MAX_BYTES + 1,
+                "byteSize": bound * 4,
                 "parts": [],
                 "schema": [],
                 "format": "parquet",
@@ -101,8 +126,11 @@ class LakePackagingTests(unittest.TestCase):
             },
             _client=object(),  # type: ignore[arg-type]
         )
-        with self.assertRaises(nt.lake.LakeResultLimitError):
-            oversized.to_pandas()
+        with mock.patch.object(
+            nt.lake, "_container_memory_bytes", lambda: 1024 * 1024 * 1024
+        ):
+            with self.assertRaises(nt.lake.LakeResultLimitError):
+                oversized.to_pandas()
 
     def test_result_limit_error_on_byte_bound(self) -> None:
         result = nt.lake.LakeQueryResult(
