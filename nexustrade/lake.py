@@ -32,9 +32,16 @@ LakeBindValue = Union[
 
 _MAX_PART_READ = 64 * 1024 * 1024
 
+# Bound `to_pandas` by default rather than requiring the caller to name one.
+# A required keyword made the obvious call — `res.to_pandas()` — a TypeError,
+# which is a worse outcome than a generous ceiling: the guard exists to stop a
+# runaway result from OOMing the sandbox, and it does that just as well with a
+# default. Callers who want a tighter budget still pass `max_bytes`.
+DEFAULT_TO_PANDAS_MAX_BYTES = 512 * 1024 * 1024
+
 
 class LakeResultLimitError(RuntimeError):
-    """Raised when ``to_pandas`` would exceed the caller-provided bound."""
+    """Raised when ``to_pandas`` would exceed the bound in force."""
 
 
 class LakeQueryFailed(RuntimeError):
@@ -449,7 +456,7 @@ class LakeQueryResult:
     def to_pandas(
         self,
         *,
-        max_bytes: int,
+        max_bytes: int = DEFAULT_TO_PANDAS_MAX_BYTES,
         max_rows: int | None = None,
     ) -> Any:
         if not isinstance(max_bytes, int) or max_bytes <= 0:

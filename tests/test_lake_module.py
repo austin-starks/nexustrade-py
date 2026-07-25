@@ -51,6 +51,34 @@ class LakePackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             result.to_pandas(max_bytes=0)
 
+    def test_to_pandas_max_bytes_defaults_but_still_bounds(self) -> None:
+        # The obvious call must work; the guard must still be in force.
+        default = inspect.signature(
+            nt.lake.LakeQueryResult.to_pandas
+        ).parameters["max_bytes"].default
+        self.assertEqual(default, nt.lake.DEFAULT_TO_PANDAS_MAX_BYTES)
+        self.assertIsInstance(default, int)
+        self.assertGreater(default, 0)
+
+        oversized = nt.lake.LakeQueryResult(
+            id="lq_test",
+            status="completed",
+            result={
+                "rowCount": 1,
+                "byteSize": nt.lake.DEFAULT_TO_PANDAS_MAX_BYTES + 1,
+                "parts": [],
+                "schema": [],
+                "format": "parquet",
+                "engine": "motherduck",
+                "fallbackUsed": False,
+                "catalogVersion": "x",
+                "expiresAt": "2026-07-25T00:00:00.000Z",
+            },
+            _client=object(),  # type: ignore[arg-type]
+        )
+        with self.assertRaises(nt.lake.LakeResultLimitError):
+            oversized.to_pandas()
+
     def test_result_limit_error_on_byte_bound(self) -> None:
         result = nt.lake.LakeQueryResult(
             id="lq_test",
