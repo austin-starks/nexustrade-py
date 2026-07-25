@@ -39,6 +39,21 @@ _MAX_PART_READ = 64 * 1024 * 1024
 # default. Callers who want a tighter budget still pass `max_bytes`.
 DEFAULT_TO_PANDAS_MAX_BYTES = 512 * 1024 * 1024
 
+# Where downloaded parts land when the caller names no directory. Cwd-relative
+# is the right default for someone running a script locally, but it is the
+# wrong one inside a compute sandbox: cwd there is /work, and /work is tarred
+# whole into the pause checkpoint against a 1 GiB cap. Cached Parquet is the
+# last thing worth preserving that way — results are durable server-side and
+# re-fetchable by query id, so a resumed session should just download again.
+# The sandbox image sets this variable to a path outside /work.
+LAKE_CACHE_DIR_ENV = "NEXUSTRADE_LAKE_CACHE_DIR"
+DEFAULT_LAKE_CACHE_DIR = "lake-results"
+
+
+def _default_download_root() -> Path:
+    configured = os.environ.get(LAKE_CACHE_DIR_ENV, "").strip()
+    return Path(configured or DEFAULT_LAKE_CACHE_DIR)
+
 
 class LakeResultLimitError(RuntimeError):
     """Raised when ``to_pandas`` would exceed the bound in force."""
@@ -319,10 +334,13 @@ class LakeQueryResult:
     ) -> Path:
         """Download Parquet parts under ``directory / <query_id>``.
 
-        ``directory`` defaults to ``./lake-results`` (cwd-relative). Pass an
-        explicit path in the sandbox if you want ``/work/...``.
+        ``directory`` defaults to ``./lake-results`` (cwd-relative), or to
+        ``$NEXUSTRADE_LAKE_CACHE_DIR`` when that is set — which is how the
+        compute sandbox keeps cached Parquet out of ``/work``.
         """
-        root = Path(directory if directory is not None else "lake-results") / self.id
+        root = (
+            Path(directory) if directory is not None else _default_download_root()
+        ) / self.id
         root.mkdir(parents=True, exist_ok=True)
         manifest_path = root / "download_manifest.json"
         completed: dict[str, Any] = {}

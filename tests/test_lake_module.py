@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import os
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import nexustrade as nt
 from nexustrade.client import wait_for_operation
@@ -30,6 +33,28 @@ class LakePackagingTests(unittest.TestCase):
     def test_download_default_is_cwd_relative(self) -> None:
         params = inspect.signature(nt.lake.LakeQueryResult.download).parameters
         self.assertIsNone(params["directory"].default)
+
+    def test_download_root_honours_cache_dir_env(self) -> None:
+        # Cwd-relative for a local script; redirected inside the sandbox, whose
+        # cwd is /work and whose /work is tarred whole into the pause checkpoint.
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(nt.lake.LAKE_CACHE_DIR_ENV, None)
+            self.assertEqual(
+                nt.lake._default_download_root(),
+                Path(nt.lake.DEFAULT_LAKE_CACHE_DIR),
+            )
+        with mock.patch.dict(
+            os.environ, {nt.lake.LAKE_CACHE_DIR_ENV: "/tmp/nexustrade-lake"}
+        ):
+            self.assertEqual(
+                nt.lake._default_download_root(), Path("/tmp/nexustrade-lake")
+            )
+        # An empty/whitespace value must not silently become the cwd.
+        with mock.patch.dict(os.environ, {nt.lake.LAKE_CACHE_DIR_ENV: "   "}):
+            self.assertEqual(
+                nt.lake._default_download_root(),
+                Path(nt.lake.DEFAULT_LAKE_CACHE_DIR),
+            )
 
     def test_to_pandas_requires_positive_max_bytes(self) -> None:
         result = nt.lake.LakeQueryResult(
