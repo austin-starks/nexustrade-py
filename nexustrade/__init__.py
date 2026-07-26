@@ -14,6 +14,7 @@ from importlib.util import find_spec
 from typing import Any
 
 from nexustrade import portfolio as _portfolio
+from nexustrade.agent import AgentEvent, AgentRun
 from nexustrade.client import (
     HttpTransport,
     NexusTradeApiError,
@@ -25,6 +26,8 @@ from nexustrade.portfolio import *
 
 __all__ = [
     *_portfolio.__all__,
+    "AgentEvent",
+    "AgentRun",
     "HttpTransport",
     "NexusTradeApiError",
     "NexusTradeClient",

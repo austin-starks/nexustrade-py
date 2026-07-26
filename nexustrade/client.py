@@ -15,9 +15,12 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from nexustrade.env import environment_value, load_dotenv_values
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from nexustrade.agent import AgentRun
 
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_BYTES = 64 * 1024
@@ -498,6 +501,75 @@ class NexusTradeClient:
                 "Single backtest response returned the wrong operation count.",
             )
         return operations[0]
+
+    def create_agent(
+        self,
+        prompt: str,
+        *,
+        idempotency_key: str,
+        max_iterations: int | None = None,
+    ) -> "AgentRun":
+        """Start an agent run and return an iterable handle.
+
+        Unlike the other job kinds this is not fire-and-poll: iterate the run to
+        receive its events, and answer it when it asks. See ``AgentRun``.
+        """
+        from nexustrade.agent import AgentRun  # local: breaks an import cycle
+
+        body: dict[str, Any] = {"prompt": prompt}
+        if max_iterations is not None:
+            body["maxIterations"] = max_iterations
+        response = self._transport.request(
+            "POST",
+            "agents",
+            body=body,
+            idempotency_key=idempotency_key,
+        )
+        agent = response.get("agent")
+        if not isinstance(agent, dict) or not agent.get("id"):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Agent response is missing agent.",
+            )
+        return AgentRun(
+            id=str(agent["id"]),
+            _client=self,
+            status=str(agent.get("status") or "initializing"),
+        )
+
+    def attach_agent(self, agent_id: str, *, cursor: str | None = None) -> "AgentRun":
+        """Reattach to a run already in flight.
+
+        The run lives server-side and bills whether or not anyone is listening,
+        so a dropped connection must not orphan it. Omit ``cursor`` to replay
+        from the beginning; events are durable, so replay is exact.
+        """
+        from nexustrade.agent import AgentRun  # local: breaks an import cycle
+
+        agent = self.get_agent(agent_id)
+        run = AgentRun(
+            id=str(agent.get("id") or agent_id),
+            _client=self,
+            status=str(agent.get("status") or "initializing"),
+            terminal=bool(agent.get("terminal")),
+        )
+        run._cursor = cursor
+        return run
+
+    def get_agent(self, agent_id: str) -> dict[str, Any]:
+        response = self._transport.request(
+            "GET",
+            f"agents/{urllib.parse.quote(agent_id, safe='')}",
+        )
+        agent = response.get("agent")
+        if not isinstance(agent, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Agent response is missing agent.",
+            )
+        return agent
 
     def get_backtest(self, backtest_id: str) -> dict[str, Any]:
         response = self._transport.request(

@@ -192,6 +192,35 @@ Always parameterize with `?` rather than interpolating into the SQL string.
 Requires the `[lake]` extra.
 </details>
 
+<details>
+<summary><b>Run an agent</b></summary>
+
+Agents are the one job kind that is NOT fire-and-poll. Three states —
+`pending_plan_approval`, `pending_action_approval`, `awaiting_user_input` — are
+ones the run cannot leave on its own, so the caller is the approver.
+
+```python
+run = nt.create_agent("Find momentum names in the S&P 500",
+                      idempotency_key="momentum-scan-v1")
+
+for event in run:
+    print(event.text)
+    if event.needs_approval:
+        run.approve()          # or run.reject()
+    elif event.needs_input:
+        run.say("focus on semis")
+
+print(run.status)
+```
+
+Iterating blocks. If you never answer a blocked run, iteration raises
+`agent_awaiting_input` rather than spinning silently — the run keeps going
+server-side, so reattach with `nt.attach_agent(run.id)`.
+
+Approving can place orders, so it needs the `trade` scope; everything else
+needs `write`. Agent runs are unavailable to `run_compute` sandbox code.
+</details>
+
 ## Errors
 
 All failures raise `NexusTradeApiError` with a stable `.status`, `.code`, and
@@ -215,7 +244,6 @@ Not in this SDK. Do not attempt to reach them through it:
 
 - **Screener** — MCP only.
 - **Live trading and order placement** — deliberately excluded.
-- **Agent runs** — the NexusTrade agent API is not exposed here yet.
 
 ## Verifying your work
 
