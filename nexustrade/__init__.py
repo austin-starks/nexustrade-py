@@ -2,7 +2,7 @@
 
 The authoring/API surface has no third-party runtime dependencies. Analytics,
 lake, and compute-host helpers live in submodules and are resolved lazily, so
-``pip install nexustrade-sdk`` remains useful outside the compute image.
+``pip install nexustrade`` remains useful outside the compute image.
 
 Modules named in ``_SANDBOX_ONLY_MODULES`` ship only inside the NexusTrade
 compute sandbox, which overlays them into this package at image build time.
@@ -58,6 +58,7 @@ _LAZY_EXPORTS = {
     # `(module, None)` exposes the SUBMODULE itself, so `nt.lake.sql(...)`
     # resolves lazily without making duckdb a base-install dependency.
     "lake": ("nexustrade.lake", None),
+    "stats": ("nexustrade.stats", None),
     "flush_requests": ("nexustrade.host", "flush_requests"),
     "gateway_chat": ("nexustrade.host", "gateway_chat"),
     "gateway_chat_json": ("nexustrade.host", "gateway_chat_json"),
@@ -124,7 +125,7 @@ _LAZY_EXPORTS = {
 # ``__all__`` deliberately excludes ``_LAZY_EXPORTS``. ``import *`` resolves
 # every name in ``__all__`` eagerly, so listing sandbox-only and [stats]-only
 # helpers there would make ``from nexustrade import *`` raise on an ordinary
-# ``pip install nexustrade-sdk``. They stay reachable by attribute access
+# ``pip install nexustrade``. They stay reachable by attribute access
 # (``nt.search``) and by ``from nexustrade import search``, which is how the
 # compute sandbox has always used them — ``__getattr__`` serves both.
 
@@ -164,7 +165,7 @@ def __getattr__(name: str) -> Any:
         raise AttributeError(
             f"'{name}' comes from {module_name}, whose optional dependencies "
             f"are not installed ({error}). Install them with: "
-            f"pip install 'nexustrade-sdk[{extra}]'"
+            f"pip install 'nexustrade[{extra}]'"
         ) from error
     value = module if attribute is None else getattr(module, attribute)
     globals()[name] = value

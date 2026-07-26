@@ -4,19 +4,19 @@ Typed portfolio authoring, backtesting, and optimization for
 [NexusTrade](https://nexustrade.io).
 
 ```bash
-pip install nexustrade-sdk
+pip install nexustrade
 ```
 
 The base install is stdlib-only. Optional analytics helpers:
 
 ```bash
-pip install 'nexustrade-sdk[stats]'
+pip install 'nexustrade[stats]'
 ```
 
 Lake SQL and local Parquet/DuckDB helpers:
 
 ```bash
-pip install 'nexustrade-sdk[lake]'
+pip install 'nexustrade[lake]'
 ```
 
 ## Quickstart

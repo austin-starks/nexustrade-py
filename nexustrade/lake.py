@@ -2,7 +2,7 @@
 
 HTTP submit/get/catalog live on ``NexusTradeClient``. This module is the
 ergonomic layer plus local analysis helpers (``duckdb_relation``,
-``iter_batches``, ``to_pandas``), which require ``nexustrade-sdk[lake]``.
+``iter_batches``, ``to_pandas``), which require ``nexustrade[lake]``.
 
 Results are durable Parquet parts — never an implicit pandas DataFrame.
 """

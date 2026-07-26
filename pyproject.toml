@@ -3,7 +3,7 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nexustrade-sdk"
+name = "nexustrade"
 version = "0.1.0"
 description = "Typed Python SDK for NexusTrade portfolio authoring, backtesting, and optimization"
 readme = "README.md"
@@ -29,7 +29,7 @@ dependencies = []
 [project.optional-dependencies]
 # Exact pins, deliberately. An unbounded range lets a future release — or a
 # compromised one — install itself into anyone who runs `pip install
-# 'nexustrade-sdk[stats]'`. These four versions all support the full
+# 'nexustrade[stats]'`. These four versions all support the full
 # requires-python range (3.10-3.13).
 #
 # Pins choose the version; requirements-stats.lock verifies the BYTES with
@@ -56,7 +56,7 @@ stats = [
 
 [project.urls]
 Homepage = "https://nexustrade.io"
-Repository = "https://github.com/austin-starks/nexustrade-sdk-py"
+Repository = "https://github.com/austin-starks/nexustrade-py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nexustrade"]
@@ -69,4 +69,13 @@ include = [
   "LICENSE",
   "requirements-lake.lock",
   "requirements-stats.lock",
+]
+# `include` alone did not keep a local virtualenv out of the sdist — a build run
+# after `make test-sdk-python-stats` shipped 12MB of vendored numpy/scipy test
+# data. The venv now lives outside this directory AND is excluded here, because
+# a PyPI version can never be re-uploaded to correct it.
+exclude = [
+  ".venv*",
+  "**/__pycache__",
+  "dist",
 ]

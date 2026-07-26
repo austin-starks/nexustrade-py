@@ -135,12 +135,30 @@ class PackageExportTests(unittest.TestCase):
         self.assertTrue(hasattr(nt.lake, "sql"))
 
     def test_missing_extra_names_the_extra_to_install(self) -> None:
-        # Each optional module names ITS extra, not a hardcoded one. stats
-        # imports pandas at module level, so it fails at attribute access.
-        for name, extra in [("spec_curve", "stats")]:
-            with self.assertRaises(AttributeError) as raised:
-                getattr(nt, name)
-            self.assertIn(extra, str(raised.exception))
+        # Each optional module names ITS extra, not a hardcoded one.
+        #
+        # The failure is SIMULATED rather than read off the environment:
+        # `make test-sdk-python-stats` installs numpy, so asserting on a real
+        # import error passed only in the suite that never had the extra —
+        # and failed the one release gate that does.
+        for name, extra in [("spec_curve", "stats"), ("lake", "lake")]:
+            # __getattr__ caches into globals(), so a name another test already
+            # resolved would never reach the branch under test.
+            nt.__dict__.pop(name, None)
+            self.addCleanup(lambda cached=name: nt.__dict__.pop(cached, None))
+            with mock.patch.object(
+                nt,
+                "import_module",
+                side_effect=ImportError("No module named 'absent'"),
+            ):
+                with self.assertRaises(AttributeError) as raised:
+                    getattr(nt, name)
+            self.assertIn(f"nexustrade[{extra}]", str(raised.exception))
+
+    def test_stats_submodule_is_reachable_as_an_attribute(self) -> None:
+        # nt.lake resolved but nt.stats raised a bare "no attribute" because
+        # only its individual FUNCTIONS were mapped. Both are submodules.
+        self.assertEqual(nt._LAZY_EXPORTS["stats"], ("nexustrade.stats", None))
 
 
 if __name__ == "__main__":
