@@ -128,17 +128,48 @@ def load_dotenv_values(start: Path | None = None) -> dict[str, str]:
         return {}
 
 
-def environment_value(name: str, dotenv: dict[str, str] | None = None) -> str | None:
+class LazyDotenv:
+    """Reads the ``.env`` at most once, and only if something actually needs it.
+
+    The file walk is skipped entirely when the environment already answers —
+    which is always the case inside ``run_compute``, where the platform injects
+    the variables. Constructing a client should not stat up to 32 directories
+    to discover a file it was never going to consult.
+    """
+
+    __slots__ = ("_values", "_start")
+
+    def __init__(self, start: Path | None = None) -> None:
+        self._values: dict[str, str] | None = None
+        self._start = start
+
+    def get(self, name: str) -> str | None:
+        if self._values is None:
+            self._values = load_dotenv_values(self._start)
+        return self._values.get(name)
+
+    @property
+    def loaded(self) -> bool:
+        """True once the file has actually been read. Used by tests."""
+        return self._values is not None
+
+
+def environment_value(
+    name: str,
+    dotenv: "LazyDotenv | dict[str, str] | None" = None,
+) -> str | None:
     """``os.environ`` first, then ``.env``. Blank is treated as absent."""
     live = os.environ.get(name)
     if live and live.strip():
         return live
-    values = load_dotenv_values() if dotenv is None else dotenv
-    fallback = values.get(name)
+    if dotenv is None:
+        dotenv = LazyDotenv()
+    fallback = dotenv.get(name)
     return fallback if fallback and fallback.strip() else None
 
 
 __all__ = [
+    "LazyDotenv",
     "dotenv_disabled",
     "environment_value",
     "find_dotenv",

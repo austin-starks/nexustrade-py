@@ -137,5 +137,35 @@ class DisableSwitchTests(unittest.TestCase):
                 self.assertFalse(dotenv_disabled())
 
 
+class LazinessTests(unittest.TestCase):
+    def test_does_not_touch_the_filesystem_when_the_environment_answers(self) -> None:
+        # run_compute always has both variables injected. Constructing a client
+        # there must not walk up to 32 directories looking for a file it will
+        # never consult.
+        from nexustrade.env import LazyDotenv
+
+        lazy = LazyDotenv()
+        with mock.patch.dict(os.environ, {"NEXUSTRADE_API_KEY": "sk-injected"}):
+            self.assertEqual(
+                environment_value("NEXUSTRADE_API_KEY", lazy), "sk-injected"
+            )
+        self.assertFalse(lazy.loaded, "the .env must not have been read")
+
+    def test_reads_once_and_memoizes(self) -> None:
+        from nexustrade.env import LazyDotenv
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            (root / ".env").write_text("A=1\nB=2\n")
+            lazy = LazyDotenv(root)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(lazy.get("A"), "1")
+                self.assertTrue(lazy.loaded)
+                (root / ".env").write_text("A=changed\n")
+                # Memoized: a second lookup must not re-read the file.
+                self.assertEqual(lazy.get("A"), "1")
+                self.assertEqual(lazy.get("B"), "2")
+
+
 if __name__ == "__main__":
     unittest.main()

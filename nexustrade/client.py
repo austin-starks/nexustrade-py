@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
-from nexustrade.env import environment_value, load_dotenv_values
+from nexustrade.env import LazyDotenv, environment_value
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from nexustrade.agent import AgentRun
@@ -413,9 +413,10 @@ class NexusTradeClient:
         if transport is not None:
             self._transport = transport
             return
-        # Read the file once, so a two-variable lookup does not walk the tree
-        # twice and cannot see two different files mid-resolution.
-        dotenv = load_dotenv_values()
+        # Lazy and memoized: the tree is walked at most once, and not at all
+        # when the environment already answers — which is always true inside
+        # run_compute, where the platform injects both variables.
+        dotenv = LazyDotenv()
         resolved_key = api_key or environment_value("NEXUSTRADE_API_KEY", dotenv)
         resolved_url = base_url or environment_value(
             "NEXUSTRADE_API_BASE_URL",
