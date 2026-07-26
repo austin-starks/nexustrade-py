@@ -17,6 +17,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, runtime_checkable
 
+from nexustrade.env import environment_value, load_dotenv_values
+
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_BYTES = 64 * 1024
 # Cap on a single binary read (lake result parts).
@@ -408,13 +410,13 @@ class NexusTradeClient:
         if transport is not None:
             self._transport = transport
             return
-        resolved_key = (
-            api_key
-            or os.environ.get("NEXUSTRADE_API_KEY")
-        )
-        resolved_url = (
-            base_url
-            or os.environ.get("NEXUSTRADE_API_BASE_URL")
+        # Read the file once, so a two-variable lookup does not walk the tree
+        # twice and cannot see two different files mid-resolution.
+        dotenv = load_dotenv_values()
+        resolved_key = api_key or environment_value("NEXUSTRADE_API_KEY", dotenv)
+        resolved_url = base_url or environment_value(
+            "NEXUSTRADE_API_BASE_URL",
+            dotenv,
         )
         if not resolved_key or not resolved_url:
             raise ValueError(
@@ -423,6 +425,8 @@ class NexusTradeClient:
                 "api_key=... and base_url=... or set NEXUSTRADE_API_KEY and "
                 "NEXUSTRADE_API_BASE_URL "
                 "(base URL is https://nexustrade.io/api/v1). "
+                "Both are also read from a .env file at or above the current "
+                "directory; the real environment takes precedence. "
                 "OAuth tokens are not accepted by this API."
             )
         self._transport = HttpTransport(resolved_key, resolved_url)
