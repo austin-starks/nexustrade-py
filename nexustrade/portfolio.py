@@ -365,12 +365,26 @@ def select_percentile(
 
 
 def universe(
-    source: Literal["ALL_US_STOCKS", "SP500", "CRYPTO", "SPECIFIC_ASSETS"],
+    source: Literal[
+        "ALL_US_STOCKS",
+        "SP500",
+        "NASDAQ100",
+        "DJIA",
+        "CRYPTO",
+        "SPECIFIC_ASSETS",
+    ],
     assets: Optional[Sequence[Union[str, Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     _enum(
         source,
-        ["ALL_US_STOCKS", "SP500", "CRYPTO", "SPECIFIC_ASSETS"],
+        [
+            "ALL_US_STOCKS",
+            "SP500",
+            "NASDAQ100",
+            "DJIA",
+            "CRYPTO",
+            "SPECIFIC_ASSETS",
+        ],
         "source",
     )
     if source == "SPECIFIC_ASSETS":
@@ -1436,7 +1450,7 @@ __all__.append("IsAssetType")
 
 def IsIndexMember(
     asset: Union[str, Dict[str, Any], _Candidate],
-    index: Literal["SP500"] = "SP500",
+    index: Literal["SP500", "NASDAQ100", "DJIA"] = "SP500",
 ) -> Indicator:
     """IsIndexMember indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1444,7 +1458,7 @@ def IsIndexMember(
     """
     d: Dict[str, Any] = {"type": "IsIndexMember"}
     _set_asset(d, "targetAsset", asset)
-    d["index"] = _enum(index, ["SP500"], "index")
+    d["index"] = _enum(index, ["SP500","NASDAQ100","DJIA"], "index")
     return Indicator(d)
 
 __all__.append("IsIndexMember")
