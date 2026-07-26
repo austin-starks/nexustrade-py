@@ -1,0 +1,232 @@
+# AGENTS.md — NexusTrade Python SDK
+
+Instructions for coding agents (Claude Code, Cursor, Codex, and friends) writing
+NexusTrade strategies with this package. Humans: [README.md](README.md) is the
+friendlier read.
+
+## What this package is
+
+A typed client plus ~170 **generated** builders for authoring trading
+strategies. The builders are generated from the same indicator specification the
+NexusTrade engine executes, so a book assembled from them is structurally valid
+before it ever leaves the process.
+
+```
+author a portfolio  →  submit a job  →  poll until terminal  →  read result
+```
+
+## Setup
+
+```bash
+pip install nexustrade
+export NEXUSTRADE_API_KEY=sk-...
+export NEXUSTRADE_API_BASE_URL=https://nexustrade.io/api/v1
+```
+
+```python
+import nexustrade as nt
+client = nt.NexusTradeClient.from_environment()
+```
+
+Keys come from https://nexustrade.io/developers. Never hardcode one into a file
+you write; read it from the environment.
+
+## Rules that matter
+
+**1. Use the builders. Never hand-write the JSON.**
+
+```python
+# Right — validated shape, correct wire names
+nt.buy(nt.stock_asset("SPY"), 100)
+
+# Wrong — silently diverges from the engine's schema
+{"type": "Buy", "targetAsset": {"symbol": "SPY"}, "amount": 100}
+```
+
+If you cannot find a builder, list them (`nt.__all__`) rather than inventing a
+dict. A hand-written payload that the API accepts can still mean something
+different from what you intended.
+
+**2. Every mutation needs an idempotency key, and it must be deterministic.**
+
+Jobs cost money. A retry with the *same* key returns the original operation; a
+retry with a new key launches a second paid job.
+
+```python
+# Right — same logical run reuses the key across retries
+nt.create_backtest(handle, idempotency_key="momentum-2024-v1")
+
+# Wrong — every retry is a new billable job
+nt.create_backtest(handle, idempotency_key=f"run-{time.time()}")
+```
+
+Reusing a key with a *different* payload is a `409 idempotency_conflict`. Version
+the key when the request changes: `momentum-2024-v2`.
+
+**3. `create_*` does not wait. Poll.**
+
+```python
+operation = nt.create_backtest(handle, idempotency_key="k")
+# operation["result"] is ABSENT here — the job has not run yet.
+finished = nt.wait_for_backtest(operation["id"])
+print(finished["result"])
+```
+
+A timeout does not cancel the job. Call the waiter again with the same id;
+do not resubmit.
+
+**4. Batch when you have several.**
+
+```python
+operations = nt.create_backtests([h1, h2, h3], idempotency_key="sweep-v1")
+results = nt.wait_for_backtests(operations)
+```
+
+One request, one key, one rate-limit slot — instead of three of each.
+
+**5. Percent semantics.** `buy(asset, 100)` is **100% of portfolio**, not 100
+shares. Deployment and allocation parameters are percentages unless a builder
+says otherwise.
+
+**6. Credentials come from the environment, or a `.env` file.** Both
+`NEXUSTRADE_API_KEY` and `NEXUSTRADE_API_BASE_URL` are read from the process
+environment first, then from a `.env` at or above the working directory. Never
+hardcode a key into a file you write, and never print one. Exported values win
+over the file, so a `.env` cannot silently override a deployment's real config.
+
+**7. The base install is stdlib-only.** `nt.lake.*` needs `pip install
+'nexustrade[lake]'`; `nt.spec_curve` and friends need `[stats]`. Missing extras
+raise an `AttributeError` that names the extra to install — read it rather than
+guessing.
+
+## Recipes
+
+<details open>
+<summary><b>Buy and hold</b></summary>
+
+```python
+import nexustrade as nt
+
+book = nt.portfolio("Buy and hold SPY", [
+    nt.strategy("Buy", nt.always(), nt.buy(nt.stock_asset("SPY"), 100)),
+])
+```
+</details>
+
+<details>
+<summary><b>Condition on an indicator</b></summary>
+
+Indicators support Python comparison operators; the result is a `Condition`.
+
+```python
+oversold = nt.RSI(nt.stock_asset("AAPL"), 14) < 30
+
+book = nt.portfolio("Dip buyer", [
+    nt.strategy("Buy the dip", oversold, nt.buy(nt.stock_asset("AAPL"), 25)),
+    nt.strategy(
+        "Take profit",
+        nt.PositionPercentChange(nt.stock_asset("AAPL")) > 10,
+        nt.sell(nt.stock_asset("AAPL"), 100),
+    ),
+])
+```
+
+Combine with `nt.multi`, `nt.at_least`, `nt.at_most`, `nt.exactly`.
+</details>
+
+<details>
+<summary><b>Rank and rotate a universe</b></summary>
+
+`CANDIDATE` is the placeholder for "each name being evaluated". Use it inside a
+pipeline; use a concrete asset outside one.
+
+```python
+book = nt.portfolio("Momentum", [
+    nt.strategy("Rotate", nt.always(), nt.dynamic_rebalance(
+        universe_config=nt.universe("SP500"),
+        pipeline=[
+            nt.filter(nt.Price(nt.CANDIDATE) > nt.SMA(nt.CANDIDATE, 200)),
+            nt.select_top(nt.RSI(nt.CANDIDATE, 14), 10),
+        ],
+        weight_indicator=nt.RSI(nt.CANDIDATE, 14),
+        limit=10,
+        deployment_percent=80,
+    )),
+], initial_value=100_000)
+```
+
+`deployment_percent=80` invests 80% of the portfolio across the selection and
+leaves the rest in cash. It is a **total** cap, not a per-name one.
+</details>
+
+<details>
+<summary><b>Backtest, optimize, walk forward</b></summary>
+
+```python
+bt = nt.backtest(book, start_date="2024-01-01", end_date="2024-12-31")
+
+opt = nt.optimization(book, start_date="2022-01-01", end_date="2024-12-31")
+
+wf = nt.walk_forward(book, global_start_date="2022-01-01",
+                     global_end_date="2024-12-31", fold_count=4)
+```
+
+Note walk-forward uses `global_start_date` / `global_end_date` / `fold_count`,
+not `start_date` / `end_date`. Each handle goes to its matching
+`create_*` + `wait_for_*` pair.
+</details>
+
+<details>
+<summary><b>Query the data lake</b></summary>
+
+```python
+result = nt.lake.sql(
+    "SELECT ticker, date, closingPrice FROM lake.daily_ohlc WHERE ticker = ?",
+    ["AAPL"],
+    max_rows=10_000,
+)
+frame = result.to_pandas()
+```
+
+Always parameterize with `?` rather than interpolating into the SQL string.
+Requires the `[lake]` extra.
+</details>
+
+## Errors
+
+All failures raise `NexusTradeApiError` with a stable `.status`, `.code`, and
+`.message`. Branch on `.code`, never on message text.
+
+| Code | What to do |
+| --- | --- |
+| `invalid_token` | Key missing/expired, or an OAuth JWT was used. Only `sk-` keys work here. |
+| `insufficient_scope` | The key lacks `read` / `write` / `lake`. Do not retry. |
+| `invalid_portfolio` | The book is malformed — fix the builders, do not retry as-is. |
+| `idempotency_conflict` | Same key, different payload. Version the key. |
+| `rate_limit_exceeded` | Back off and retry. |
+| `operation_timeout` | Job still running. Re-poll the same id; never resubmit. |
+
+`status == 0` means no HTTP status applies: the request never reached the API
+(`transport_error`), or the reply failed an envelope check.
+
+## Out of scope
+
+Not in this SDK. Do not attempt to reach them through it:
+
+- **Screener** — MCP only.
+- **Live trading and order placement** — deliberately excluded.
+- **Agent runs** — the NexusTrade agent API is not exposed here yet.
+
+## Verifying your work
+
+```python
+# Assemble the book and inspect the JSON before spending money on a backtest.
+import json
+print(json.dumps(book, indent=2))
+```
+
+If you are editing this repository rather than consuming it:
+
+```bash
+PYTHONPATH=. python3 -m unittest discover -s tests -t .
+```

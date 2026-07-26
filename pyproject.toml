@@ -66,6 +66,8 @@ include = [
   "nexustrade",
   "tests",
   "README.md",
+  "AGENTS.md",
+  "CLAUDE.md",
   "LICENSE",
   "requirements-lake.lock",
   "requirements-stats.lock",
