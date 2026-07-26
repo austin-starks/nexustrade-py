@@ -534,10 +534,18 @@ class LakeQueryResult:
         carries the schema, so an empty result becomes a typed zero-row
         relation — projections and joins against it still bind.
         """
+        directory = self.download()
+        return self._duckdb_relation_from_directory(directory, connection)
+
+    def _duckdb_relation_from_directory(
+        self,
+        directory: Path,
+        connection: Any | None = None,
+    ) -> Any:
+        """Build a relation from an already validated download directory."""
         import duckdb
 
         con = connection or duckdb.connect()
-        directory = self.download()
         files = sorted(directory.glob("part-*.parquet"))
         if not files:
             return con.sql(self._empty_relation_sql())
@@ -617,7 +625,10 @@ class LakeQueryResult:
                 f"{_human_bytes(max_bytes)} budget. " + _limit_remedy(max_bytes)
             )
 
-        relation = self.duckdb_relation()
+        # Reuse the directory already downloaded and checksum-validated above.
+        # Calling duckdb_relation() here would call download() a second time and
+        # rehash every part before materializing the frame.
+        relation = self._duckdb_relation_from_directory(directory)
         return relation.df()
 
 

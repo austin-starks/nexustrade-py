@@ -346,63 +346,6 @@ def wait_for_operation(
     """Poll ``fetch(operation_id)`` until the operation reaches a terminal state.
 
     Works for any operation kind because every NexusTrade job reports the same
-    ``{id, kind, status, result?, error?}`` envelope.
-    """
-    if timeout_seconds <= 0:
-        raise ValueError("timeout_seconds must be positive.")
-    if poll_interval_seconds < 0 or max_poll_interval_seconds < 0:
-        raise ValueError("poll intervals must not be negative.")
-
-    deadline = time.monotonic() + timeout_seconds
-    interval = min(poll_interval_seconds, max_poll_interval_seconds)
-    while True:
-        operation = dict(fetch(operation_id))
-        status = str(operation.get("status") or "")
-        if status in _TERMINAL_STATUSES:
-            if raise_on_failure and status != "completed":
-                raise _operation_failure(operation, operation_id, status)
-            return operation
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise NexusTradeApiError(
-                _NO_HTTP_STATUS,
-                "operation_timeout",
-                f"Operation {operation_id} was still '{status or 'unknown'}' "
-                f"after {timeout_seconds:g}s. It is still running — poll "
-                "again with the same id rather than resubmitting.",
-            )
-        if interval > 0:
-            time.sleep(min(interval, remaining))
-        interval = min(interval * _POLL_BACKOFF_FACTOR, max_poll_interval_seconds)
-
-
-def _operation_failure(
-    operation: Mapping[str, Any],
-    operation_id: str,
-    status: str,
-) -> NexusTradeApiError:
-    error = operation.get("error")
-    code = "operation_cancelled" if status == "cancelled" else "operation_failed"
-    message = f"Operation {operation_id} {status}."
-    if isinstance(error, Mapping):
-        code = str(error.get("code") or code)
-        message = str(error.get("message") or message)
-    return NexusTradeApiError(_NO_HTTP_STATUS, code, message)
-
-
-def wait_for_operation(
-    fetch: Callable[[str], Mapping[str, Any]],
-    operation_id: str,
-    *,
-    timeout_seconds: float = _DEFAULT_POLL_TIMEOUT_SECONDS,
-    poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
-    max_poll_interval_seconds: float = _MAX_POLL_INTERVAL_SECONDS,
-    raise_on_failure: bool = True,
-) -> dict[str, Any]:
-    """Poll ``fetch(operation_id)`` until the operation reaches a terminal state.
-
-    Works for any operation kind because every NexusTrade job reports the same
     ``{id, kind, status, result?, error?}`` envelope. Pass any getter with that
     shape — ``client.get_backtest``, ``get_optimization``, ``get_walk_forward``.
 

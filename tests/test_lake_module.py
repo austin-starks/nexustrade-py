@@ -152,6 +152,47 @@ class LakePackagingTests(unittest.TestCase):
         with self.assertRaises(nt.lake.LakeResultLimitError):
             result.to_pandas(max_bytes=10)
 
+    def test_to_pandas_reuses_the_validated_download(self) -> None:
+        result = nt.lake.LakeQueryResult(
+            id="lq_test",
+            status="completed",
+            result={
+                "rowCount": 1,
+                "byteSize": 10,
+                "parts": [],
+                "schema": [],
+                "format": "parquet",
+                "engine": "motherduck",
+                "fallbackUsed": False,
+                "catalogVersion": "x",
+                "expiresAt": "2026-07-25T00:00:00.000Z",
+            },
+            _client=object(),  # type: ignore[arg-type]
+        )
+        relation = mock.Mock()
+        relation.df.return_value = "frame"
+        directory = Path("/tmp/lake-query-test")
+
+        with (
+            mock.patch.object(result, "download", return_value=directory) as download,
+            mock.patch.object(
+                result,
+                "_duckdb_relation_from_directory",
+                return_value=relation,
+            ) as build_relation,
+            mock.patch.dict(
+                "sys.modules",
+                {
+                    "pyarrow": mock.Mock(),
+                    "pyarrow.parquet": mock.Mock(),
+                },
+            ),
+        ):
+            self.assertEqual(result.to_pandas(max_bytes=100), "frame")
+
+        download.assert_called_once_with()
+        build_relation.assert_called_once_with(directory)
+
     def test_client_exposes_http_lake_surface_not_analysis_helpers(self) -> None:
         for name in (
             "create_lake_query",
