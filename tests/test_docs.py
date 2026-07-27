@@ -19,6 +19,66 @@ CLIENT_CALL = re.compile(r"\bclient\.([a-z_][a-z0-9_]*)\(")
 PACKAGE_CALL = re.compile(r"\bnt\.([A-Za-z_][A-Za-z0-9_]*)\(")
 
 
+def _public_methods(cls: type) -> set[str]:
+    return {
+        name
+        for name in dir(cls)
+        if not name.startswith("_") and callable(getattr(cls, name, None))
+    }
+
+
+def _documented_names() -> set[str]:
+    """Every symbol either doc mentions, in prose, code, or a table."""
+    found: set[str] = set()
+    for name in ("README.md", "AGENTS.md"):
+        text = (DOCS / name).read_text()
+        found |= set(re.findall(r"\b([a-z_][a-z0-9_]{2,})\(", text))
+        # Method tables name a method without calling it: `create_backtest`.
+        found |= set(re.findall(r"`([a-z_][a-z0-9_]{2,})`", text))
+    return found
+
+
+class DocumentationCompletenessTests(unittest.TestCase):
+    """Nothing public may be absent from the docs.
+
+    The 1.0.0 docs omitted 11 of 36 client methods, including the whole
+    portfolio lifecycle. None of it was a decision — sections got written and
+    the rest drifted. A table fixes it once; this keeps it fixed.
+    """
+
+    def test_every_client_method_is_documented(self) -> None:
+        documented = _documented_names()
+        missing = sorted(_public_methods(nt.NexusTradeClient) - documented)
+        self.assertEqual(
+            missing,
+            [],
+            f"{len(missing)} public NexusTradeClient method(s) appear in neither "
+            f"README.md nor AGENTS.md: {', '.join(missing)}. Add them to the "
+            "method table.",
+        )
+
+    def test_every_portfolio_handle_method_is_documented(self) -> None:
+        documented = _documented_names()
+        handle_methods = _public_methods(nt.Portfolio) - _public_methods(dict)
+        missing = sorted(handle_methods - documented)
+        self.assertEqual(
+            missing,
+            [],
+            f"{len(missing)} public Portfolio method(s) are undocumented: "
+            f"{', '.join(missing)}.",
+        )
+
+    def test_claude_md_points_at_the_complete_reference(self) -> None:
+        """CLAUDE.md stays a pointer on purpose.
+
+        Duplicating AGENTS.md into it would create exactly the drift the
+        pointer exists to prevent, so the requirement is that it names the
+        complete reference rather than restating it.
+        """
+        claude = (DOCS / "CLAUDE.md").read_text()
+        self.assertIn("AGENTS.md", claude)
+
+
 class DocumentedSymbolTests(unittest.TestCase):
     def test_every_documented_symbol_resolves(self) -> None:
         for name in ("README.md", "AGENTS.md"):

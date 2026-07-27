@@ -160,6 +160,50 @@ study = client.create_walk_forward(
 client.wait_for_walk_forward(study["id"])
 ```
 
+## Deploying a portfolio
+
+Authoring and backtesting a book does not persist it. `save` writes it to your
+account; `deploy` starts running it.
+
+```python
+book = portfolio("Momentum", [...])
+
+book.save(idempotency_key="momentum-v1", client=client)   # persists; sets book.id
+deployment = book.deploy(client=client)                   # starts paper trading
+book.undeploy(client=client)                              # stops it
+```
+
+**`save` and `deploy` produce different ids, and the distinction matters.**
+`save` persists a *draft* and sets `book.id` to it. `deploy` mints the real
+paper portfolio and returns its own `portfolioId` — deploying creates a
+portfolio rather than converting the draft into one, so the two ids coexist.
+Hold on to `deployment["portfolioId"]` for anything that reads live state;
+`book.id` addresses the draft.
+
+```python
+deployment["portfolioId"]      # the running portfolio
+deployment["deploymentType"]   # paper
+deployment["outcome"]          # created | reactivated
+```
+
+Every handle method takes `client=` as a keyword argument and falls back to
+`NexusTradeClient.from_environment()` when omitted. The same operations exist on
+the client itself — `client.deploy(portfolio_id)`, `client.undeploy(...)` — when
+you have an id rather than a handle.
+
+```python
+client.list_portfolios(include_paper=True, include_positions=True)
+client.get_portfolio(portfolio_id)
+```
+
+`list_portfolios` filters with `include_paper`, `include_live`,
+`include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
+`include_positions` defaults off when `search` is set.
+
+**Live trading is not reachable from this SDK yet.** `deploy` is paper only.
+Connecting a brokerage and deploying live happen in the web app; placing orders
+is not exposed here at all. See [Scope](#scope).
+
 ## Your own data
 
 A custom data source is a time series you own — sentiment counts, a proprietary
@@ -306,6 +350,93 @@ for batch in result.iter_batches():    # or stream within your own budget
 
 Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
 compatible backing engine; your SQL does not change when it does.
+
+## Complete method reference
+
+Every public method on `NexusTradeClient`. A test in this package fails if one
+is missing here, so this list cannot drift from the code.
+
+**Portfolios**
+
+| Method | Purpose |
+| --- | --- |
+| `create_portfolio(book, idempotency_key=…)` | Persist a portfolio definition |
+| `list_portfolios(…)` | List portfolios, with filters and pagination |
+| `get_portfolio(portfolio_id)` | Read one portfolio |
+| `deploy(portfolio_id, frequency=…)` | Start paper trading it |
+| `undeploy(portfolio_id)` | Stop it |
+
+**Backtests**
+
+| Method | Purpose |
+| --- | --- |
+| `create_backtest(handle, idempotency_key=…)` | Submit one backtest |
+| `create_backtests(handles, idempotency_key=…)` | Submit many in one request |
+| `get_backtest(backtest_id)` | Read the operation |
+| `wait_for_backtest(backtest_id, …)` | Block until terminal |
+| `wait_for_backtests(operations, …)` | Block on a whole batch |
+
+**Optimization and walk-forward**
+
+| Method | Purpose |
+| --- | --- |
+| `create_optimization(handle, idempotency_key=…)` | Submit an optimization |
+| `get_optimization(optimization_id)` | Read the operation |
+| `wait_for_optimization(optimization_id, …)` | Block until terminal |
+| `create_walk_forward(handle, idempotency_key=…)` | Submit a walk-forward study |
+| `get_walk_forward(study_id)` | Read the operation |
+| `wait_for_walk_forward(study_id, …)` | Block until terminal |
+
+**Custom data sources**
+
+| Method | Purpose |
+| --- | --- |
+| `create_custom_indicator(spec, idempotency_key=…)` | Create a series, optionally seeded |
+| `list_custom_indicators(include_archived=…)` | List owned series |
+| `get_custom_indicator(id)` | Read one, with its point count and range |
+| `append_custom_indicator_points(id, points, idempotency_key=…)` | Add points |
+| `create_custom_indicator_upload(id, …)` | Open an upload slot (CSV/JSON/JSONL) |
+| `complete_custom_indicator_upload(id, job_id)` | Start validating uploaded bytes |
+| `get_custom_indicator_upload(id, job_id)` | Read the upload operation |
+| `wait_for_custom_indicator_upload(id, job_id, …)` | Block until validated |
+
+**Agent runs**
+
+| Method | Purpose |
+| --- | --- |
+| `create_agent(prompt, idempotency_key=…)` | Start a run |
+| `get_agent(agent_id)` | Read its status |
+| `attach_agent(agent_id, cursor=…)` | Reattach to a run already in flight |
+
+**Lake SQL**
+
+| Method | Purpose |
+| --- | --- |
+| `create_lake_query(request, idempotency_key=…)` | Submit read-only SQL |
+| `get_lake_query(query_id)` | Read the operation |
+| `wait_for_lake_query(query_id, …)` | Block until terminal |
+| `cancel_lake_query(query_id)` | Cancel an owned query |
+| `get_lake_query_manifest(query_id)` | Schema, checksums, and part metadata |
+| `download_lake_query_part(query_id, part, …)` | Download one Parquet part |
+| `get_lake_catalog()` | List queryable tables |
+| `describe_lake_table(table)` | Columns and types for one table |
+
+**Client construction**
+
+| Method | Purpose |
+| --- | --- |
+| `NexusTradeClient(api_key=…, base_url=…)` | Explicit credentials |
+| `NexusTradeClient.from_environment()` | Read them from the environment or `.env` |
+
+**Portfolio handle** — returned by the `portfolio(...)` builder and by
+`get_portfolio` / `list_portfolios`.
+
+| Method | Purpose |
+| --- | --- |
+| `save(idempotency_key=…, client=…)` | Persist it as a draft, setting `.id` |
+| `backtest(start_date=…, end_date=…, idempotency_key=…, …)` | Backtest it, preferring the saved id |
+| `deploy(frequency=…, client=…)` | Mint the real paper portfolio (new id) |
+| `undeploy(client=…)` | Deactivate its deployment |
 
 ## Authentication
 

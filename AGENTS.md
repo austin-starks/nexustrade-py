@@ -258,12 +258,26 @@ All failures raise `NexusTradeApiError` with a stable `.status`, `.code`, and
 `status == 0` means no HTTP status applies: the request never reached the API
 (`transport_error`), or the reply failed an envelope check.
 
-## Out of scope
+## What is and is not here
+
+**Deploying a portfolio IS supported.** `book.save(...)` persists it and
+`book.deploy(...)` starts paper trading it; `client.deploy(portfolio_id)` does
+the same from an id. `save` and `deploy` return *different* ids — deploying
+mints a portfolio rather than converting the draft.
 
 Not in this SDK. Do not attempt to reach them through it:
 
 - **Screener** — MCP only.
-- **Live trading and order placement** — deliberately excluded.
+- **Order placement** — not exposed. No route on this API submits an order.
+- **Live deployment and connecting a brokerage** — the live-trading routes are
+  not under the SDK prefix, so this client cannot reach them. `deploy()` is
+  paper only. Both happen in the web app today.
+
+The complete method list — every client and handle method, including the ones
+without a worked example above — is the **Complete method reference** table in
+[README.md](README.md#complete-method-reference). A test fails if any public
+method is missing from it, so it is exhaustive by construction rather than by
+maintenance.
 
 ## Verifying your work
 
