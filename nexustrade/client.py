@@ -1033,6 +1033,7 @@ class NexusTradeClient:
             )
         return indicator
 
+    # sandbox-prune:begin trading-surface
     def list_brokerages(self) -> list[dict[str, Any]]:
         """Every connectable brokerage and whether this account has linked it.
 
@@ -1157,6 +1158,8 @@ class NexusTradeClient:
             },
             idempotency_key=idempotency_key,
         )
+
+    # sandbox-prune:end trading-surface
 
     def create_backtests(
         self,
