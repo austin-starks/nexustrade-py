@@ -27,15 +27,30 @@ def _public_methods(cls: type) -> set[str]:
     }
 
 
-def _documented_names() -> set[str]:
-    """Every symbol either doc mentions, in prose, code, or a table."""
-    found: set[str] = set()
-    for name in ("README.md", "AGENTS.md"):
-        text = (DOCS / name).read_text()
-        found |= set(re.findall(r"\b([a-z_][a-z0-9_]{2,})\(", text))
-        # Method tables name a method without calling it: `create_backtest`.
-        found |= set(re.findall(r"`([a-z_][a-z0-9_]{2,})`", text))
-    return found
+def _method_table_names() -> set[str]:
+    """Every method named in README.md's Complete method reference table.
+
+    Scoped to that one section on purpose. AGENTS.md tells readers the table is
+    exhaustive, so the test has to enforce the table rather than "mentioned
+    somewhere" — a passing mention in prose, or a sentence saying a method is
+    NOT supported, would otherwise satisfy a gate that promises a reference.
+    """
+    readme = (DOCS / "README.md").read_text()
+    section = re.search(
+        r"^##+ Complete method reference\s*$(.*?)(?=^##+ |\Z)",
+        readme,
+        re.M | re.S,
+    )
+    if section is None:
+        raise AssertionError(
+            "README.md has no 'Complete method reference' section — the "
+            "completeness gate has nothing to check against."
+        )
+    table = section.group(1)
+    # Rows name a method without calling it: `create_backtest`.
+    return set(re.findall(r"`([a-z_][a-z0-9_]{2,})`", table)) | set(
+        re.findall(r"\b([a-z_][a-z0-9_]{2,})\(", table)
+    )
 
 
 class DocumentationCompletenessTests(unittest.TestCase):
@@ -47,25 +62,25 @@ class DocumentationCompletenessTests(unittest.TestCase):
     """
 
     def test_every_client_method_is_documented(self) -> None:
-        documented = _documented_names()
+        documented = _method_table_names()
         missing = sorted(_public_methods(nt.NexusTradeClient) - documented)
         self.assertEqual(
             missing,
             [],
-            f"{len(missing)} public NexusTradeClient method(s) appear in neither "
-            f"README.md nor AGENTS.md: {', '.join(missing)}. Add them to the "
-            "method table.",
+            f"{len(missing)} public NexusTradeClient method(s) are absent from "
+            f"README.md's Complete method reference: {', '.join(missing)}. Add "
+            "them to that table.",
         )
 
     def test_every_portfolio_handle_method_is_documented(self) -> None:
-        documented = _documented_names()
+        documented = _method_table_names()
         handle_methods = _public_methods(nt.Portfolio) - _public_methods(dict)
         missing = sorted(handle_methods - documented)
         self.assertEqual(
             missing,
             [],
-            f"{len(missing)} public Portfolio method(s) are undocumented: "
-            f"{', '.join(missing)}.",
+            f"{len(missing)} public Portfolio method(s) are absent from "
+            f"README.md's Complete method reference: {', '.join(missing)}.",
         )
 
     def test_claude_md_points_at_the_complete_reference(self) -> None:
