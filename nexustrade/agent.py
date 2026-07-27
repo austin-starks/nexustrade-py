@@ -229,6 +229,10 @@ class AgentRun:
         """Append a user message — a follow-up or a course correction."""
         return self._post("messages", body={"content": content})
 
+    def set_cursor(self, cursor: str | None) -> None:
+        """Resume a run already in flight from a known cursor."""
+        self._cursor = cursor
+
     def refresh(self) -> str:
         """Re-read status without consuming events."""
         response = self._client.get_agent(self.id)

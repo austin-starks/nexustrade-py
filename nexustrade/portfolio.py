@@ -5,11 +5,14 @@
 
 from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
+from nexustrade.portfolio_handle import Portfolio
+
 __all__: List[str] = [
     "CANDIDATE",
     "PORTFOLIO_WIDE",
     "Indicator",
     "Condition",
+    "Portfolio",
     "at_least",
     "at_most",
     "fewer_than",
@@ -828,17 +831,19 @@ def portfolio(
     supports_fractional_shares: Optional[bool] = None,
     supports_crypto: Optional[bool] = None,
     alerts_enabled: Optional[bool] = None,
-) -> Dict[str, Any]:
-    return _compact(
-        {
-            "name": name,
-            "initialValue": initial_value,
-            "strategies": list(strategies),
-            "main": main,
-            "supportsFractionalShares": supports_fractional_shares,
-            "supportsCrypto": supports_crypto,
-            "alertsEnabled": alerts_enabled,
-        }
+) -> Portfolio:
+    return Portfolio(
+        _compact(
+            {
+                "name": name,
+                "initialValue": initial_value,
+                "strategies": list(strategies),
+                "main": main,
+                "supportsFractionalShares": supports_fractional_shares,
+                "supportsCrypto": supports_crypto,
+                "alertsEnabled": alerts_enabled,
+            }
+        )
     )
 
 # ---- generated indicator builders ----

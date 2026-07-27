@@ -22,8 +22,9 @@ from nexustrade.env import LazyDotenv, environment_value
 # sandbox-prune:begin agent-surface
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from nexustrade.agent import AgentRun
-
 # sandbox-prune:end agent-surface
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from nexustrade.portfolio_handle import Portfolio, PortfolioList
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_BYTES = 64 * 1024
 # Cap on a single binary read (lake result parts).
@@ -462,6 +463,126 @@ class NexusTradeClient:
             )
         return result
 
+    def list_portfolios(
+        self,
+        *,
+        portfolio_ids: Sequence[str] | None = None,
+        include_inactive: bool | None = None,
+        include_paper: bool | None = None,
+        include_live: bool | None = None,
+        include_chat_portfolios: bool | None = None,
+        include_positions: bool | None = None,
+        search: str | None = None,
+        limit: int | None = None,
+        page: int | None = None,
+    ) -> "PortfolioList":
+        """List portfolios. Mirrors MCP ``fetch_portfolios``.
+
+        ``include_positions`` defaults off when ``search`` is set.
+        """
+        from nexustrade.portfolio_handle import Portfolio, PortfolioList
+
+        params: list[tuple[str, str]] = []
+        if portfolio_ids:
+            params.append(("portfolioIds", ",".join(portfolio_ids)))
+        for key, value in (
+            ("includeInactive", include_inactive),
+            ("includePaper", include_paper),
+            ("includeLive", include_live),
+            ("includeChatPortfolios", include_chat_portfolios),
+            ("includePositions", include_positions),
+            ("search", search),
+            ("limit", limit),
+            ("page", page),
+        ):
+            if value is not None:
+                params.append(
+                    (key, str(value).lower() if isinstance(value, bool) else str(value))
+                )
+        query = urllib.parse.urlencode(params)
+        path = f"portfolios?{query}" if query else "portfolios"
+        response = self._transport.request("GET", path)
+        rows = response.get("portfolios")
+        if not isinstance(rows, list):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Portfolio list response is missing portfolios.",
+            )
+        handles = [
+            Portfolio(row, client=self) if isinstance(row, Mapping) else Portfolio(client=self)
+            for row in rows
+        ]
+        return PortfolioList(
+            {
+                "portfolios": handles,
+                "page": response.get("page", 1),
+                "limit": response.get("limit", 20),
+                "total": response.get("total", len(handles)),
+                "totalPages": response.get("totalPages", 1),
+                "scopes": response.get("scopes") or {},
+            }
+        )
+
+    def get_portfolio(self, portfolio_id: str) -> "Portfolio":
+        from nexustrade.portfolio_handle import Portfolio
+
+        response = self._transport.request(
+            "GET",
+            f"portfolios/{urllib.parse.quote(portfolio_id, safe='')}",
+        )
+        result = response.get("portfolio")
+        if not isinstance(result, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Portfolio response is missing portfolio.",
+            )
+        return Portfolio(result, client=self)
+
+    def deploy(
+        self,
+        portfolio_id: str,
+        *,
+        frequency: str | None = None,
+    ) -> dict[str, Any]:
+        """Mint/activate a paper portfolio from a chat draft (or re-activate)."""
+        body: dict[str, Any] = {}
+        if frequency is not None:
+            body["frequency"] = frequency
+        response = self._transport.request(
+            "POST",
+            f"portfolios/{urllib.parse.quote(portfolio_id, safe='')}/deploy",
+            body=body,
+        )
+        result = response.get("deployment")
+        if not isinstance(result, dict):
+            result = response if isinstance(response, dict) else None
+        if not isinstance(result, dict) or not isinstance(result.get("portfolioId"), str):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Deploy response is missing portfolioId.",
+            )
+        return result
+
+    def undeploy(self, portfolio_id: str) -> dict[str, Any]:
+        response = self._transport.request(
+            "POST",
+            f"portfolios/{urllib.parse.quote(portfolio_id, safe='')}/undeploy",
+            body={},
+        )
+        result = response.get("undeployment")
+        if not isinstance(result, dict):
+            result = response if isinstance(response, dict) else None
+        if not isinstance(result, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Undeploy response is missing body.",
+            )
+        return result
+
     def create_backtests(
         self,
         backtests: list[Mapping[str, Any]],
@@ -771,6 +892,16 @@ class NexusTradeClient:
     def _backtest_input(item: Mapping[str, Any]) -> dict[str, Any]:
         tool = item.get("tool")
         if tool is None:
+            # Prefer portfolioId over an inline body when both are present.
+            portfolio_id = item.get("portfolioId") or item.get("portfolio_id")
+            if isinstance(portfolio_id, str) and portfolio_id:
+                normalized = {
+                    key: value
+                    for key, value in dict(item).items()
+                    if key not in ("portfolio", "portfolio_id")
+                }
+                normalized["portfolioId"] = portfolio_id
+                return normalized
             return dict(item)
         if tool != "backtest_portfolio":
             raise ValueError(
