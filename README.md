@@ -182,7 +182,7 @@ Hold on to `deployment["portfolioId"]` for anything that reads live state;
 
 ```python
 deployment["portfolioId"]      # the running portfolio
-deployment["deploymentType"]   # paper, unless you deployed an existing live one
+deployment["deploymentType"]   # paper
 deployment["outcome"]          # created | reactivated
 ```
 
@@ -200,16 +200,60 @@ client.get_portfolio(portfolio_id)
 `include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
 `include_positions` defaults off when `search` is set.
 
-**A portfolio you create here is always paper**, and placing orders is not
-exposed at all. Connecting a brokerage and creating a live deployment happen in
-the web app.
+`deploy` is paper only — minting a *live* portfolio still happens in the web
+app. Orders and brokerage status are reachable from here; see
+[Live trading](#live-trading).
 
-**But `deploy` can start live trading.** Given the id of a portfolio that is
-already deployed, it reactivates that portfolio as whatever it already is — so
-`client.deploy(id)` on a paused live portfolio resumes live trading against the
-connected brokerage, and `include_live=True` above will hand you such an id.
-Check `deployment["deploymentType"]` before treating a deploy as simulated. See
-[Scope](#scope).
+## Live trading
+
+Live trading needs a brokerage linked to your account. Linking is an OAuth
+redirect, so an API key cannot complete it — a human opens the URL.
+
+```python
+client.list_brokerages()
+# [{"brokerage": "Alpaca", "connected": False,
+#   "connectUrl": "https://nexustrade.io/live-trading"}, ...]
+
+client.connect_brokerage("Alpaca")   # prints the URL, waits until connected
+```
+
+`connect_brokerage` waits by default **only when stdout is a terminal**. In CI,
+cron, or `run_compute` it raises `brokerage_not_connected` immediately with the
+URL in the message, rather than stalling for five minutes in front of nobody.
+Pass `wait=True` or `wait=False` to force either.
+
+A live-only listing that comes back empty raises the same error rather than an
+empty list, since an empty array says nothing about why:
+
+```python
+client.list_portfolios(include_live=True, include_paper=False)
+# NexusTradeApiError: brokerage_not_connected: No live portfolios, and no
+# brokerage is connected. Connect one at https://nexustrade.io/live-trading
+```
+
+### Orders
+
+```python
+result = client.create_orders(
+    portfolio_id,
+    [{"asset": {"name": "SPY", "type": "STOCK", "symbol": "SPY"},
+      "side": "BUY", "quantity": 10, "orderType": "MARKET"}],
+    idempotency_key="rebalance-2024-04-01",
+)
+```
+
+**Paper orders are accepted immediately. Live orders are staged for approval
+and are never sent to a broker by this call.**
+
+```python
+if result["requiresApproval"]:
+    print("nothing has traded yet — approve at", result["approvalUrl"])
+```
+
+There is no argument, scope, or flag that submits a live order without
+approval. The brokerage boundary refuses an unapproved live order regardless of
+what any caller asks for, so this is a property of the system rather than a
+promise made by this method. At most 50 orders per request.
 
 ## Your own data
 
@@ -362,6 +406,15 @@ compatible backing engine; your SQL does not change when it does.
 
 Every public method on `NexusTradeClient`. A test in this package fails if one
 is missing here, so this list cannot drift from the code.
+
+**Live trading and orders**
+
+| Method | Purpose |
+| --- | --- |
+| `list_brokerages()` | Every connectable brokerage and whether it is linked |
+| `get_brokerage(brokerage)` | Whether one brokerage is linked |
+| `connect_brokerage(brokerage, wait=…)` | Print the connect URL and wait for the link |
+| `create_orders(portfolio_id, orders, idempotency_key=…)` | Stage orders; live ones need approval |
 
 **Portfolios**
 
@@ -534,9 +587,7 @@ nor the poll timeout bounds how long a *job* takes.
 
 Portfolio drafting, backtesting, optimization, walk-forward studies, and
 read-only SQL over the market-data lake, versioned under `/api/v1/nexustrade`.
-The screener, order placement, and creating a live deployment remain outside
-this surface. `deploy` and `undeploy` do reach an existing live portfolio: they
-act on whatever the id already is.
+The screener and live trading remain outside this surface.
 
 ## Using this SDK with a coding agent
 

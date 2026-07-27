@@ -963,6 +963,221 @@
         "kind": "api_error",
         "code": "invalid_response"
       }
+    },
+    {
+      "name": "list_brokerages reports every brokerage, connected or not",
+      "method": "list_brokerages",
+      "input": null,
+      "responses": [
+        {
+          "brokerages": [
+            {
+              "brokerage": "Alpaca",
+              "connected": true,
+              "connectUrl": "https://nexustrade.io/live-trading"
+            },
+            {
+              "brokerage": "Tradier",
+              "connected": false,
+              "connectUrl": "https://nexustrade.io/live-trading"
+            }
+          ]
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "brokerages",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": [
+        {
+          "brokerage": "Alpaca",
+          "connected": true,
+          "connectUrl": "https://nexustrade.io/live-trading"
+        },
+        {
+          "brokerage": "Tradier",
+          "connected": false,
+          "connectUrl": "https://nexustrade.io/live-trading"
+        }
+      ]
+    },
+    {
+      "name": "get_brokerage percent-encodes the broker name",
+      "method": "get_brokerage",
+      "input": "Inter Active/Brokers",
+      "responses": [
+        {
+          "brokerage": {
+            "brokerage": "Alpaca",
+            "connected": false
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "brokerages/Inter%20Active%2FBrokers",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "brokerage": "Alpaca",
+        "connected": false
+      }
+    },
+    {
+      "name": "create_orders posts the portfolio and orders under one key",
+      "method": "create_orders",
+      "args": [
+        "p-1"
+      ],
+      "input": [
+        {
+          "asset": {
+            "name": "SPY",
+            "type": "STOCK",
+            "symbol": "SPY"
+          },
+          "side": "BUY",
+          "quantity": 10,
+          "orderType": "MARKET"
+        }
+      ],
+      "idempotency_key": "orders-v1",
+      "responses": [
+        {
+          "portfolioId": "p-1",
+          "deployment": "paper-trading",
+          "requiresApproval": false,
+          "staged": [
+            {
+              "orderId": "o-1"
+            }
+          ],
+          "rejected": []
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "orders",
+          "body": {
+            "portfolioId": "p-1",
+            "orders": [
+              {
+                "asset": {
+                  "name": "SPY",
+                  "type": "STOCK",
+                  "symbol": "SPY"
+                },
+                "side": "BUY",
+                "quantity": 10,
+                "orderType": "MARKET"
+              }
+            ]
+          },
+          "idempotency_key": "orders-v1"
+        }
+      ],
+      "expected_result": {
+        "portfolioId": "p-1",
+        "deployment": "paper-trading",
+        "requiresApproval": false,
+        "staged": [
+          {
+            "orderId": "o-1"
+          }
+        ],
+        "rejected": []
+      }
+    },
+    {
+      "name": "a live create_orders result says it is pending approval",
+      "method": "create_orders",
+      "args": [
+        "p-1"
+      ],
+      "input": [
+        {
+          "asset": {
+            "name": "SPY",
+            "type": "STOCK",
+            "symbol": "SPY"
+          },
+          "side": "BUY",
+          "quantity": 10,
+          "orderType": "MARKET"
+        }
+      ],
+      "idempotency_key": "orders-live-v1",
+      "responses": [
+        {
+          "portfolioId": "p-1",
+          "deployment": "live-trading",
+          "requiresApproval": true,
+          "approvalUrl": "https://nexustrade.io/orders/pending",
+          "staged": [
+            {
+              "orderId": "o-1"
+            }
+          ],
+          "rejected": []
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "orders",
+          "body": {
+            "portfolioId": "p-1",
+            "orders": [
+              {
+                "asset": {
+                  "name": "SPY",
+                  "type": "STOCK",
+                  "symbol": "SPY"
+                },
+                "side": "BUY",
+                "quantity": 10,
+                "orderType": "MARKET"
+              }
+            ]
+          },
+          "idempotency_key": "orders-live-v1"
+        }
+      ],
+      "expected_result": {
+        "portfolioId": "p-1",
+        "deployment": "live-trading",
+        "requiresApproval": true,
+        "approvalUrl": "https://nexustrade.io/orders/pending",
+        "staged": [
+          {
+            "orderId": "o-1"
+          }
+        ],
+        "rejected": []
+      }
+    },
+    {
+      "name": "an empty order batch is rejected before any request",
+      "method": "create_orders",
+      "args": [
+        "p-1"
+      ],
+      "input": [],
+      "idempotency_key": "orders-empty",
+      "responses": [],
+      "expected_calls": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "at least one order"
+      }
     }
   ]
 }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -47,6 +48,11 @@ _DEFAULT_POLL_INTERVAL_SECONDS = 2
 _MAX_POLL_INTERVAL_SECONDS = 15
 _POLL_BACKOFF_FACTOR = 1.5
 _TERMINAL_STATUSES = ("cancelled", "completed", "failed")
+
+# Connecting a brokerage is a human opening a browser. Long enough for that,
+# short enough that a forgotten terminal does not hang all afternoon.
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 300
+_CONNECT_POLL_INTERVAL_SECONDS = 3
 
 # Point batches larger than this are uploaded rather than sent inline.
 _MAX_INLINE_POINT_BYTES = 512 * 1024
@@ -430,6 +436,14 @@ class HttpTransport:
                 "transport_error",
                 str(error),
             ) from error
+
+
+def _stdout_is_interactive() -> bool:
+    """Whether a human is plausibly watching. Never raises on odd streams."""
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        return False
 
 
 def _point_timestamp(value: Any) -> Any:
@@ -1018,6 +1032,131 @@ class NexusTradeClient:
                 "Custom indicator response is missing indicator.",
             )
         return indicator
+
+    def list_brokerages(self) -> list[dict[str, Any]]:
+        """Every connectable brokerage and whether this account has linked it.
+
+        Reports all of them, connected or not, each with a ``connectUrl`` — an
+        empty result would say nothing about what to do next.
+        """
+        response = self._transport.request("GET", "brokerages")
+        brokerages = response.get("brokerages")
+        if not isinstance(brokerages, list):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Brokerage response is missing brokerages.",
+            )
+        return [dict(row) for row in brokerages if isinstance(row, Mapping)]
+
+    def get_brokerage(self, brokerage: str) -> dict[str, Any]:
+        """Whether one named brokerage is connected."""
+        response = self._transport.request(
+            "GET",
+            f"brokerages/{urllib.parse.quote(brokerage, safe='')}",
+        )
+        result = response.get("brokerage")
+        if not isinstance(result, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Brokerage response is missing brokerage.",
+            )
+        return result
+
+    def connect_brokerage(
+        self,
+        brokerage: str,
+        *,
+        wait: bool | None = None,
+        timeout_seconds: float = _DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = _CONNECT_POLL_INTERVAL_SECONDS,
+    ) -> dict[str, Any]:
+        """Return the brokerage once connected, printing where to connect it.
+
+        Linking a brokerage is an OAuth redirect, so an API key cannot complete
+        it — a human has to open the URL. What this does is make that
+        unmissable and then wait for it.
+
+        ``wait`` defaults to whether stdout is a terminal. Interactively it
+        prints the URL and polls until the link appears. Non-interactively — CI,
+        cron, a piped script — it raises ``brokerage_not_connected`` at once
+        rather than stalling for the timeout in front of nobody. Pass ``wait``
+        explicitly to override either way.
+        """
+        current = self.get_brokerage(brokerage)
+        if current.get("connected"):
+            return current
+
+        connect_url = str(current.get("connectUrl") or "")
+        message = (
+            f"{brokerage} is not connected. Connect it at {connect_url} — "
+            "linking a brokerage is a browser flow an API key cannot complete."
+        )
+        should_wait = _stdout_is_interactive() if wait is None else bool(wait)
+        if not should_wait:
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "brokerage_not_connected",
+                message,
+            )
+
+        print(message, flush=True)
+        print(f"Waiting for {brokerage} to be connected…", flush=True)
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise NexusTradeApiError(
+                    _NO_HTTP_STATUS,
+                    "brokerage_not_connected",
+                    f"{brokerage} was still not connected after "
+                    f"{timeout_seconds:g}s. {message}",
+                )
+            time.sleep(min(poll_interval_seconds, remaining))
+            current = self.get_brokerage(brokerage)
+            if current.get("connected"):
+                print(f"{brokerage} connected.", flush=True)
+                return current
+
+    def create_orders(
+        self,
+        portfolio_id: str,
+        orders: Sequence[Mapping[str, Any]],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Stage orders against a portfolio.
+
+        **Paper orders are accepted immediately. Live orders are staged for
+        approval and are never sent to a broker by this call.** A live response
+        carries ``requiresApproval: True`` and an ``approvalUrl``; nothing has
+        traded until a human approves it there. No argument changes that.
+
+        ```python
+        result = client.create_orders(
+            portfolio_id,
+            [{"asset": {"name": "SPY", "type": "STOCK", "symbol": "SPY"},
+              "side": "BUY", "quantity": 10, "orderType": "MARKET"}],
+            idempotency_key="rebalance-2024-04-01",
+        )
+        if result["requiresApproval"]:
+            print("approve at", result["approvalUrl"])
+        ```
+        """
+        if not isinstance(orders, Sequence) or isinstance(orders, Mapping):
+            raise ValueError("orders must be a sequence of order mappings.")
+        if not orders:
+            raise ValueError("create_orders needs at least one order.")
+        return self._transport.request(
+            "POST",
+            "orders",
+            body={
+                "portfolioId": portfolio_id,
+                "orders": [dict(order) for order in orders],
+            },
+            idempotency_key=idempotency_key,
+        )
 
     def create_backtests(
         self,

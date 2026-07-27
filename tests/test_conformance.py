@@ -18,10 +18,13 @@ from nexustrade.client import NexusTradeApiError, NexusTradeClient
 CASES_PATH = Path(__file__).resolve().parent / "conformance" / "client-cases.json"
 NO_BODY_METHODS = {
     "get_backtest",
+    "get_brokerage",
     "get_custom_indicator",
     "get_optimization",
     "get_walk_forward",
 }
+# Methods that take no positional argument at all; the fixture's `input` is null.
+NO_ARG_METHODS = {"list_brokerages"}
 # Pollers take wait options, not an idempotency key. Zero interval so the
 # fixture pins the REQUEST SEQUENCE without spending its cadence in wall-clock
 # time.
@@ -62,6 +65,8 @@ def _invoke(client: NexusTradeClient, case: dict[str, Any]) -> Any:
     method = getattr(client, case["method"])
     # `args` holds any positional arguments that precede `input`.
     leading = list(case.get("args") or [])
+    if case["method"] in NO_ARG_METHODS:
+        return method()
     if case["method"] in WAIT_METHODS:
         return method(*leading, case["input"], poll_interval_seconds=0)
     if case["method"] in NO_BODY_METHODS:
