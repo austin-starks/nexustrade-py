@@ -27,8 +27,6 @@ __all__: List[str] = [
     "universe",
     "buy",
     "sell",
-    "deposit",
-    "withdraw",
     "alert",
     "launch_agent",
     "dynamic_rebalance",
@@ -419,26 +417,6 @@ def sell(
     return {
         "type": "Sell",
         "targetAsset": _asset(target),
-        "amount": {"type": allocation_type, "amount": amount},
-    }
-
-
-def deposit(
-    amount: float,
-    allocation_type: str = "dollars",
-) -> Dict[str, Any]:
-    return {
-        "type": "Deposit",
-        "amount": {"type": allocation_type, "amount": amount},
-    }
-
-
-def withdraw(
-    amount: float,
-    allocation_type: str = "dollars",
-) -> Dict[str, Any]:
-    return {
-        "type": "Withdraw",
         "amount": {"type": allocation_type, "amount": amount},
     }
 

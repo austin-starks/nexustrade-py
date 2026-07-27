@@ -52,11 +52,21 @@ _TERMINAL_STATUSES = ("cancelled", "completed", "failed")
 class NexusTradeApiError(RuntimeError):
     """Stable error raised for non-2xx NexusTrade SDK responses."""
 
-    def __init__(self, status: int, code: str, message: str) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        operation_id: str | None = None,
+    ) -> None:
         super().__init__(f"{code}: {message}")
         self.status = status
         self.code = code
         self.message = message
+        # Set for operation errors (timeout / failure). A timed-out job is
+        # still running, so the caller needs the id to resume waiting without
+        # resubmitting — reading it out of the message is not an interface.
+        self.operation_id = operation_id
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
@@ -384,7 +394,9 @@ def wait_for_operation(
                 "operation_timeout",
                 f"Operation {operation_id} was still '{status or 'unknown'}' "
                 f"after {timeout_seconds:g}s. It is still running — poll "
-                "again with the same id rather than resubmitting.",
+                "again with the same id (error.operation_id) rather than "
+                "resubmitting.",
+                operation_id,
             )
         if interval > 0:
             time.sleep(min(interval, remaining))
@@ -402,7 +414,7 @@ def _operation_failure(
     if isinstance(error, Mapping):
         code = str(error.get("code") or code)
         message = str(error.get("message") or message)
-    return NexusTradeApiError(_NO_HTTP_STATUS, code, message)
+    return NexusTradeApiError(_NO_HTTP_STATUS, code, message, operation_id)
 
 
 class NexusTradeClient:
