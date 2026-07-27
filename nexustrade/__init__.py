@@ -7,6 +7,13 @@ lake, and compute-host helpers live in submodules and are resolved lazily, so
 Modules named in ``_SANDBOX_ONLY_MODULES`` ship only inside the NexusTrade
 compute sandbox, which overlays them into this package at image build time.
 ``nexustrade.lake`` is published but needs the ``[lake]`` extra.
+
+``# sandbox-prune:begin/end <region>`` comments mark code the compute image
+strips from its copy of this package — agent runs are refused for compute
+principals server-side, so the sandbox never sees that surface. They have no
+effect on an ordinary install: everything between them is live code here. Keep
+the pair balanced when editing, and put new agent entry points inside it. See
+infra/sandbox-compute/prune_agent_surface.py.
 """
 
 from importlib import import_module
@@ -14,7 +21,9 @@ from importlib.util import find_spec
 from typing import Any
 
 from nexustrade import portfolio as _portfolio
+# sandbox-prune:begin agent-surface
 from nexustrade.agent import AgentEvent, AgentRun
+# sandbox-prune:end agent-surface
 from nexustrade.client import (
     HttpTransport,
     NexusTradeApiError,
@@ -26,8 +35,10 @@ from nexustrade.portfolio import *
 
 __all__ = [
     *_portfolio.__all__,
+    # sandbox-prune:begin agent-surface
     "AgentEvent",
     "AgentRun",
+    # sandbox-prune:end agent-surface
     "HttpTransport",
     "NexusTradeApiError",
     "NexusTradeClient",

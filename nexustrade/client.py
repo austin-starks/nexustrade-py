@@ -19,9 +19,11 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from nexustrade.env import LazyDotenv, environment_value
 
+# sandbox-prune:begin agent-surface
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from nexustrade.agent import AgentRun
 
+# sandbox-prune:end agent-surface
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_BYTES = 64 * 1024
 # Cap on a single binary read (lake result parts).
@@ -503,6 +505,7 @@ class NexusTradeClient:
             )
         return operations[0]
 
+    # sandbox-prune:begin agent-surface
     def create_agent(
         self,
         prompt: str,
@@ -572,6 +575,7 @@ class NexusTradeClient:
             )
         return agent
 
+    # sandbox-prune:end agent-surface
     def get_backtest(self, backtest_id: str) -> dict[str, Any]:
         response = self._transport.request(
             "GET",
