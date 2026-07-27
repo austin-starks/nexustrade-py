@@ -4,8 +4,6 @@ Lives next to generated ``portfolio.py`` (builders). ``nt.portfolio(...)``
 returns this class. It subclasses ``dict`` so ``portfolio["name"]``,
 ``json.dumps(portfolio)``, and ``isinstance(portfolio, dict)`` keep working.
 ``id`` is an attribute, not a dict key, so it never leaks into request bodies.
-
-See designs/2026-07-26-sdk-portfolio-objects.md.
 """
 
 from __future__ import annotations

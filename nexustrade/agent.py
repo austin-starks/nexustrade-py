@@ -15,8 +15,6 @@ So the caller *is* the approver::
         print(event.text)
         if event.needs_approval:
             run.approve()
-
-See designs/2026-07-26-sdk-agent-runs.md.
 """
 
 from __future__ import annotations

@@ -153,7 +153,7 @@ class BinaryTransport(Transport, Protocol):
     Lake result parts are Parquet, so they do not fit ``Transport``, which is a
     JSON contract. Declaring the capability lets custom and test transports
     implement downloads against a typed interface instead of being probed with
-    ``hasattr``. Mirrors ``BinaryTransport`` in the TypeScript SDK.
+    ``hasattr``.
     """
 
     def request_bytes(
@@ -488,7 +488,7 @@ class NexusTradeClient:
         limit: int | None = None,
         page: int | None = None,
     ) -> "PortfolioList":
-        """List portfolios. Mirrors MCP ``fetch_portfolios``.
+        """List portfolios with optional filters and pagination.
 
         ``include_positions`` defaults off when ``search`` is set.
         """
