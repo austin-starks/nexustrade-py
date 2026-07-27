@@ -48,6 +48,19 @@ _MAX_POLL_INTERVAL_SECONDS = 15
 _POLL_BACKOFF_FACTOR = 1.5
 _TERMINAL_STATUSES = ("cancelled", "completed", "failed")
 
+# Point batches larger than this are uploaded rather than sent inline.
+_MAX_INLINE_POINT_BYTES = 512 * 1024
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+_POINT_FIELDS = {
+    "timestamp": "timestamp",
+    "value": "value",
+    "ticker": "ticker",
+    "assetType": "assetType",
+    "asset_type": "assetType",
+    "availableAt": "availableAt",
+    "available_at": "availableAt",
+}
+
 
 class NexusTradeApiError(RuntimeError):
     """Stable error raised for non-2xx NexusTrade SDK responses."""
@@ -164,6 +177,22 @@ class BinaryTransport(Transport, Protocol):
         byte_range: tuple[int, int] | None = None,
         max_bytes: int = _MAX_PART_BYTES,
     ) -> bytes: ...
+
+
+@runtime_checkable
+class UploadTransport(Protocol):
+    """A transport that can PUT bytes to a presigned storage URL.
+
+    The URL is absolute and the call carries no credential.
+    """
+
+    def put_bytes(
+        self,
+        url: str,
+        data: bytes,
+        *,
+        content_type: str,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -289,6 +318,57 @@ class HttpTransport:
                 str(error),
             ) from error
 
+    def put_bytes(
+        self,
+        url: str,
+        data: bytes,
+        *,
+        content_type: str,
+    ) -> None:
+        """PUT a payload to a presigned storage URL. Sends no credential."""
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "unsafe_upload_url",
+                "NexusTrade refused a non-HTTPS upload URL.",
+            )
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": content_type},
+            method="PUT",
+        )
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout_seconds,
+            ) as response:
+                if response.status not in (200, 201, 204):
+                    raise NexusTradeApiError(
+                        response.status,
+                        "upload_failed",
+                        f"Storage rejected the upload with HTTP {response.status}.",
+                    )
+        except urllib.error.HTTPError as error:
+            raise NexusTradeApiError(
+                error.code,
+                "upload_failed",
+                f"Storage rejected the upload: {error.reason}.",
+            ) from error
+        except urllib.error.URLError as error:
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "transport_error",
+                str(error.reason),
+            ) from error
+        except (TimeoutError, OSError) as error:
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "transport_error",
+                str(error),
+            ) from error
+
     def request_bytes(
         self,
         method: str,
@@ -350,6 +430,56 @@ class HttpTransport:
                 "transport_error",
                 str(error),
             ) from error
+
+
+def _point_timestamp(value: Any) -> Any:
+    """Render date/datetime objects as ISO-8601; pass strings through."""
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else value
+
+
+def _custom_indicator_point(point: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize one point to its wire shape.
+
+    Accepts snake_case or camelCase field names and date/datetime objects.
+    Raises on an unrecognized field rather than dropping it silently.
+    """
+    normalized: dict[str, Any] = {}
+    for key, value in point.items():
+        target = _POINT_FIELDS.get(key)
+        if target is None:
+            raise ValueError(
+                f"Unknown custom indicator point field {key!r}. Points accept "
+                "timestamp, value, ticker, asset_type, and available_at."
+            )
+        if value is None:
+            continue
+        normalized[target] = (
+            _point_timestamp(value)
+            if target in ("timestamp", "availableAt")
+            else value
+        )
+    if "timestamp" not in normalized:
+        raise ValueError("Every custom indicator point needs a timestamp.")
+    if "value" not in normalized:
+        raise ValueError("Every custom indicator point needs a value.")
+    return normalized
+
+
+def _custom_indicator_points(points: Any) -> list[dict[str, Any]]:
+    if isinstance(points, Mapping) or not isinstance(points, Sequence):
+        raise ValueError("points must be a sequence of point mappings.")
+    return [_custom_indicator_point(point) for point in points]
+
+
+def _points_jsonl(points: Sequence[Mapping[str, Any]]) -> bytes:
+    return "".join(
+        f"{json.dumps(dict(point), separators=(',', ':'))}\n" for point in points
+    ).encode("utf-8")
+
+
+def _inline_point_bytes(points: Sequence[Mapping[str, Any]]) -> int:
+    return len(json.dumps(list(points), separators=(",", ":")).encode("utf-8"))
 
 
 def wait_for_operation(
@@ -594,6 +724,300 @@ class NexusTradeClient:
                 "Undeploy response is missing body.",
             )
         return result
+
+    def create_custom_indicator(
+        self,
+        indicator: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Create a custom data source and return it, including its id.
+
+        Pass ``{"name": ..., "scope": ..., "description": ..., "points": [...]}``.
+        ``scope`` is ``"global"`` (one series) or ``"asset"`` (one series per
+        ticker, so every point needs a ``ticker``); it defaults to ``"global"``
+        and cannot be changed later. ``points`` is optional and unlimited in
+        size — small batches are sent with the request, larger ones are
+        uploaded, and the returned indicator reflects what landed either way.
+
+        The id it returns is what a ``CustomIndicator`` node binds to::
+
+            series = client.create_custom_indicator(
+                {
+                    "name": "WSB NVDA Mentions",
+                    "scope": "asset",
+                    "points": [
+                        {"timestamp": "2024-04-01", "value": 152, "ticker": "NVDA"},
+                    ],
+                },
+                idempotency_key="wsb-mentions-v1",
+            )
+            nt.CustomIndicator(
+                nt.stock_asset("NVDA"), series["customIndicatorId"]
+            )
+
+        Retrying with the same ``idempotency_key`` returns the original series
+        rather than creating a second one.
+        """
+        spec = dict(indicator)
+        name = spec.pop("name", None)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("create_custom_indicator requires a name.")
+        raw_points = spec.pop("points", None)
+        points = _custom_indicator_points(raw_points) if raw_points else []
+        body: dict[str, Any] = {"name": name.strip()}
+        for key in ("description", "scope"):
+            value = spec.pop(key, None)
+            if value is not None:
+                body[key] = value
+        if spec:
+            raise ValueError(
+                "Unknown custom indicator field(s): "
+                f"{', '.join(sorted(spec))}. Expected name, description, "
+                "scope, and points."
+            )
+        inline = points and _inline_point_bytes(points) <= _MAX_INLINE_POINT_BYTES
+        if inline:
+            body["points"] = points
+        created = self._custom_indicator(
+            self._transport.request(
+                "POST",
+                "custom-indicators",
+                body=body,
+                idempotency_key=idempotency_key,
+            )
+        )
+        if inline or not points:
+            return created
+        custom_indicator_id = str(created["customIndicatorId"])
+        # The same key is safe here: the server namespaces an idempotency
+        # claim by operation, and deriving a suffixed key could overrun its
+        # 160-character limit.
+        upload = self._upload_custom_indicator_points(
+            custom_indicator_id,
+            points,
+            idempotency_key=idempotency_key,
+        )
+        return {
+            **self.get_custom_indicator(custom_indicator_id),
+            "upload": upload,
+        }
+
+    def list_custom_indicators(
+        self,
+        *,
+        include_archived: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """List the custom data sources this account owns."""
+        path = "custom-indicators"
+        if include_archived is not None:
+            path = f"{path}?includeArchived={str(include_archived).lower()}"
+        response = self._transport.request("GET", path)
+        indicators = response.get("indicators")
+        if not isinstance(indicators, list):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Custom indicator list response is missing indicators.",
+            )
+        return [dict(row) for row in indicators if isinstance(row, Mapping)]
+
+    def get_custom_indicator(self, custom_indicator_id: str) -> dict[str, Any]:
+        """Read one custom data source, including its current point count."""
+        return self._custom_indicator(
+            self._transport.request(
+                "GET",
+                f"custom-indicators/{urllib.parse.quote(custom_indicator_id, safe='')}",
+            )
+        )
+
+    def append_custom_indicator_points(
+        self,
+        custom_indicator_id: str,
+        points: Sequence[Mapping[str, Any]],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Add points to an existing series and return the updated indicator.
+
+        Recurring collection must append to the same ``custom_indicator_id``
+        every run; creating a fresh series per run splits the history into
+        fragments a strategy cannot read. Re-sending an identical batch is
+        safe — the duplicate is not written twice.
+
+        The batch is unlimited in size and, as with creation, is sent inline or
+        uploaded depending on how large it is.
+        """
+        normalized = _custom_indicator_points(points)
+        if not normalized:
+            raise ValueError("append_custom_indicator_points needs at least one point.")
+        quoted = urllib.parse.quote(custom_indicator_id, safe="")
+        if _inline_point_bytes(normalized) <= _MAX_INLINE_POINT_BYTES:
+            response = self._transport.request(
+                "POST",
+                f"custom-indicators/{quoted}/points",
+                body={"points": normalized},
+                idempotency_key=idempotency_key,
+            )
+            indicator = response.get("indicator")
+            if not isinstance(indicator, dict):
+                raise NexusTradeApiError(
+                    _NO_HTTP_STATUS,
+                    "invalid_response",
+                    "Custom indicator response is missing indicator.",
+                )
+            return indicator
+        upload = self._upload_custom_indicator_points(
+            custom_indicator_id,
+            normalized,
+            idempotency_key=idempotency_key,
+        )
+        return {
+            **self.get_custom_indicator(custom_indicator_id),
+            "upload": upload,
+        }
+
+    def create_custom_indicator_upload(
+        self,
+        custom_indicator_id: str,
+        *,
+        file_name: str,
+        idempotency_key: str,
+        format: str = "jsonl",
+        content_type: str | None = None,
+        size_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Open an upload slot and return a presigned ``uploadUrl`` to PUT to.
+
+        Accepts ``csv``, ``json``, or ``jsonl`` up to 100 MB. PUT the bytes to
+        the returned URL, then call ``complete_custom_indicator_upload``. Most
+        callers can pass ``points`` to ``create_custom_indicator`` or
+        ``append_custom_indicator_points`` instead and skip all three steps.
+
+        Retrying with the same ``idempotency_key`` re-signs the same job, since
+        the first URL expires in 15 minutes. Once its bytes have arrived the
+        reply carries no ``uploadUrl`` — there is nothing left to send, so skip
+        the PUT and wait on ``jobId``.
+        """
+        body: dict[str, Any] = {"fileName": file_name, "format": format}
+        if content_type is not None:
+            body["contentType"] = content_type
+        if size_bytes is not None:
+            body["sizeBytes"] = size_bytes
+        response = self._transport.request(
+            "POST",
+            f"custom-indicators/{urllib.parse.quote(custom_indicator_id, safe='')}/uploads",
+            body=body,
+            idempotency_key=idempotency_key,
+        )
+        ticket = response.get("ticket")
+        if not isinstance(ticket, dict) or not ticket.get("jobId"):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Upload response is missing ticket.",
+            )
+        return ticket
+
+    def complete_custom_indicator_upload(
+        self,
+        custom_indicator_id: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        """Start validation of uploaded bytes and return the operation."""
+        return self._operation(
+            self._transport.request(
+                "POST",
+                f"custom-indicators/{urllib.parse.quote(custom_indicator_id, safe='')}"
+                f"/uploads/{urllib.parse.quote(job_id, safe='')}/complete",
+                body={},
+            )
+        )
+
+    def get_custom_indicator_upload(
+        self,
+        custom_indicator_id: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        """Read an upload operation. ``phase`` distinguishes the live states."""
+        return self._operation(
+            self._transport.request(
+                "GET",
+                f"custom-indicators/{urllib.parse.quote(custom_indicator_id, safe='')}"
+                f"/uploads/{urllib.parse.quote(job_id, safe='')}",
+            )
+        )
+
+    def wait_for_custom_indicator_upload(
+        self,
+        custom_indicator_id: str,
+        job_id: str,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """Block until an upload is validated. See ``wait_for_operation``."""
+        return wait_for_operation(
+            lambda pending_id: self.get_custom_indicator_upload(
+                custom_indicator_id,
+                pending_id,
+            ),
+            job_id,
+            **options,
+        )
+
+    def _upload_custom_indicator_points(
+        self,
+        custom_indicator_id: str,
+        points: Sequence[Mapping[str, Any]],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        payload = _points_jsonl(points)
+        if len(payload) > _MAX_UPLOAD_BYTES:
+            raise ValueError(
+                f"{len(points)} points serialize to "
+                f"{len(payload) // (1024 * 1024)} MB, over the 100 MB upload "
+                "limit. Send them in several batches."
+            )
+        transport = self._transport
+        if not isinstance(transport, UploadTransport):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "unsupported_transport",
+                "Uploading a large point batch requires HttpTransport.put_bytes.",
+            )
+        ticket = self.create_custom_indicator_upload(
+            custom_indicator_id,
+            file_name=f"{custom_indicator_id}-points.jsonl",
+            format="jsonl",
+            size_bytes=len(payload),
+            idempotency_key=idempotency_key,
+        )
+        job_id = str(ticket["jobId"])
+        # No upload URL means this batch already reached the server on an
+        # earlier attempt, so resume at polling instead of re-sending it.
+        if ticket.get("uploadUrl"):
+            headers = ticket.get("headers")
+            content_type = "application/x-ndjson"
+            if isinstance(headers, Mapping):
+                content_type = str(headers.get("Content-Type") or content_type)
+            transport.put_bytes(
+                str(ticket["uploadUrl"]),
+                payload,
+                content_type=content_type,
+            )
+            self.complete_custom_indicator_upload(custom_indicator_id, job_id)
+        return self.wait_for_custom_indicator_upload(custom_indicator_id, job_id)
+
+    @staticmethod
+    def _custom_indicator(response: Mapping[str, Any]) -> dict[str, Any]:
+        indicator = response.get("indicator")
+        if not isinstance(indicator, dict) or not indicator.get("customIndicatorId"):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Custom indicator response is missing indicator.",
+            )
+        return indicator
 
     def create_backtests(
         self,
@@ -964,11 +1388,26 @@ def create_portfolio(
     )
 
 
+def create_custom_indicator(
+    indicator: Mapping[str, Any],
+    *,
+    idempotency_key: str,
+    client: NexusTradeClient | None = None,
+) -> dict[str, Any]:
+    """Convenience wrapper for scripts that do not need a persistent client."""
+    return (client or NexusTradeClient.from_environment()).create_custom_indicator(
+        indicator,
+        idempotency_key=idempotency_key,
+    )
+
+
 __all__ = [
     "HttpTransport",
     "NexusTradeApiError",
     "NexusTradeClient",
     "Transport",
+    "UploadTransport",
+    "create_custom_indicator",
     "create_portfolio",
     "wait_for_operation",
 ]

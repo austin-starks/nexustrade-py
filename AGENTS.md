@@ -54,10 +54,10 @@ retry with a new key launches a second paid job.
 
 ```python
 # Right — same logical run reuses the key across retries
-nt.create_backtest(handle, idempotency_key="momentum-2024-v1")
+client.create_backtest(handle, idempotency_key="momentum-2024-v1")
 
 # Wrong — every retry is a new billable job
-nt.create_backtest(handle, idempotency_key=f"run-{time.time()}")
+client.create_backtest(handle, idempotency_key=f"run-{time.time()}")
 ```
 
 Reusing a key with a *different* payload is a `409 idempotency_conflict`. Version
@@ -66,9 +66,9 @@ the key when the request changes: `momentum-2024-v2`.
 **3. `create_*` does not wait. Poll.**
 
 ```python
-operation = nt.create_backtest(handle, idempotency_key="k")
+operation = client.create_backtest(handle, idempotency_key="k")
 # operation["result"] is ABSENT here — the job has not run yet.
-finished = nt.wait_for_backtest(operation["id"])
+finished = client.wait_for_backtest(operation["id"])
 print(finished["result"])
 ```
 
@@ -78,8 +78,8 @@ do not resubmit.
 **4. Batch when you have several.**
 
 ```python
-operations = nt.create_backtests([h1, h2, h3], idempotency_key="sweep-v1")
-results = nt.wait_for_backtests(operations)
+operations = client.create_backtests([h1, h2, h3], idempotency_key="sweep-v1")
+results = client.wait_for_backtests(operations)
 ```
 
 One request, one key, one rate-limit slot — instead of three of each.
@@ -98,6 +98,25 @@ over the file, so a `.env` cannot silently override a deployment's real config.
 'nexustrade[lake]'`; `nt.spec_curve` and friends need `[stats]`. Missing extras
 raise an `AttributeError` that names the extra to install — read it rather than
 guessing.
+
+**8. Your own data belongs in ONE series.** `create_custom_indicator` mints a
+new series every time it is called with a fresh idempotency key. Recurring
+collection must `append_custom_indicator_points` onto the id it created the
+first time — a new series per run splits the history into fragments no strategy
+can read. Persist the id; never re-create by name.
+
+```python
+# Right — one series, appended forever
+client.append_custom_indicator_points(series_id, todays_points,
+                                  idempotency_key=f"mentions-{today}")
+
+# Wrong — a new, disconnected series every run
+client.create_custom_indicator({"name": "Mentions", "points": todays_points},
+                           idempotency_key=f"mentions-{today}")
+```
+
+Point batches are unlimited in size; the SDK sends them inline or uploads them.
+Do not chunk by hand.
 
 ## Recipes
 
@@ -200,7 +219,7 @@ Agents are the one job kind that is NOT fire-and-poll. Three states —
 ones the run cannot leave on its own, so the caller is the approver.
 
 ```python
-run = nt.create_agent("Find momentum names in the S&P 500",
+run = client.create_agent("Find momentum names in the S&P 500",
                       idempotency_key="momentum-scan-v1")
 
 for event in run:
@@ -215,7 +234,7 @@ print(run.status)
 
 Iterating blocks. If you never answer a blocked run, iteration raises
 `agent_awaiting_input` rather than spinning silently — the run keeps going
-server-side, so reattach with `nt.attach_agent(run.id)`.
+server-side, so reattach with `client.attach_agent(run.id)`.
 
 Approving can place orders, so it needs the `trade` scope; everything else
 needs `write`. Agent runs are unavailable to `run_compute` sandbox code.

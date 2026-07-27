@@ -715,6 +715,254 @@
         "kind": "walk_forward",
         "status": "completed"
       }
+    },
+    {
+      "name": "create_custom_indicator sends a small batch inline",
+      "method": "create_custom_indicator",
+      "input": {
+        "name": "  WSB NVDA Mentions  ",
+        "scope": "asset",
+        "description": "Daily mentions",
+        "points": [
+          {
+            "timestamp": "2024-04-01",
+            "value": 152,
+            "ticker": "NVDA"
+          }
+        ]
+      },
+      "idempotency_key": "wsb-v1",
+      "responses": [
+        {
+          "indicator": {
+            "customIndicatorId": "ci-1",
+            "pointCount": 1
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "custom-indicators",
+          "body": {
+            "name": "WSB NVDA Mentions",
+            "description": "Daily mentions",
+            "scope": "asset",
+            "points": [
+              {
+                "timestamp": "2024-04-01",
+                "value": 152,
+                "ticker": "NVDA"
+              }
+            ]
+          },
+          "idempotency_key": "wsb-v1"
+        }
+      ],
+      "expected_result": {
+        "customIndicatorId": "ci-1",
+        "pointCount": 1
+      }
+    },
+    {
+      "name": "create_custom_indicator normalizes point field aliases",
+      "method": "create_custom_indicator",
+      "input": {
+        "name": "Signal",
+        "points": [
+          {
+            "timestamp": "2024-04-01",
+            "value": 1,
+            "available_at": "2024-04-02",
+            "asset_type": "stock",
+            "ticker": "NVDA"
+          }
+        ]
+      },
+      "idempotency_key": "sig-v1",
+      "responses": [
+        {
+          "indicator": {
+            "customIndicatorId": "ci-2"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "custom-indicators",
+          "body": {
+            "name": "Signal",
+            "points": [
+              {
+                "timestamp": "2024-04-01",
+                "value": 1,
+                "availableAt": "2024-04-02",
+                "assetType": "stock",
+                "ticker": "NVDA"
+              }
+            ]
+          },
+          "idempotency_key": "sig-v1"
+        }
+      ],
+      "expected_result": {
+        "customIndicatorId": "ci-2"
+      }
+    },
+    {
+      "name": "create_custom_indicator omits points when none are given",
+      "method": "create_custom_indicator",
+      "input": {
+        "name": "Empty"
+      },
+      "idempotency_key": "empty-v1",
+      "responses": [
+        {
+          "indicator": {
+            "customIndicatorId": "ci-3",
+            "pointCount": 0
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "custom-indicators",
+          "body": {
+            "name": "Empty"
+          },
+          "idempotency_key": "empty-v1"
+        }
+      ],
+      "expected_result": {
+        "customIndicatorId": "ci-3",
+        "pointCount": 0
+      }
+    },
+    {
+      "name": "an unknown point field is rejected before any request",
+      "method": "create_custom_indicator",
+      "input": {
+        "name": "Typo",
+        "points": [
+          {
+            "timestamp": "2024-04-01",
+            "value": 1,
+            "availabe_at": "2024-04-02"
+          }
+        ]
+      },
+      "idempotency_key": "typo-v1",
+      "responses": [],
+      "expected_calls": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "availabe_at"
+      }
+    },
+    {
+      "name": "a custom indicator without a name is rejected before any request",
+      "method": "create_custom_indicator",
+      "input": {
+        "scope": "asset"
+      },
+      "idempotency_key": "noname-v1",
+      "responses": [],
+      "expected_calls": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "requires a name"
+      }
+    },
+    {
+      "name": "append_custom_indicator_points posts to the owned series",
+      "method": "append_custom_indicator_points",
+      "args": [
+        "ci 1/x"
+      ],
+      "input": [
+        {
+          "timestamp": "2024-04-02",
+          "value": 8,
+          "ticker": "NVDA"
+        }
+      ],
+      "idempotency_key": "append-v1",
+      "responses": [
+        {
+          "acceptedRows": 1,
+          "indicator": {
+            "customIndicatorId": "ci-1",
+            "pointCount": 2
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "custom-indicators/ci%201%2Fx/points",
+          "body": {
+            "points": [
+              {
+                "timestamp": "2024-04-02",
+                "value": 8,
+                "ticker": "NVDA"
+              }
+            ]
+          },
+          "idempotency_key": "append-v1"
+        }
+      ],
+      "expected_result": {
+        "customIndicatorId": "ci-1",
+        "pointCount": 2
+      }
+    },
+    {
+      "name": "get_custom_indicator reads an owner-scoped path with no body",
+      "method": "get_custom_indicator",
+      "input": "ci-1",
+      "responses": [
+        {
+          "indicator": {
+            "customIndicatorId": "ci-1",
+            "pointCount": 5
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "custom-indicators/ci-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "customIndicatorId": "ci-1",
+        "pointCount": 5
+      }
+    },
+    {
+      "name": "a missing indicator envelope raises a stable api error",
+      "method": "get_custom_indicator",
+      "input": "ci-1",
+      "responses": [
+        {}
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "custom-indicators/ci-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_error": {
+        "kind": "api_error",
+        "code": "invalid_response"
+      }
     }
   ]
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import unittest
@@ -39,6 +40,19 @@ class FakeTransport:
         if isinstance(scripted, Exception):
             raise scripted
         return scripted
+
+
+class UploadingTransport(FakeTransport):
+    """FakeTransport that can also record presigned PUTs."""
+
+    def __init__(self, responses: list[dict]) -> None:
+        super().__init__(responses)
+        self.uploads: list[dict] = []
+
+    def put_bytes(self, url: str, data: bytes, *, content_type: str) -> None:
+        self.uploads.append(
+            {"url": url, "data": data, "content_type": content_type}
+        )
 
 
 class AlwaysRunningTransport:
@@ -539,6 +553,230 @@ class NexusTradeClientTests(unittest.TestCase):
             "http://127.0.0.1:3000/api/v1",
         )
         self.assertEqual(loopback.base_url, "http://127.0.0.1:3000/api/v1")
+
+
+class CustomIndicatorTests(unittest.TestCase):
+    @staticmethod
+    def _big_points(count: int) -> list[dict]:
+        return [
+            {"timestamp": f"2024-04-{(index % 28) + 1:02d}", "value": index,
+             "ticker": f"TCK{index:05d}"}
+            for index in range(count)
+        ]
+
+    def test_a_large_batch_uploads_instead_of_inlining(self) -> None:
+        points = self._big_points(20_000)
+        transport = UploadingTransport(
+            [
+                {"indicator": {"customIndicatorId": "ci-1", "pointCount": 0}},
+                {
+                    "ticket": {
+                        "jobId": "job-1",
+                        "uploadUrl": "https://storage.example/put",
+                        "headers": {"Content-Type": "application/x-ndjson"},
+                    }
+                },
+                {"operation": {"id": "job-1", "status": "queued"}},
+                {
+                    "operation": {
+                        "id": "job-1",
+                        "status": "completed",
+                        "result": {"acceptedRows": len(points)},
+                    }
+                },
+                {
+                    "indicator": {
+                        "customIndicatorId": "ci-1",
+                        "pointCount": len(points),
+                    }
+                },
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        result = client.create_custom_indicator(
+            {"name": "Big", "scope": "asset", "points": points},
+            idempotency_key="big-v1",
+        )
+
+        # The create request carries no points; they went to storage directly.
+        self.assertNotIn("points", transport.calls[0]["body"])
+        self.assertEqual(
+            [call["path"] for call in transport.calls],
+            [
+                "custom-indicators",
+                "custom-indicators/ci-1/uploads",
+                "custom-indicators/ci-1/uploads/job-1/complete",
+                "custom-indicators/ci-1/uploads/job-1",
+                "custom-indicators/ci-1",
+            ],
+        )
+        ticket_body = transport.calls[1]["body"]
+        self.assertEqual(ticket_body["format"], "jsonl")
+        self.assertEqual(ticket_body["sizeBytes"], len(transport.uploads[0]["data"]))
+        # The server namespaces claims by operation, so reusing the key is
+        # safe and cannot overrun its length limit.
+        self.assertEqual(transport.calls[1]["idempotency_key"], "big-v1")
+        self.assertEqual(transport.uploads[0]["url"], "https://storage.example/put")
+        self.assertEqual(
+            transport.uploads[0]["content_type"],
+            "application/x-ndjson",
+        )
+        self.assertEqual(
+            transport.uploads[0]["data"].count(b"\n"),
+            len(points),
+        )
+        self.assertEqual(result["pointCount"], len(points))
+        self.assertEqual(result["upload"]["result"]["acceptedRows"], len(points))
+
+    def test_a_retry_resumes_polling_instead_of_resending_the_batch(self) -> None:
+        """An upload interrupted after its PUT must be resumable.
+
+        The replayed ticket carries no uploadUrl because the bytes already
+        landed; re-sending them (or failing outright) would strand a caller
+        whose only fault was a poll timeout.
+        """
+        points = self._big_points(20_000)
+        transport = UploadingTransport(
+            [
+                {"indicator": {"customIndicatorId": "ci-1", "pointCount": 0}},
+                # Replayed ticket: job known, nothing left to upload.
+                {"ticket": {"jobId": "job-1", "status": "validating"}},
+                {
+                    "operation": {
+                        "id": "job-1",
+                        "status": "completed",
+                        "result": {"acceptedRows": len(points)},
+                    }
+                },
+                {
+                    "indicator": {
+                        "customIndicatorId": "ci-1",
+                        "pointCount": len(points),
+                    }
+                },
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        result = client.create_custom_indicator(
+            {"name": "Big", "scope": "asset", "points": points},
+            idempotency_key="big-v1",
+        )
+
+        self.assertEqual(transport.uploads, [])
+        self.assertEqual(
+            [call["path"] for call in transport.calls],
+            [
+                "custom-indicators",
+                "custom-indicators/ci-1/uploads",
+                # No /complete — the first attempt already started validation.
+                "custom-indicators/ci-1/uploads/job-1",
+                "custom-indicators/ci-1",
+            ],
+        )
+        self.assertEqual(result["pointCount"], len(points))
+
+    def test_a_failed_upload_raises_rather_than_reporting_success(self) -> None:
+        transport = UploadingTransport(
+            [
+                {"indicator": {"customIndicatorId": "ci-1"}},
+                {
+                    "ticket": {
+                        "jobId": "job-1",
+                        "uploadUrl": "https://storage.example/put",
+                        "headers": {"Content-Type": "application/x-ndjson"},
+                    }
+                },
+                {"operation": {"id": "job-1", "status": "queued"}},
+                {
+                    "operation": {
+                        "id": "job-1",
+                        "status": "failed",
+                        "error": {
+                            "code": "custom_indicator_upload_failed",
+                            "message": "row 4: Invalid datetime",
+                        },
+                    }
+                },
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        with self.assertRaises(client_module.NexusTradeApiError) as raised:
+            client.create_custom_indicator(
+                {"name": "Big", "scope": "asset", "points": self._big_points(20_000)},
+                idempotency_key="big-v1",
+            )
+        self.assertEqual(raised.exception.code, "custom_indicator_upload_failed")
+
+    def test_a_large_batch_needs_an_upload_capable_transport(self) -> None:
+        transport = FakeTransport([{"indicator": {"customIndicatorId": "ci-1"}}])
+        client = client_module.NexusTradeClient(transport=transport)
+
+        with self.assertRaises(client_module.NexusTradeApiError) as raised:
+            client.create_custom_indicator(
+                {"name": "Big", "points": self._big_points(20_000)},
+                idempotency_key="big-v1",
+            )
+        self.assertEqual(raised.exception.code, "unsupported_transport")
+
+    def test_datetime_points_are_serialized_as_iso_strings(self) -> None:
+        transport = FakeTransport([{"indicator": {"customIndicatorId": "ci-1"}}])
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.create_custom_indicator(
+            {
+                "name": "Dated",
+                "points": [{"timestamp": datetime.date(2024, 4, 1), "value": 3}],
+            },
+            idempotency_key="dated-v1",
+        )
+        self.assertEqual(
+            transport.calls[0]["body"]["points"],
+            [{"timestamp": "2024-04-01", "value": 3}],
+        )
+
+    def test_list_passes_the_archive_filter(self) -> None:
+        transport = FakeTransport([{"indicators": [{"customIndicatorId": "ci-1"}]}])
+        client = client_module.NexusTradeClient(transport=transport)
+
+        indicators = client.list_custom_indicators(include_archived=True)
+
+        self.assertEqual(
+            transport.calls[0]["path"],
+            "custom-indicators?includeArchived=true",
+        )
+        self.assertEqual(indicators, [{"customIndicatorId": "ci-1"}])
+
+    def test_put_bytes_refuses_a_plaintext_upload_url(self) -> None:
+        transport = client_module.HttpTransport("sk-temp", "https://api.example/v1")
+        with self.assertRaises(client_module.NexusTradeApiError) as raised:
+            transport.put_bytes("http://storage.example/put", b"x", content_type="text/csv")
+        self.assertEqual(raised.exception.code, "unsafe_upload_url")
+
+    def test_put_bytes_sends_no_credential(self) -> None:
+        transport = client_module.HttpTransport("sk-secret", "https://api.example/v1")
+        captured: list[urllib.request.Request] = []
+
+        def fake_urlopen(request, timeout=None):  # noqa: ANN001 - test double
+            captured.append(request)
+            response = mock.MagicMock()
+            response.status = 204
+            response.__enter__.return_value = response
+            response.__exit__.return_value = False
+            return response
+
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen):
+            transport.put_bytes(
+                "https://storage.example/put",
+                b"rows",
+                content_type="application/x-ndjson",
+            )
+
+        self.assertEqual(captured[0].get_method(), "PUT")
+        self.assertIsNone(captured[0].get_header("Authorization"))
+        self.assertEqual(captured[0].data, b"rows")
 
 
 if __name__ == "__main__":

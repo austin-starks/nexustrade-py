@@ -28,6 +28,7 @@ from nexustrade.client import (
     HttpTransport,
     NexusTradeApiError,
     NexusTradeClient,
+    create_custom_indicator,
     create_portfolio,
     wait_for_operation,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "NexusTradeClient",
     "Portfolio",
     "PortfolioList",
+    "create_custom_indicator",
     "create_portfolio",
     "wait_for_operation",
 ]

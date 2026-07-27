@@ -33,17 +33,17 @@ pip install 'nexustrade[stats]'   # spec curves, Newey-West, bootstrap
 ```python
 from nexustrade import NexusTradeClient, always, backtest, buy, portfolio, stock_asset, strategy
 
-nt = NexusTradeClient(api_key="sk-...", base_url="https://nexustrade.io/api/v1")
+client = NexusTradeClient(api_key="sk-...", base_url="https://nexustrade.io/api/v1")
 
 book = portfolio("Example", [
     strategy("Buy SPY", always(), buy(stock_asset("SPY"), 100)),
 ])
 
-operation = nt.create_backtest(
+operation = client.create_backtest(
     backtest(book, start_date="2024-01-01", end_date="2024-12-31"),
     idempotency_key="example-v1",
 )
-result = nt.wait_for_backtest(operation["id"])
+result = client.wait_for_backtest(operation["id"])
 print(result["result"])
 ```
 
@@ -132,7 +132,7 @@ Every job kind reports the same envelope, so one poller serves all of them:
 ```
 
 ```python
-finished = nt.wait_for_backtest(operation["id"])   # blocks on deterministic backoff
+finished = client.wait_for_backtest(operation["id"])   # blocks on deterministic backoff
 ```
 
 | Option | Default | Meaning |
@@ -152,13 +152,79 @@ over a loop: one request, one idempotency key, one rate-limit slot.
 **Optimization and walk-forward** follow the identical shape:
 
 ```python
-study = nt.create_walk_forward(
+study = client.create_walk_forward(
     nt.walk_forward(book, global_start_date="2022-01-01",
                     global_end_date="2024-12-31", fold_count=4),
     idempotency_key="wf-v1",
 )
-nt.wait_for_walk_forward(study["id"])
+client.wait_for_walk_forward(study["id"])
 ```
+
+## Your own data
+
+A custom data source is a time series you own — sentiment counts, a proprietary
+factor, anything the platform does not already carry. Create one, then reference
+it from a strategy with `CustomIndicator`.
+
+```python
+series = client.create_custom_indicator(
+    {
+        "name": "WSB NVDA Mentions",
+        "scope": "asset",
+        "description": "Daily r/wallstreetbets mentions",
+        "points": [
+            {"timestamp": "2024-04-01", "value": 152, "ticker": "NVDA"},
+            {"timestamp": "2024-04-02", "value": 90, "ticker": "NVDA"},
+        ],
+    },
+    idempotency_key="wsb-mentions-v1",
+)
+
+busy = CustomIndicator(stock_asset("NVDA"), series["customIndicatorId"]) > 100
+book = portfolio("Attention", [
+    strategy("Buy the buzz", busy, buy(stock_asset("NVDA"), 25)),
+])
+```
+
+`scope` is `"global"` (one series) or `"asset"` (one series per ticker, so every
+point needs a `ticker`). It cannot be changed after creation.
+
+**Size is not a constraint.** `points` is unlimited. A batch that fits the
+request goes with it; a larger one is uploaded to storage and validated before
+the call returns. Either way the returned indicator reflects what actually
+landed, and an upload that fails validation raises rather than reporting
+success.
+
+**Growing a series.** Append to the same id every run:
+
+```python
+client.append_custom_indicator_points(
+    series["customIndicatorId"],
+    [{"timestamp": "2024-04-03", "value": 118, "ticker": "NVDA"}],
+    idempotency_key="wsb-mentions-2024-04-03",
+)
+```
+
+Creating a fresh series per run splits the history into fragments no strategy
+can read. Re-sending an identical batch is safe — the duplicate is not written
+twice.
+
+| Call | Purpose |
+| --- | --- |
+| `create_custom_indicator(spec, idempotency_key=...)` | Create, optionally seeded |
+| `append_custom_indicator_points(id, points, idempotency_key=...)` | Add points |
+| `list_custom_indicators()` / `get_custom_indicator(id)` | Discover ids and coverage |
+
+Points accept `timestamp`, `value`, `ticker`, `asset_type`, and `available_at`
+— snake_case or camelCase, with `date`/`datetime` objects allowed. Set
+`available_at` when a value became knowable later than it is dated: an earnings
+figure stamped to quarter-end but published weeks after. An unrecognized field
+raises rather than being silently dropped.
+
+To hand over a file you already have on disk,
+`create_custom_indicator_upload` / `complete_custom_indicator_upload` /
+`wait_for_custom_indicator_upload` expose the three steps directly. CSV, JSON,
+and JSONL up to 100 MB.
 
 ## Agent runs
 
@@ -199,7 +265,7 @@ sequenceDiagram
 ```
 
 ```python
-run = nt.create_agent("Find momentum names in the S&P 500",
+run = client.create_agent("Find momentum names in the S&P 500",
                       idempotency_key="momentum-scan-v1")
 for event in run:
     print(event.text)
@@ -247,9 +313,9 @@ Create a key at **[nexustrade.io/developers](https://nexustrade.io/developers)**
 (Profile → API Keys). Keys start with `sk-` and are shown once.
 
 ```python
-nt = NexusTradeClient(api_key="sk-...", base_url="https://nexustrade.io/api/v1")
+client = NexusTradeClient(api_key="sk-...", base_url="https://nexustrade.io/api/v1")
 # or set NEXUSTRADE_API_KEY / NEXUSTRADE_API_BASE_URL and:
-nt = NexusTradeClient.from_environment()
+client = NexusTradeClient.from_environment()
 ```
 
 Both variables are also read from a **`.env` file** at or above the current
@@ -289,7 +355,7 @@ the original resource instead of launching a second paid job — so a retry afte
 a network failure is free.
 
 ```python
-nt.create_backtest(handle, idempotency_key="momentum-2024-v1")
+client.create_backtest(handle, idempotency_key="momentum-2024-v1")
 ```
 
 ## Errors
@@ -298,7 +364,7 @@ nt.create_backtest(handle, idempotency_key="momentum-2024-v1")
 from nexustrade import NexusTradeApiError
 
 try:
-    nt.create_backtest(handle, idempotency_key="run-1")
+    client.create_backtest(handle, idempotency_key="run-1")
 except NexusTradeApiError as error:
     if error.code == "rate_limit_exceeded":
         ...
