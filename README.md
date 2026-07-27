@@ -312,6 +312,7 @@ except NexusTradeApiError as error:
 | 400 | `invalid_request`, `invalid_portfolio` | Malformed input |
 | 400 | `invalid_idempotency_key` | Must match `[A-Za-z0-9._:-]{1,160}` |
 | 409 | `idempotency_conflict` | Key reused with a different payload |
+| 409 | `idempotency_in_progress` | Same key, first call still running. Re-poll, do not resubmit |
 | 404 | `not_found`, `operation_not_found` | Unknown or not yours |
 | 429 | `rate_limit_exceeded` | Back off and retry |
 

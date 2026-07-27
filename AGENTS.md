@@ -232,6 +232,7 @@ All failures raise `NexusTradeApiError` with a stable `.status`, `.code`, and
 | `insufficient_scope` | The key lacks `read` / `write` / `lake`. Do not retry. |
 | `invalid_portfolio` | The book is malformed — fix the builders, do not retry as-is. |
 | `idempotency_conflict` | Same key, different payload. Version the key. |
+| `idempotency_in_progress` | Same key, first call still running. Wait and re-read; never resubmit. |
 | `rate_limit_exceeded` | Back off and retry. |
 | `operation_timeout` | Job still running. Re-poll the same id; never resubmit. |
 

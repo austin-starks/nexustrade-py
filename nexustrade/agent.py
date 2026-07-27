@@ -72,6 +72,12 @@ class AgentRun:
     events: list[AgentEvent] = field(default_factory=list, repr=False)
     _cursor: str | None = field(default=None, repr=False)
     _seen: dict[str, str] = field(default_factory=dict, repr=False)
+    #: Advances only after a POST is acknowledged, so a retry of a call that
+    #: failed reuses its key and is deduped, while two different calls never
+    #: collide. Keying on ``len(events)`` did the latter wrong: two messages
+    #: sent without iterating between them shared a key and the second was
+    #: rejected as an idempotency conflict.
+    _action_seq: int = field(default=0, repr=False)
     #: Give up waiting on a blocked run after this long. The run keeps going.
     timeout_seconds: float = _DEFAULT_POLL_TIMEOUT_SECONDS
     poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS
@@ -243,8 +249,9 @@ class AgentRun:
             "POST",
             f"agents/{urllib.parse.quote(self.id, safe='')}/{action}",
             body=body or {},
-            idempotency_key=f"{self.id}:{action}:{len(self.events)}",
+            idempotency_key=f"{self.id}:{action}:{self._action_seq}",
         )
+        self._action_seq += 1
         agent = response.get("agent")
         if isinstance(agent, Mapping):
             self.status = str(agent.get("status") or self.status)
