@@ -278,11 +278,13 @@ you did not create in this session as possibly live.
 Not in this SDK. Do not attempt to reach them through it:
 
 - **Screener** — MCP only.
-- **Order placement** — not exposed. No route on this API submits an order.
-- **Creating a live deployment, and connecting a brokerage** — both happen in
-  the web app. No route under the SDK prefix does either. This is about
-  *creating* one; see above for reactivating a live portfolio that already
-  exists.
+- **Submitting a live order** — impossible from anywhere, not just here. Live
+  orders are staged `PENDING_USER_APPROVAL` and a human approves them in the
+  UI; the brokerage boundary refuses an unapproved live order regardless of
+  caller. `create_orders` stages them, it does not send them.
+- **Minting a live portfolio, and connecting a brokerage** — both happen in the
+  web app. No route under the SDK prefix creates a live deployment; see above
+  for reactivating a live portfolio that already exists.
 
 The complete method list — every client and handle method, including the ones
 without a worked example above — is the **Complete method reference** table in
