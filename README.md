@@ -182,7 +182,7 @@ Hold on to `deployment["portfolioId"]` for anything that reads live state;
 
 ```python
 deployment["portfolioId"]      # the running portfolio
-deployment["deploymentType"]   # paper
+deployment["deploymentType"]   # paper, unless you deployed an existing live one
 deployment["outcome"]          # created | reactivated
 ```
 
@@ -200,9 +200,16 @@ client.get_portfolio(portfolio_id)
 `include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
 `include_positions` defaults off when `search` is set.
 
-**Live trading is not reachable from this SDK yet.** `deploy` is paper only.
-Connecting a brokerage and deploying live happen in the web app; placing orders
-is not exposed here at all. See [Scope](#scope).
+**A portfolio you create here is always paper**, and placing orders is not
+exposed at all. Connecting a brokerage and creating a live deployment happen in
+the web app.
+
+**But `deploy` can start live trading.** Given the id of a portfolio that is
+already deployed, it reactivates that portfolio as whatever it already is — so
+`client.deploy(id)` on a paused live portfolio resumes live trading against the
+connected brokerage, and `include_live=True` above will hand you such an id.
+Check `deployment["deploymentType"]` before treating a deploy as simulated. See
+[Scope](#scope).
 
 ## Your own data
 
@@ -527,7 +534,9 @@ nor the poll timeout bounds how long a *job* takes.
 
 Portfolio drafting, backtesting, optimization, walk-forward studies, and
 read-only SQL over the market-data lake, versioned under `/api/v1/nexustrade`.
-The screener and live trading remain outside this surface.
+The screener, order placement, and creating a live deployment remain outside
+this surface. `deploy` and `undeploy` do reach an existing live portfolio: they
+act on whatever the id already is.
 
 ## Using this SDK with a coding agent
 

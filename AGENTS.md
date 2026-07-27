@@ -265,13 +265,24 @@ All failures raise `NexusTradeApiError` with a stable `.status`, `.code`, and
 the same from an id. `save` and `deploy` return *different* ids — deploying
 mints a portfolio rather than converting the draft.
 
+**`deploy` is not always paper.** A portfolio this SDK creates is always paper:
+the portfolio spec has no deployment field, so there is no way to ask for a
+live one. But `deploy(portfolio_id)` accepts the id of a portfolio that is
+*already deployed*, and then it reactivates that portfolio as whatever it
+already is. Hand it the id of a paused **live** portfolio — `list_portfolios`
+will return one under `include_live=True` — and it resumes live trading against
+the connected brokerage. `undeploy` is the same in reverse. Read
+`deploymentType` on the response to know which one you got, and treat any id
+you did not create in this session as possibly live.
+
 Not in this SDK. Do not attempt to reach them through it:
 
 - **Screener** — MCP only.
 - **Order placement** — not exposed. No route on this API submits an order.
-- **Live deployment and connecting a brokerage** — the live-trading routes are
-  not under the SDK prefix, so this client cannot reach them. `deploy()` is
-  paper only. Both happen in the web app today.
+- **Creating a live deployment, and connecting a brokerage** — both happen in
+  the web app. No route under the SDK prefix does either. This is about
+  *creating* one; see above for reactivating a live portfolio that already
+  exists.
 
 The complete method list — every client and handle method, including the ones
 without a worked example above — is the **Complete method reference** table in
