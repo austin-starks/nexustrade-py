@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import sys
 import time
 import urllib.error
@@ -37,6 +38,10 @@ _MAX_REDIRECTS = 5
 # API, or it returned 2xx with an envelope the client could not use. Reporting
 # a literal 200 there would misattribute a 201 response.
 _NO_HTTP_STATUS = 0
+_MAX_UPLOAD_PUT_ATTEMPTS = 5
+_UPLOAD_PUT_INITIAL_BACKOFF_SECONDS = 0.5
+_UPLOAD_PUT_MAX_BACKOFF_SECONDS = 8.0
+_UPLOAD_PUT_JITTER_SECONDS = 0.25
 
 # Polling defaults. Every NexusTrade job — backtest, optimization,
 # walk-forward, and any future operation kind — reports through the same
@@ -86,6 +91,18 @@ class NexusTradeApiError(RuntimeError):
         # still running, so the caller needs the id to resume waiting without
         # resubmitting — reading it out of the message is not an interface.
         self.operation_id = operation_id
+
+
+def _is_retryable_upload_http_status(status: int) -> bool:
+    return status in (408, 429) or status >= 500
+
+
+def _is_retryable_upload_error(error: NexusTradeApiError) -> bool:
+    if error.code == "transport_error":
+        return True
+    if error.code == "upload_failed" and error.status != _NO_HTTP_STATUS:
+        return _is_retryable_upload_http_status(error.status)
+    return False
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
@@ -332,6 +349,27 @@ class HttpTransport:
         content_type: str,
     ) -> None:
         """PUT a payload to a presigned storage URL. Sends no credential."""
+        delay = _UPLOAD_PUT_INITIAL_BACKOFF_SECONDS
+        for attempt in range(_MAX_UPLOAD_PUT_ATTEMPTS):
+            try:
+                self._put_bytes_once(url, data, content_type=content_type)
+                return
+            except NexusTradeApiError as error:
+                if (
+                    attempt >= _MAX_UPLOAD_PUT_ATTEMPTS - 1
+                    or not _is_retryable_upload_error(error)
+                ):
+                    raise
+            delay = min(delay * 2, _UPLOAD_PUT_MAX_BACKOFF_SECONDS)
+            time.sleep(delay + random.uniform(0, _UPLOAD_PUT_JITTER_SECONDS))
+
+    def _put_bytes_once(
+        self,
+        url: str,
+        data: bytes,
+        *,
+        content_type: str,
+    ) -> None:
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != "https" or not parsed.hostname:
             raise NexusTradeApiError(

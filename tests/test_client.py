@@ -778,6 +778,58 @@ class CustomIndicatorTests(unittest.TestCase):
         self.assertIsNone(captured[0].get_header("Authorization"))
         self.assertEqual(captured[0].data, b"rows")
 
+class HttpTransportUploadTests(unittest.TestCase):
+    def test_put_bytes_retries_transient_connection_reset(self) -> None:
+        transport = client_module.HttpTransport("sk-temp", "https://api.example/v1")
+        attempts = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):  # noqa: ANN001 - test double
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise ConnectionResetError("[Errno 104] Connection reset by peer")
+            response = mock.MagicMock()
+            response.status = 204
+            response.__enter__.return_value = response
+            response.__exit__.return_value = False
+            return response
+
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen):
+            with mock.patch.object(client_module.time, "sleep"):
+                transport.put_bytes(
+                    "https://storage.example/put",
+                    b"rows",
+                    content_type="application/x-ndjson",
+                )
+
+        self.assertEqual(attempts["count"], 2)
+
+    def test_put_bytes_does_not_retry_permanent_403(self) -> None:
+        transport = client_module.HttpTransport("sk-temp", "https://api.example/v1")
+        attempts = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):  # noqa: ANN001 - test double
+            attempts["count"] += 1
+            raise urllib.error.HTTPError(
+                "https://storage.example/put",
+                403,
+                "Forbidden",
+                {},
+                None,
+            )
+
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen):
+            with mock.patch.object(client_module.time, "sleep"):
+                with self.assertRaises(client_module.NexusTradeApiError) as raised:
+                    transport.put_bytes(
+                        "https://storage.example/put",
+                        b"rows",
+                        content_type="application/x-ndjson",
+                    )
+
+        self.assertEqual(attempts["count"], 1)
+        self.assertEqual(raised.exception.code, "upload_failed")
+        self.assertEqual(raised.exception.status, 403)
+
 
 if __name__ == "__main__":
     unittest.main()
