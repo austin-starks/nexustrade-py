@@ -507,6 +507,7 @@ def leg(
     expiration_range: Optional[Dict[str, Any]] = None,
     ratio: Optional[float] = None,
     greek_filter: Optional[Dict[str, Any]] = None,
+    liquidity_filter: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if distance_type == "delta" and (
         fallback_strike_selector is None
@@ -543,6 +544,7 @@ def leg(
             "expirationRange": expiration_range,
             "ratio": ratio,
             "greekFilter": greek_filter,
+            "liquidityFilter": liquidity_filter,
         }
     )
 
