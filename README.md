@@ -250,6 +250,14 @@ result = client.create_orders(
       "side": "BUY", "quantity": 10, "orderType": "MARKET"}],
     idempotency_key="rebalance-2024-04-01",
 )
+
+# Dollar notional (stock/crypto only — options require contract quantity):
+client.create_orders(
+    portfolio_id,
+    [{"asset": {"name": "AAPL", "type": "STOCK", "symbol": "AAPL"},
+      "side": "BUY", "amount": 500, "orderType": "MARKET"}],
+    idempotency_key="buy-aapl-500",
+)
 ```
 
 **Paper orders are accepted immediately. Live orders are staged for approval
