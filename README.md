@@ -47,6 +47,10 @@ result = client.wait_for_backtest(operation["id"])
 print(result["result"])
 ```
 
+Backtest operations may include ``warnings: list[str]`` immediately after
+submission and again in the terminal ``result``. Treat them as material caveats;
+they do not change a successful operation into a failure.
+
 ## Authoring strategies
 
 Every builder is generated from the same indicator specification the NexusTrade
