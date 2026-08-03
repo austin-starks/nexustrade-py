@@ -285,6 +285,7 @@ series = client.create_custom_indicator(
         "name": "WSB NVDA Mentions",
         "scope": "asset",
         "description": "Daily r/wallstreetbets mentions",
+        "point_kind": "observation",
         "points": [
             {"timestamp": "2024-04-01", "value": 152, "ticker": "NVDA"},
             {"timestamp": "2024-04-02", "value": 90, "ticker": "NVDA"},
@@ -301,6 +302,14 @@ book = portfolio("Attention", [
 
 `scope` is `"global"` (one series) or `"asset"` (one series per ticker, so every
 point needs a `ticker`). It cannot be changed after creation.
+
+Declare `point_kind` whenever the time semantics are known: `observation` for
+point-in-time samples, `period_aggregate` plus `aggregate_period` (`1d`, `1w`,
+`1mo`, or `1q`) for closed-period values, and `disclosed` for values with an
+explicit publication time on every row. The SDK applies this contract before
+both inline and large-upload writes. In particular, a same-day date-only
+observation becomes an explicit same-day UTC instant instead of being shifted
+to the next calendar day by the conservative date-only ingestion fallback.
 
 **Size is not a constraint.** `points` is unlimited. A batch that fits the
 request goes with it; a larger one is uploaded to storage and validated before
@@ -326,6 +335,8 @@ twice.
 | ----------------------------------------------------------------- | ------------------------- |
 | `create_custom_indicator(spec, idempotency_key=...)`              | Create, optionally seeded |
 | `append_custom_indicator_points(id, points, idempotency_key=...)` | Add points                |
+| `replace_custom_indicator_points(id, points, idempotency_key=...)` | Replace points, retain id |
+| `archive_custom_indicator(id)` / `restore_custom_indicator(id)`  | Reversible lifecycle      |
 | `list_custom_indicators()` / `get_custom_indicator(id)`           | Discover ids and coverage |
 
 Points accept `timestamp`, `value`, `ticker`, `asset_type`, and `available_at`

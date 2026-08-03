@@ -737,6 +737,103 @@ class CustomIndicatorTests(unittest.TestCase):
             [{"timestamp": "2024-04-01", "value": 3}],
         )
 
+    def test_observation_point_kind_materializes_same_day_availability(self) -> None:
+        transport = FakeTransport([{"indicator": {"customIndicatorId": "ci-1"}}])
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.create_custom_indicator(
+            {
+                "name": "Observed",
+                "point_kind": "observation",
+                "points": [
+                    {
+                        "timestamp": "2024-04-05",
+                        "availableAt": "2024-04-05",
+                        "value": 3,
+                    }
+                ],
+            },
+            idempotency_key="observed-v1",
+        )
+
+        self.assertEqual(transport.calls[0]["body"]["pointKind"], "observation")
+        self.assertEqual(
+            transport.calls[0]["body"]["points"][0],
+            {
+                "timestamp": "2024-04-05",
+                "availableAt": "2024-04-05T00:00:00.000Z",
+                "value": 3,
+            },
+        )
+
+    def test_large_observation_upload_uses_the_same_availability_contract(self) -> None:
+        points = [
+            {
+                "timestamp": f"2024-04-{(index % 28) + 1:02d}",
+                "availableAt": f"2024-04-{(index % 28) + 1:02d}",
+                "value": index,
+                "ticker": f"TCK{index:05d}",
+            }
+            for index in range(20_000)
+        ]
+        transport = UploadingTransport(
+            [
+                {"indicator": {"customIndicatorId": "ci-1", "pointCount": 0}},
+                {
+                    "ticket": {
+                        "jobId": "job-1",
+                        "uploadUrl": "https://storage.example/put",
+                        "headers": {"Content-Type": "application/x-ndjson"},
+                    }
+                },
+                {"operation": {"id": "job-1", "status": "queued"}},
+                {
+                    "operation": {
+                        "id": "job-1",
+                        "status": "completed",
+                        "result": {"acceptedRows": len(points)},
+                    }
+                },
+                {"indicator": {"customIndicatorId": "ci-1", "pointCount": len(points)}},
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.create_custom_indicator(
+            {
+                "name": "Observed big",
+                "scope": "asset",
+                "point_kind": "observation",
+                "points": points,
+            },
+            idempotency_key="observed-big-v1",
+        )
+
+        first_row = json.loads(transport.uploads[0]["data"].splitlines()[0])
+        self.assertEqual(first_row["availableAt"], "2024-04-01T00:00:00.000Z")
+        self.assertEqual(transport.calls[0]["body"]["pointKind"], "observation")
+
+    def test_period_aggregate_derives_availability_from_full_utc_timestamp(self) -> None:
+        transport = FakeTransport([{"indicator": {"customIndicatorId": "ci-1"}}])
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.create_custom_indicator(
+            {
+                "name": "Daily close",
+                "point_kind": "period_aggregate",
+                "aggregate_period": "1d",
+                "points": [
+                    {"timestamp": "2024-04-05T00:00:00Z", "value": 3}
+                ],
+            },
+            idempotency_key="daily-close-v1",
+        )
+
+        self.assertEqual(
+            transport.calls[0]["body"]["points"][0]["availableAt"],
+            "2024-04-06T00:00:00.000Z",
+        )
+
     def test_list_passes_the_archive_filter(self) -> None:
         transport = FakeTransport([{"indicators": [{"customIndicatorId": "ci-1"}]}])
         client = client_module.NexusTradeClient(transport=transport)

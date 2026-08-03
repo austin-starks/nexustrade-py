@@ -7,6 +7,7 @@ variables. It has no sandbox filesystem or yielding behavior.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import random
@@ -524,6 +525,160 @@ def _custom_indicator_points(points: Any) -> list[dict[str, Any]]:
     return [_custom_indicator_point(point) for point in points]
 
 
+_POINT_KINDS = {"observation", "period_aggregate", "disclosed"}
+_AGGREGATE_PERIODS = {"1d", "1w", "1mo", "1q"}
+
+
+def _date_only(value: Any) -> datetime.date | None:
+    if not isinstance(value, str) or len(value) != 10:
+        return None
+    try:
+        parsed = datetime.date.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.isoformat() == value else None
+
+
+def _utc_datetime(value: Any) -> datetime.datetime | None:
+    day = _date_only(value)
+    if day:
+        return datetime.datetime.combine(day, datetime.time(), datetime.UTC)
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(datetime.UTC)
+
+
+def _utc_midnight(day: datetime.date) -> str:
+    return f"{day.isoformat()}T00:00:00.000Z"
+
+
+def _normalize_date_only_availability(value: str) -> str:
+    day = _date_only(value)
+    return _utc_midnight(day + datetime.timedelta(days=1)) if day else value
+
+
+def _point_kind_points(
+    points: list[dict[str, Any]],
+    point_kind: Any,
+    aggregate_period: Any = None,
+) -> list[dict[str, Any]]:
+    if point_kind is None:
+        if aggregate_period is not None:
+            raise ValueError("aggregate_period requires point_kind='period_aggregate'.")
+        return points
+    if point_kind not in _POINT_KINDS:
+        raise ValueError(
+            "point_kind must be observation, period_aggregate, or disclosed."
+        )
+    if point_kind == "period_aggregate":
+        if aggregate_period not in _AGGREGATE_PERIODS:
+            raise ValueError(
+                "period_aggregate requires aggregate_period: 1d, 1w, 1mo, or 1q."
+            )
+    elif aggregate_period is not None:
+        raise ValueError("aggregate_period is only valid for period_aggregate.")
+
+    normalized: list[dict[str, Any]] = []
+    for index, point in enumerate(points):
+        row = dict(point)
+        timestamp = row["timestamp"]
+        available_at = row.get("availableAt")
+        event_day = _date_only(timestamp)
+        available_day = _date_only(available_at)
+        event_time = _utc_datetime(timestamp)
+        available_time = _utc_datetime(available_at)
+        if point_kind == "observation":
+            if available_at is None:
+                row["availableAt"] = (
+                    _utc_midnight(event_day) if event_day else timestamp
+                )
+            elif event_day and available_day == event_day:
+                row["availableAt"] = _utc_midnight(event_day)
+            elif available_day:
+                row["availableAt"] = _normalize_date_only_availability(available_at)
+            if event_time and available_time and available_time.date() > event_time.date():
+                raise ValueError(
+                    f"Point {index + 1}: observation available_at is after the event date."
+                )
+        elif point_kind == "disclosed":
+            if available_at is None:
+                raise ValueError(
+                    f"Point {index + 1}: disclosed point_kind requires available_at."
+                )
+            if available_day:
+                row["availableAt"] = _normalize_date_only_availability(available_at)
+        else:
+            if not event_time:
+                raise ValueError(
+                    f"Point {index + 1}: aggregate timestamp must be date-only or include an explicit UTC offset."
+                )
+            if any(
+                (
+                    event_time.hour,
+                    event_time.minute,
+                    event_time.second,
+                    event_time.microsecond,
+                )
+            ):
+                raise ValueError(
+                    f"Point {index + 1}: aggregate timestamp must be UTC midnight."
+                )
+            event_day = event_time.date()
+            if aggregate_period == "1d":
+                period_end = event_day + datetime.timedelta(days=1)
+            elif aggregate_period == "1w":
+                if event_day.weekday() != 0:
+                    raise ValueError(
+                        f"Point {index + 1}: 1w timestamp must be a Monday."
+                    )
+                period_end = event_day + datetime.timedelta(days=7)
+            elif aggregate_period == "1mo":
+                if event_day.day != 1:
+                    raise ValueError(
+                        f"Point {index + 1}: 1mo timestamp must be month start."
+                    )
+                period_end = datetime.date(
+                    event_day.year + (1 if event_day.month == 12 else 0),
+                    1 if event_day.month == 12 else event_day.month + 1,
+                    1,
+                )
+            else:
+                if event_day.day != 1 or event_day.month not in (1, 4, 7, 10):
+                    raise ValueError(
+                        f"Point {index + 1}: 1q timestamp must be quarter start."
+                    )
+                next_month = event_day.month + 3
+                period_end = datetime.date(
+                    event_day.year + (1 if next_month > 12 else 0),
+                    next_month - 12 if next_month > 12 else next_month,
+                    1,
+                )
+            derived = _utc_midnight(period_end)
+            if available_at is None:
+                row["availableAt"] = derived
+            elif available_day:
+                explicit = _normalize_date_only_availability(available_at)
+                if explicit < derived:
+                    raise ValueError(
+                        f"Point {index + 1}: available_at precedes the aggregate close."
+                    )
+                row["availableAt"] = explicit
+            elif available_time and available_time < datetime.datetime.combine(
+                period_end, datetime.time(), datetime.UTC
+            ):
+                raise ValueError(
+                    f"Point {index + 1}: available_at precedes the aggregate close."
+                )
+        normalized.append(row)
+    return normalized
+
+
 def _points_jsonl(points: Sequence[Mapping[str, Any]]) -> bytes:
     return "".join(
         f"{json.dumps(dict(point), separators=(',', ':'))}\n" for point in points
@@ -785,12 +940,17 @@ class NexusTradeClient:
     ) -> dict[str, Any]:
         """Create a custom data source and return it, including its id.
 
-        Pass ``{"name": ..., "scope": ..., "description": ..., "points": [...]}``.
+        Pass ``{"name": ..., "scope": ..., "description": ...,
+        "point_kind": ..., "aggregate_period": ..., "points": [...]}``.
         ``scope`` is ``"global"`` (one series) or ``"asset"`` (one series per
         ticker, so every point needs a ``ticker``); it defaults to ``"global"``
         and cannot be changed later. ``points`` is optional and unlimited in
         size — small batches are sent with the request, larger ones are
         uploaded, and the returned indicator reflects what landed either way.
+        ``point_kind`` applies one public availability contract before either
+        path. Use ``observation`` for point-in-time samples,
+        ``period_aggregate`` plus ``aggregate_period`` for closed periods, and
+        ``disclosed`` when every row supplies its publication time.
 
         The id it returns is what a ``CustomIndicator`` node binds to::
 
@@ -816,8 +976,18 @@ class NexusTradeClient:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("create_custom_indicator requires a name.")
         raw_points = spec.pop("points", None)
-        points = _custom_indicator_points(raw_points) if raw_points else []
+        point_kind = spec.pop("point_kind", None)
+        aggregate_period = spec.pop("aggregate_period", None)
+        points = _point_kind_points(
+            _custom_indicator_points(raw_points) if raw_points else [],
+            point_kind,
+            aggregate_period,
+        )
         body: dict[str, Any] = {"name": name.strip()}
+        if point_kind is not None:
+            body["pointKind"] = point_kind
+        if aggregate_period is not None:
+            body["aggregatePeriod"] = aggregate_period
         for key in ("description", "scope"):
             value = spec.pop(key, None)
             if value is not None:
@@ -826,7 +996,7 @@ class NexusTradeClient:
             raise ValueError(
                 "Unknown custom indicator field(s): "
                 f"{', '.join(sorted(spec))}. Expected name, description, "
-                "scope, and points."
+                "scope, point_kind, aggregate_period, and points."
             )
         inline = points and _inline_point_bytes(points) <= _MAX_INLINE_POINT_BYTES
         if inline:
@@ -889,6 +1059,8 @@ class NexusTradeClient:
         points: Sequence[Mapping[str, Any]],
         *,
         idempotency_key: str,
+        point_kind: str | None = None,
+        aggregate_period: str | None = None,
     ) -> dict[str, Any]:
         """Add points to an existing series and return the updated indicator.
 
@@ -900,7 +1072,9 @@ class NexusTradeClient:
         The batch is unlimited in size and, as with creation, is sent inline or
         uploaded depending on how large it is.
         """
-        normalized = _custom_indicator_points(points)
+        normalized = _point_kind_points(
+            _custom_indicator_points(points), point_kind, aggregate_period
+        )
         if not normalized:
             raise ValueError("append_custom_indicator_points needs at least one point.")
         quoted = urllib.parse.quote(custom_indicator_id, safe="")
@@ -908,7 +1082,15 @@ class NexusTradeClient:
             response = self._transport.request(
                 "POST",
                 f"custom-indicators/{quoted}/points",
-                body={"points": normalized},
+                body={
+                    "points": normalized,
+                    **({"pointKind": point_kind} if point_kind else {}),
+                    **(
+                        {"aggregatePeriod": aggregate_period}
+                        if aggregate_period
+                        else {}
+                    ),
+                },
                 idempotency_key=idempotency_key,
             )
             indicator = response.get("indicator")
@@ -936,9 +1118,13 @@ class NexusTradeClient:
         *,
         idempotency_key: str,
         allow_shrink: bool = False,
+        point_kind: str | None = None,
+        aggregate_period: str | None = None,
     ) -> dict[str, Any]:
         """Replace the complete series while retaining the same indicator id."""
-        normalized = _custom_indicator_points(points)
+        normalized = _point_kind_points(
+            _custom_indicator_points(points), point_kind, aggregate_period
+        )
         if not normalized:
             raise ValueError("replace_custom_indicator_points needs at least one point.")
         quoted = urllib.parse.quote(custom_indicator_id, safe="")
@@ -947,7 +1133,16 @@ class NexusTradeClient:
                 self._transport.request(
                 "PUT",
                 f"custom-indicators/{quoted}/points",
-                body={"points": normalized, "allowShrink": allow_shrink},
+                body={
+                    "points": normalized,
+                    "allowShrink": allow_shrink,
+                    **({"pointKind": point_kind} if point_kind else {}),
+                    **(
+                        {"aggregatePeriod": aggregate_period}
+                        if aggregate_period
+                        else {}
+                    ),
+                },
                 idempotency_key=idempotency_key,
                 )
             )
