@@ -749,6 +749,52 @@ class CustomIndicatorTests(unittest.TestCase):
         )
         self.assertEqual(indicators, [{"customIndicatorId": "ci-1"}])
 
+    def test_replace_archive_restore_use_public_lifecycle(self) -> None:
+        transport = FakeTransport(
+            [
+                {"indicator": {"customIndicatorId": "ci-1", "dataVersion": 2}},
+                {"archive": {"customIndicatorId": "ci-1", "forksPaused": 0}},
+                {"indicator": {"customIndicatorId": "ci-1", "status": "active"}},
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.replace_custom_indicator_points(
+            "ci-1",
+            [{"timestamp": "2024-04-01", "value": 3}],
+            idempotency_key="replace-v2",
+            allow_shrink=True,
+        )
+        client.archive_custom_indicator("ci-1", confirm=True)
+        client.restore_custom_indicator("ci-1")
+
+        self.assertEqual(
+            transport.calls,
+            [
+                {
+                    "method": "PUT",
+                    "path": "custom-indicators/ci-1/points",
+                    "body": {
+                        "points": [{"timestamp": "2024-04-01", "value": 3}],
+                        "allowShrink": True,
+                    },
+                    "idempotency_key": "replace-v2",
+                },
+                {
+                    "method": "DELETE",
+                    "path": "custom-indicators/ci-1",
+                    "body": {"confirm": True},
+                    "idempotency_key": None,
+                },
+                {
+                    "method": "POST",
+                    "path": "custom-indicators/ci-1/restore",
+                    "body": {},
+                    "idempotency_key": None,
+                },
+            ],
+        )
+
     def test_put_bytes_refuses_a_plaintext_upload_url(self) -> None:
         transport = client_module.HttpTransport("sk-temp", "https://api.example/v1")
         with self.assertRaises(client_module.NexusTradeApiError) as raised:

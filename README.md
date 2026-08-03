@@ -47,8 +47,8 @@ result = client.wait_for_backtest(operation["id"])
 print(result["result"])
 ```
 
-Backtest operations may include ``warnings: list[str]`` immediately after
-submission and again in the terminal ``result``. Treat them as material caveats;
+Backtest operations may include `warnings: list[str]` immediately after
+submission and again in the terminal `result`. Treat them as material caveats;
 they do not change a successful operation into a failure.
 
 ## Authoring strategies
@@ -81,17 +81,17 @@ book = nt.portfolio("Momentum", [
 <details>
 <summary><b>What you can build</b> — 170+ generated builders</summary>
 
-| Group | Examples |
-| --- | --- |
-| **Price & volume** | `Price` `OpeningPrice` `HighOfDay` `VWAP` `Volume` `GapPercentage` |
-| **Technicals** | `SMA` `EMA` `RSI` `BollingerBand` `AverageTrueRange` `CrossAbove` |
-| **Position state** | `PositionValue` `PositionPercentChange` `PositionMaxDrawdown` |
-| **Portfolio state** | `PortfolioValue` `BuyingPower` `MaxDrawdown` `InitialValue` |
-| **Fundamentals** | `Fundamental` `Economic` `DaysUntilEarnings` `IsIndexMember` `IsIndustry` |
-| **Options** | `OptionDaysToExpiration` `OptionCollateral` `OptionUnrealizedPnL` `open_option` `close_option` |
-| **Actions** | `buy` `sell` `alert` `dynamic_rebalance` `rebalance_option` |
-| **Selection** | `filter` `select_top` `select_percentile` `universe` |
-| **Logic** | `always` `at_least` `at_most` `exactly` `fewer_than` `multi` |
+| Group               | Examples                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| **Price & volume**  | `Price` `OpeningPrice` `HighOfDay` `VWAP` `Volume` `GapPercentage`                             |
+| **Technicals**      | `SMA` `EMA` `RSI` `BollingerBand` `AverageTrueRange` `CrossAbove`                              |
+| **Position state**  | `PositionValue` `PositionPercentChange` `PositionMaxDrawdown`                                  |
+| **Portfolio state** | `PortfolioValue` `BuyingPower` `MaxDrawdown` `InitialValue`                                    |
+| **Fundamentals**    | `Fundamental` `Economic` `DaysUntilEarnings` `IsIndexMember` `IsIndustry`                      |
+| **Options**         | `OptionDaysToExpiration` `OptionCollateral` `OptionUnrealizedPnL` `open_option` `close_option` |
+| **Actions**         | `buy` `sell` `alert` `dynamic_rebalance` `rebalance_option`                                    |
+| **Selection**       | `filter` `select_top` `select_percentile` `universe`                                           |
+| **Logic**           | `always` `at_least` `at_most` `exactly` `fewer_than` `multi`                                   |
 
 Full list: `python -c "import nexustrade; print(nexustrade.__all__)"`
 
@@ -139,12 +139,12 @@ Every job kind reports the same envelope, so one poller serves all of them:
 finished = client.wait_for_backtest(operation["id"])   # blocks on deterministic backoff
 ```
 
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `timeout_seconds` | `900` | Give up waiting (the job keeps running) |
-| `poll_interval_seconds` | `2` | First interval; backs off 1.5× |
-| `max_poll_interval_seconds` | `15` | Interval ceiling |
-| `raise_on_failure` | `True` | Raise on `failed`/`cancelled` instead of returning |
+| Option                      | Default | Meaning                                            |
+| --------------------------- | ------- | -------------------------------------------------- |
+| `timeout_seconds`           | `900`   | Give up waiting (the job keeps running)            |
+| `poll_interval_seconds`     | `2`     | First interval; backs off 1.5×                     |
+| `max_poll_interval_seconds` | `15`    | Interval ceiling                                   |
+| `raise_on_failure`          | `True`  | Raise on `failed`/`cancelled` instead of returning |
 
 A timeout raises `operation_timeout` and does **not** cancel the job — call the
 waiter again with the same id rather than resubmitting.
@@ -178,7 +178,7 @@ book.undeploy(client=client)                              # stops it
 ```
 
 **`save` and `deploy` produce different ids, and the distinction matters.**
-`save` persists a *draft* and sets `book.id` to it. `deploy` mints the real
+`save` persists a _draft_ and sets `book.id` to it. `deploy` mints the real
 paper portfolio and returns its own `portfolioId` — deploying creates a
 portfolio rather than converting the draft into one, so the two ids coexist.
 Hold on to `deployment["portfolioId"]` for anything that reads live state;
@@ -204,7 +204,7 @@ client.get_portfolio(portfolio_id)
 `include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
 `include_positions` defaults off when `search` is set.
 
-**A portfolio you create here is always paper**, and minting a *live* one still
+**A portfolio you create here is always paper**, and minting a _live_ one still
 happens in the web app. Orders and brokerage status are reachable from here;
 see [Live trading](#live-trading).
 
@@ -322,11 +322,11 @@ Creating a fresh series per run splits the history into fragments no strategy
 can read. Re-sending an identical batch is safe — the duplicate is not written
 twice.
 
-| Call | Purpose |
-| --- | --- |
-| `create_custom_indicator(spec, idempotency_key=...)` | Create, optionally seeded |
-| `append_custom_indicator_points(id, points, idempotency_key=...)` | Add points |
-| `list_custom_indicators()` / `get_custom_indicator(id)` | Discover ids and coverage |
+| Call                                                              | Purpose                   |
+| ----------------------------------------------------------------- | ------------------------- |
+| `create_custom_indicator(spec, idempotency_key=...)`              | Create, optionally seeded |
+| `append_custom_indicator_points(id, points, idempotency_key=...)` | Add points                |
+| `list_custom_indicators()` / `get_custom_indicator(id)`           | Discover ids and coverage |
 
 Points accept `timestamp`, `value`, `ticker`, `asset_type`, and `available_at`
 — snake_case or camelCase, with `date`/`datetime` objects allowed. Set
@@ -427,94 +427,97 @@ is missing here, so this list cannot drift from the code.
 
 **Live trading and orders**
 
-| Method | Purpose |
-| --- | --- |
-| `list_brokerages()` | Every connectable brokerage and whether it is linked |
-| `get_brokerage(brokerage)` | Whether one brokerage is linked |
-| `connect_brokerage(brokerage, wait=…)` | Print the connect URL and wait for the link |
-| `create_orders(portfolio_id, orders, idempotency_key=…)` | Stage orders; live ones need approval |
+| Method                                                   | Purpose                                              |
+| -------------------------------------------------------- | ---------------------------------------------------- |
+| `list_brokerages()`                                      | Every connectable brokerage and whether it is linked |
+| `get_brokerage(brokerage)`                               | Whether one brokerage is linked                      |
+| `connect_brokerage(brokerage, wait=…)`                   | Print the connect URL and wait for the link          |
+| `create_orders(portfolio_id, orders, idempotency_key=…)` | Stage orders; live ones need approval                |
 
 **Portfolios**
 
-| Method | Purpose |
-| --- | --- |
-| `create_portfolio(book, idempotency_key=…)` | Persist a portfolio definition |
-| `list_portfolios(…)` | List portfolios, with filters and pagination |
-| `get_portfolio(portfolio_id)` | Read one portfolio |
-| `deploy(portfolio_id, frequency=…)` | Start paper trading it |
-| `undeploy(portfolio_id)` | Stop it |
+| Method                                      | Purpose                                      |
+| ------------------------------------------- | -------------------------------------------- |
+| `create_portfolio(book, idempotency_key=…)` | Persist a portfolio definition               |
+| `list_portfolios(…)`                        | List portfolios, with filters and pagination |
+| `get_portfolio(portfolio_id)`               | Read one portfolio                           |
+| `deploy(portfolio_id, frequency=…)`         | Start paper trading it                       |
+| `undeploy(portfolio_id)`                    | Stop it                                      |
 
 **Backtests**
 
-| Method | Purpose |
-| --- | --- |
-| `create_backtest(handle, idempotency_key=…)` | Submit one backtest |
+| Method                                         | Purpose                    |
+| ---------------------------------------------- | -------------------------- |
+| `create_backtest(handle, idempotency_key=…)`   | Submit one backtest        |
 | `create_backtests(handles, idempotency_key=…)` | Submit many in one request |
-| `get_backtest(backtest_id)` | Read the operation |
-| `wait_for_backtest(backtest_id, …)` | Block until terminal |
-| `wait_for_backtests(operations, …)` | Block on a whole batch |
+| `get_backtest(backtest_id)`                    | Read the operation         |
+| `wait_for_backtest(backtest_id, …)`            | Block until terminal       |
+| `wait_for_backtests(operations, …)`            | Block on a whole batch     |
 
 **Optimization and walk-forward**
 
-| Method | Purpose |
-| --- | --- |
-| `create_optimization(handle, idempotency_key=…)` | Submit an optimization |
-| `get_optimization(optimization_id)` | Read the operation |
-| `wait_for_optimization(optimization_id, …)` | Block until terminal |
+| Method                                           | Purpose                     |
+| ------------------------------------------------ | --------------------------- |
+| `create_optimization(handle, idempotency_key=…)` | Submit an optimization      |
+| `get_optimization(optimization_id)`              | Read the operation          |
+| `wait_for_optimization(optimization_id, …)`      | Block until terminal        |
 | `create_walk_forward(handle, idempotency_key=…)` | Submit a walk-forward study |
-| `get_walk_forward(study_id)` | Read the operation |
-| `wait_for_walk_forward(study_id, …)` | Block until terminal |
+| `get_walk_forward(study_id)`                     | Read the operation          |
+| `wait_for_walk_forward(study_id, …)`             | Block until terminal        |
 
 **Custom data sources**
 
-| Method | Purpose |
-| --- | --- |
-| `create_custom_indicator(spec, idempotency_key=…)` | Create a series, optionally seeded |
-| `list_custom_indicators(include_archived=…)` | List owned series |
-| `get_custom_indicator(id)` | Read one, with its point count and range |
-| `append_custom_indicator_points(id, points, idempotency_key=…)` | Add points |
-| `create_custom_indicator_upload(id, …)` | Open an upload slot (CSV/JSON/JSONL) |
-| `complete_custom_indicator_upload(id, job_id)` | Start validating uploaded bytes |
-| `get_custom_indicator_upload(id, job_id)` | Read the upload operation |
-| `wait_for_custom_indicator_upload(id, job_id, …)` | Block until validated |
+| Method                                                                           | Purpose                                            |
+| -------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `create_custom_indicator(spec, idempotency_key=…)`                               | Create a series, optionally seeded                 |
+| `list_custom_indicators(include_archived=…)`                                     | List owned series                                  |
+| `get_custom_indicator(id)`                                                       | Read one, with its point count and range           |
+| `append_custom_indicator_points(id, points, idempotency_key=…)`                  | Add points                                         |
+| `replace_custom_indicator_points(id, points, idempotency_key=…, allow_shrink=…)` | Replace the complete series while retaining its id |
+| `archive_custom_indicator(id, confirm=…)`                                        | Soft-archive a series                              |
+| `restore_custom_indicator(id)`                                                   | Restore an archived series                         |
+| `create_custom_indicator_upload(id, …)`                                          | Open an upload slot (CSV/JSON/JSONL)               |
+| `complete_custom_indicator_upload(id, job_id)`                                   | Start validating uploaded bytes                    |
+| `get_custom_indicator_upload(id, job_id)`                                        | Read the upload operation                          |
+| `wait_for_custom_indicator_upload(id, job_id, …)`                                | Block until validated                              |
 
 **Agent runs**
 
-| Method | Purpose |
-| --- | --- |
-| `create_agent(prompt, idempotency_key=…)` | Start a run |
-| `get_agent(agent_id)` | Read its status |
-| `attach_agent(agent_id, cursor=…)` | Reattach to a run already in flight |
+| Method                                    | Purpose                             |
+| ----------------------------------------- | ----------------------------------- |
+| `create_agent(prompt, idempotency_key=…)` | Start a run                         |
+| `get_agent(agent_id)`                     | Read its status                     |
+| `attach_agent(agent_id, cursor=…)`        | Reattach to a run already in flight |
 
 **Lake SQL**
 
-| Method | Purpose |
-| --- | --- |
-| `create_lake_query(request, idempotency_key=…)` | Submit read-only SQL |
-| `get_lake_query(query_id)` | Read the operation |
-| `wait_for_lake_query(query_id, …)` | Block until terminal |
-| `cancel_lake_query(query_id)` | Cancel an owned query |
-| `get_lake_query_manifest(query_id)` | Schema, checksums, and part metadata |
-| `download_lake_query_part(query_id, part, …)` | Download one Parquet part |
-| `get_lake_catalog()` | List queryable tables |
-| `describe_lake_table(table)` | Columns and types for one table |
+| Method                                          | Purpose                              |
+| ----------------------------------------------- | ------------------------------------ |
+| `create_lake_query(request, idempotency_key=…)` | Submit read-only SQL                 |
+| `get_lake_query(query_id)`                      | Read the operation                   |
+| `wait_for_lake_query(query_id, …)`              | Block until terminal                 |
+| `cancel_lake_query(query_id)`                   | Cancel an owned query                |
+| `get_lake_query_manifest(query_id)`             | Schema, checksums, and part metadata |
+| `download_lake_query_part(query_id, part, …)`   | Download one Parquet part            |
+| `get_lake_catalog()`                            | List queryable tables                |
+| `describe_lake_table(table)`                    | Columns and types for one table      |
 
 **Client construction**
 
-| Method | Purpose |
-| --- | --- |
-| `NexusTradeClient(api_key=…, base_url=…)` | Explicit credentials |
-| `NexusTradeClient.from_environment()` | Read them from the environment or `.env` |
+| Method                                    | Purpose                                  |
+| ----------------------------------------- | ---------------------------------------- |
+| `NexusTradeClient(api_key=…, base_url=…)` | Explicit credentials                     |
+| `NexusTradeClient.from_environment()`     | Read them from the environment or `.env` |
 
 **Portfolio handle** — returned by the `portfolio(...)` builder and by
 `get_portfolio` / `list_portfolios`.
 
-| Method | Purpose |
-| --- | --- |
-| `save(idempotency_key=…, client=…)` | Persist it as a draft, setting `.id` |
-| `backtest(start_date=…, end_date=…, idempotency_key=…, …)` | Backtest it, preferring the saved id |
-| `deploy(frequency=…, client=…)` | Mint the real paper portfolio (new id) |
-| `undeploy(client=…)` | Deactivate its deployment |
+| Method                                                     | Purpose                                |
+| ---------------------------------------------------------- | -------------------------------------- |
+| `save(idempotency_key=…, client=…)`                        | Persist it as a draft, setting `.id`   |
+| `backtest(start_date=…, end_date=…, idempotency_key=…, …)` | Backtest it, preferring the saved id   |
+| `deploy(frequency=…, client=…)`                            | Mint the real paper portfolio (new id) |
+| `undeploy(client=…)`                                       | Deactivate its deployment              |
 
 ## Authentication
 
@@ -540,11 +543,11 @@ The real environment always wins — a `.env` value is used only when the variab
 is absent, so a stale file can never override what you exported. Nothing is
 written back to `os.environ`. Opt out with `NEXUSTRADE_DISABLE_DOTENV=1`.
 
-| Scope | Grants |
-| --- | --- |
-| `read` | `get_backtest`, `get_optimization`, `get_walk_forward` |
+| Scope   | Grants                                                                                 |
+| ------- | -------------------------------------------------------------------------------------- |
+| `read`  | `get_backtest`, `get_optimization`, `get_walk_forward`                                 |
 | `write` | `create_portfolio`, `create_backtest(s)`, `create_optimization`, `create_walk_forward` |
-| `lake` | Lake catalog, query lifecycle, manifests, result parts |
+| `lake`  | Lake catalog, query lifecycle, manifests, result parts                                 |
 
 A key missing the scope gets `403 insufficient_scope`.
 
@@ -580,16 +583,16 @@ except NexusTradeApiError as error:
     raise
 ```
 
-| Status | Code | Meaning |
-| --- | --- | --- |
-| 401 | `invalid_token` | Missing, malformed, or expired key (or an OAuth JWT) |
-| 403 | `insufficient_scope` | Key lacks `read`, `write`, or `lake` |
-| 400 | `invalid_request`, `invalid_portfolio` | Malformed input |
-| 400 | `invalid_idempotency_key` | Must match `[A-Za-z0-9._:-]{1,160}` |
-| 409 | `idempotency_conflict` | Key reused with a different payload |
-| 409 | `idempotency_in_progress` | Same key, first call still running. Re-poll, do not resubmit |
-| 404 | `not_found`, `operation_not_found` | Unknown or not yours |
-| 429 | `rate_limit_exceeded` | Back off and retry |
+| Status | Code                                   | Meaning                                                      |
+| ------ | -------------------------------------- | ------------------------------------------------------------ |
+| 401    | `invalid_token`                        | Missing, malformed, or expired key (or an OAuth JWT)         |
+| 403    | `insufficient_scope`                   | Key lacks `read`, `write`, or `lake`                         |
+| 400    | `invalid_request`, `invalid_portfolio` | Malformed input                                              |
+| 400    | `invalid_idempotency_key`              | Must match `[A-Za-z0-9._:-]{1,160}`                          |
+| 409    | `idempotency_conflict`                 | Key reused with a different payload                          |
+| 409    | `idempotency_in_progress`              | Same key, first call still running. Re-poll, do not resubmit |
+| 404    | `not_found`, `operation_not_found`     | Unknown or not yours                                         |
+| 429    | `rate_limit_exceeded`                  | Back off and retry                                           |
 
 `status` is `0` when no HTTP status describes the failure: `transport_error`
 (never reached the API), `unsafe_redirect`, or an `invalid_response` envelope
@@ -599,7 +602,7 @@ check on an otherwise-successful reply.
 
 `HttpTransport(timeout_seconds=...)` (default 30) is urllib's per-socket-operation
 timeout, so a slow-but-progressing response is not cut off mid-stream. Neither it
-nor the poll timeout bounds how long a *job* takes.
+nor the poll timeout bounds how long a _job_ takes.
 
 ## Scope
 

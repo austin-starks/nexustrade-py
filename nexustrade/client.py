@@ -929,6 +929,73 @@ class NexusTradeClient:
             "upload": upload,
         }
 
+    def replace_custom_indicator_points(
+        self,
+        custom_indicator_id: str,
+        points: Sequence[Mapping[str, Any]],
+        *,
+        idempotency_key: str,
+        allow_shrink: bool = False,
+    ) -> dict[str, Any]:
+        """Replace the complete series while retaining the same indicator id."""
+        normalized = _custom_indicator_points(points)
+        if not normalized:
+            raise ValueError("replace_custom_indicator_points needs at least one point.")
+        quoted = urllib.parse.quote(custom_indicator_id, safe="")
+        if _inline_point_bytes(normalized) <= _MAX_INLINE_POINT_BYTES:
+            return self._custom_indicator(
+                self._transport.request(
+                "PUT",
+                f"custom-indicators/{quoted}/points",
+                body={"points": normalized, "allowShrink": allow_shrink},
+                idempotency_key=idempotency_key,
+                )
+            )
+        upload = self._upload_custom_indicator_points(
+            custom_indicator_id,
+            normalized,
+            idempotency_key=idempotency_key,
+            mode="replace",
+            allow_shrink=allow_shrink,
+        )
+        return {**self.get_custom_indicator(custom_indicator_id), "upload": upload}
+
+    def archive_custom_indicator(
+        self,
+        custom_indicator_id: str,
+        *,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Soft-archive an indicator; confirm when active portfolios use it."""
+        quoted = urllib.parse.quote(custom_indicator_id, safe="")
+        response = self._transport.request(
+            "DELETE",
+            f"custom-indicators/{quoted}",
+            body={"confirm": confirm},
+        )
+        archive = response.get("archive")
+        if not isinstance(archive, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Custom indicator archive response is missing archive details.",
+            )
+        return archive
+
+    def restore_custom_indicator(
+        self,
+        custom_indicator_id: str,
+    ) -> dict[str, Any]:
+        """Restore a soft-archived indicator."""
+        quoted = urllib.parse.quote(custom_indicator_id, safe="")
+        return self._custom_indicator(
+            self._transport.request(
+                "POST",
+                f"custom-indicators/{quoted}/restore",
+                body={},
+            )
+        )
+
     def create_custom_indicator_upload(
         self,
         custom_indicator_id: str,
@@ -938,6 +1005,8 @@ class NexusTradeClient:
         format: str = "jsonl",
         content_type: str | None = None,
         size_bytes: int | None = None,
+        mode: str | None = None,
+        allow_shrink: bool | None = None,
     ) -> dict[str, Any]:
         """Open an upload slot and return a presigned ``uploadUrl`` to PUT to.
 
@@ -956,6 +1025,10 @@ class NexusTradeClient:
             body["contentType"] = content_type
         if size_bytes is not None:
             body["sizeBytes"] = size_bytes
+        if mode is not None:
+            body["mode"] = mode
+        if allow_shrink is not None:
+            body["allowShrink"] = allow_shrink
         response = self._transport.request(
             "POST",
             f"custom-indicators/{urllib.parse.quote(custom_indicator_id, safe='')}/uploads",
@@ -1022,6 +1095,8 @@ class NexusTradeClient:
         points: Sequence[Mapping[str, Any]],
         *,
         idempotency_key: str,
+        mode: str | None = None,
+        allow_shrink: bool | None = None,
     ) -> dict[str, Any]:
         payload = _points_jsonl(points)
         if len(payload) > _MAX_UPLOAD_BYTES:
@@ -1043,6 +1118,8 @@ class NexusTradeClient:
             format="jsonl",
             size_bytes=len(payload),
             idempotency_key=idempotency_key,
+            mode=mode,
+            allow_shrink=allow_shrink,
         )
         job_id = str(ticket["jobId"])
         # No upload URL means this batch already reached the server on an
