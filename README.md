@@ -399,6 +399,44 @@ for event in run:
         run.say("Focus on tech")
 ```
 
+## Natural language
+
+Describe the screen instead of writing the SQL. The server generates it,
+validates it against the same `lake.*` catalog the engine reads, executes it,
+and hands back both the rows and the statement.
+
+```python
+import nexustrade as nt
+
+screen = nt.nl.screen_stocks(
+    "technology stocks with a market cap over 100 billion and a PE under 30"
+)
+print(screen.rows)
+print(screen.sql)  # always check the SQL — it is model-generated
+```
+
+The low-level client methods are there when you want to poll yourself:
+
+```python
+started = client.create_nl_screen("large cap biotech with positive free cash flow")
+done = client.wait_for_nl_screen(started["id"])
+```
+
+`return_query` defaults to `True` because the SQL is the audit trail: without it
+the rows are a number you cannot re-derive. It is returned on failure whatever
+you pass, since a rejected query is the most useful thing to read.
+
+Branch on `outcome`, not on status alone:
+
+| `outcome`           | Meaning                                                   |
+| ------------------- | --------------------------------------------------------- |
+| `ROWS`              | Matches found                                              |
+| `EMPTY`             | Every filter ran and nothing cleared them all — an answer  |
+| `CLARIFICATION`     | The question was ambiguous; `clarification` asks           |
+| `GENERATION_FAILED` | The retry budget was spent — the only case worth retrying  |
+
+This spends LLM credits. The structured `nt.lake` API below does not.
+
 ## Lake SQL
 
 Read-only SQL over the NexusTrade market-data lake. Results are durable Parquet
@@ -512,6 +550,15 @@ is missing here, so this list cannot drift from the code.
 | `download_lake_query_part(query_id, part, …)`   | Download one Parquet part            |
 | `get_lake_catalog()`                            | List queryable tables                |
 | `describe_lake_table(table)`                    | Columns and types for one table      |
+
+**Natural language**
+
+| Method                                        | Purpose                                      |
+| --------------------------------------------- | -------------------------------------------- |
+| `create_nl_screen(question, return_query=…)`  | Screen stocks from a plain-language question |
+| `get_nl_screen(screen_id)`                    | Read the operation                           |
+| `wait_for_nl_screen(screen_id, **options)`    | Block until terminal                         |
+| `cancel_nl_screen(screen_id)`                 | Cancel an owned screen                       |
 
 **Client construction**
 

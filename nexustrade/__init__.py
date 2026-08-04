@@ -78,6 +78,9 @@ _LAZY_EXPORTS = {
     # `(module, None)` exposes the SUBMODULE itself, so `nt.lake.sql(...)`
     # resolves lazily without making duckdb a base-install dependency.
     "lake": ("nexustrade.lake", None),
+    # No optional dependency of its own — lazy purely so `nt.nl` matches the
+    # `nt.lake` shape rather than importing at package load.
+    "nl": ("nexustrade.nl", None),
     "stats": ("nexustrade.stats", None),
     "flush_requests": ("nexustrade.host", "flush_requests"),
     "gateway_chat": ("nexustrade.host", "gateway_chat"),

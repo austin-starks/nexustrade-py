@@ -1178,6 +1178,129 @@
         "kind": "value_error",
         "message_contains": "at least one order"
       }
+    },
+    {
+      "name": "create_nl_screen posts the question and asks for the query back",
+      "method": "create_nl_screen",
+      "input": "large cap technology with a PE under 20",
+      "responses": [
+        {
+          "operation": {
+            "id": "nls-1",
+            "kind": "nl_screen",
+            "status": "running"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "nl/screens",
+          "body": {
+            "question": "large cap technology with a PE under 20",
+            "returnQuery": true
+          },
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "nls-1",
+        "kind": "nl_screen",
+        "status": "running"
+      }
+    },
+    {
+      "name": "get_nl_screen reads an owner-scoped path with no body",
+      "method": "get_nl_screen",
+      "input": "nls-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "nls-1",
+            "kind": "nl_screen",
+            "status": "completed",
+            "result": {
+              "outcome": "ROWS",
+              "rowCount": 2,
+              "sql": "SELECT ticker FROM lake.sec_daily_ohlc",
+              "engine": "motherduck"
+            }
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "nl/screens/nls-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "nls-1",
+        "kind": "nl_screen",
+        "status": "completed",
+        "result": {
+          "outcome": "ROWS",
+          "rowCount": 2,
+          "sql": "SELECT ticker FROM lake.sec_daily_ohlc",
+          "engine": "motherduck"
+        }
+      }
+    },
+    {
+      "name": "cancel_nl_screen posts to the cancel sub-path",
+      "method": "cancel_nl_screen",
+      "input": "nls-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "nls-1",
+            "kind": "nl_screen",
+            "status": "cancelled"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "nl/screens/nls-1/cancel",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "nls-1",
+        "kind": "nl_screen",
+        "status": "cancelled"
+      }
+    },
+    {
+      "name": "a screen id with reserved characters is path-escaped identically",
+      "method": "get_nl_screen",
+      "input": "a b/c!d",
+      "responses": [
+        {
+          "operation": {
+            "id": "a b/c!d",
+            "kind": "nl_screen",
+            "status": "running"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "nl/screens/a%20b%2Fc%21d",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "a b/c!d",
+        "kind": "nl_screen",
+        "status": "running"
+      }
     }
   ]
 }

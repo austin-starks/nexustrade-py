@@ -284,9 +284,24 @@ the connected brokerage. `undeploy` is the same in reverse. Read
 `deploymentType` on the response to know which one you got, and treat any id
 you did not create in this session as possibly live.
 
+**The screener IS here now.** `nt.nl.screen_stocks("...")` turns a plain-language
+question into validated `lake.*` SQL, runs it, and returns the rows *and the
+statement*. Prefer it over hand-writing SQL for stock selection: the server
+picks tables from the same catalog the validator enforces, so it cannot name a
+column that does not exist.
+
+Drop to `nt.lake.sql(...)` when the NL screen returns `outcome ==
+"GENERATION_FAILED"`, or when the question is not a stock screen. Note what is
+*not* a reason to fall back: `EMPTY` is an answer (every filter ran, nothing
+cleared them all), and `CLARIFICATION` means the question was ambiguous — answer
+it rather than guessing SQL, because you do not know what to write either.
+
+Always report `screen.sql` alongside the numbers. It is model-generated, so it
+is the only way anyone can check the result. This method spends LLM credits;
+`nt.lake.sql` does not.
+
 Not in this SDK. Do not attempt to reach them through it:
 
-- **Screener** — MCP only.
 - **Submitting a live order** — impossible from anywhere, not just here. Live
   orders are staged `PENDING_USER_APPROVAL` and a human approves them in the
   UI; the brokerage boundary refuses an unapproved live order regardless of

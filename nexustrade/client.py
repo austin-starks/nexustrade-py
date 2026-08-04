@@ -1658,6 +1658,44 @@ class NexusTradeClient:
         )
         return self._operation(response)
 
+    def create_nl_screen(
+        self,
+        question: str,
+        *,
+        return_query: bool = True,
+    ) -> dict[str, Any]:
+        """Submit a natural-language stock screen. Returns immediately; poll it.
+
+        ``return_query`` keeps the generated SQL, engine and catalog version on
+        the result. It defaults on: the SQL is the audit trail, and without it
+        the rows are a number nobody can re-derive. It is returned on failure
+        regardless, because a rejected query is the most useful thing to read.
+        """
+        response = self._transport.request(
+            "POST",
+            "nl/screens",
+            body={"question": question, "returnQuery": return_query},
+        )
+        return self._operation(response)
+
+    def get_nl_screen(self, screen_id: str) -> dict[str, Any]:
+        response = self._transport.request(
+            "GET",
+            f"nl/screens/{urllib.parse.quote(screen_id, safe='')}",
+        )
+        return self._operation(response)
+
+    def cancel_nl_screen(self, screen_id: str) -> dict[str, Any]:
+        response = self._transport.request(
+            "POST",
+            f"nl/screens/{urllib.parse.quote(screen_id, safe='')}/cancel",
+        )
+        return self._operation(response)
+
+    def wait_for_nl_screen(self, screen_id: str, **options: Any) -> dict[str, Any]:
+        """Block until a screen is terminal. See ``wait_for_operation``."""
+        return wait_for_operation(self.get_nl_screen, screen_id, **options)
+
     def get_lake_catalog(self) -> list[dict[str, Any]]:
         response = self._transport.request("GET", "lake/catalog")
         tables = response.get("tables")
