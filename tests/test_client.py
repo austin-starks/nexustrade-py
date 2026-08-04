@@ -2,16 +2,35 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
 import os
 import unittest
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from io import BytesIO
 from unittest import mock
 
 from nexustrade import client as client_module
+
+
+@contextlib.contextmanager
+def _without_utc_alias() -> Iterator[None]:
+    """Make a 3.11+ interpreter behave like the 3.10 floor for `datetime.UTC`.
+
+    `client` imports the same module object, so removing the attribute here
+    removes it there too.
+    """
+    alias = getattr(datetime, "UTC", None)
+    if alias is not None:
+        delattr(datetime, "UTC")
+    try:
+        yield
+    finally:
+        if alias is not None:
+            datetime.UTC = alias
 
 
 class FakeTransport:
@@ -920,6 +939,65 @@ class CustomIndicatorTests(unittest.TestCase):
         self.assertEqual(captured[0].get_method(), "PUT")
         self.assertIsNone(captured[0].get_header("Authorization"))
         self.assertEqual(captured[0].data, b"rows")
+
+
+class MinimumPythonCompatTests(unittest.TestCase):
+    """`requires-python` is >=3.10, but developers here run 3.13.
+
+    `datetime.UTC` is a 3.11 alias, so three availability helpers raised
+    AttributeError on every 3.10 install while passing locally and shipping to
+    PyPI under a 3.10 classifier. CI caught it only as a runtime error deep in
+    an unrelated test.
+
+    Deleting the alias reproduces a 3.10 interpreter on any newer one, so this
+    fails on the machine that introduces the regression rather than in CI.
+    """
+
+    def test_date_only_availability_works_without_the_3_11_utc_alias(self) -> None:
+        with _without_utc_alias():
+            transport = FakeTransport([{"indicator": {"customIndicatorId": "ci"}}])
+            client = client_module.NexusTradeClient(transport=transport)
+            client.create_custom_indicator(
+                {
+                    "name": "Observed",
+                    "point_kind": "observation",
+                    "points": [
+                        {
+                            "timestamp": "2024-04-05",
+                            "availableAt": "2024-04-05",
+                            "value": 3,
+                        }
+                    ],
+                },
+                idempotency_key="compat-v1",
+            )
+
+        self.assertEqual(transport.calls[0]["body"]["pointKind"], "observation")
+
+    def test_full_timestamp_availability_works_without_the_3_11_utc_alias(
+        self,
+    ) -> None:
+        # Distinct from the date-only case: only a tz-aware ISO timestamp
+        # reaches the `astimezone` branch, so the date-only test alone passes
+        # even with the alias restored.
+        with _without_utc_alias():
+            transport = FakeTransport([{"indicator": {"customIndicatorId": "ci"}}])
+            client = client_module.NexusTradeClient(transport=transport)
+            client.create_custom_indicator(
+                {
+                    "name": "Daily close",
+                    "point_kind": "period_aggregate",
+                    "aggregate_period": "1d",
+                    "points": [{"timestamp": "2024-04-05T00:00:00Z", "value": 3}],
+                },
+                idempotency_key="compat-v2",
+            )
+
+        self.assertEqual(
+            transport.calls[0]["body"]["points"][0]["availableAt"],
+            "2024-04-06T00:00:00.000Z",
+        )
+
 
 class HttpTransportUploadTests(unittest.TestCase):
     def test_put_bytes_retries_transient_connection_reset(self) -> None:

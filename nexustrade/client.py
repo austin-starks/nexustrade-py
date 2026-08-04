@@ -542,7 +542,9 @@ def _date_only(value: Any) -> datetime.date | None:
 def _utc_datetime(value: Any) -> datetime.datetime | None:
     day = _date_only(value)
     if day:
-        return datetime.datetime.combine(day, datetime.time(), datetime.UTC)
+        return datetime.datetime.combine(
+            day, datetime.time(), datetime.timezone.utc
+        )
     if not isinstance(value, str):
         return None
     try:
@@ -551,7 +553,7 @@ def _utc_datetime(value: Any) -> datetime.datetime | None:
         return None
     if parsed.tzinfo is None:
         return None
-    return parsed.astimezone(datetime.UTC)
+    return parsed.astimezone(datetime.timezone.utc)
 
 
 def _utc_midnight(day: datetime.date) -> str:
@@ -670,7 +672,7 @@ def _point_kind_points(
                     )
                 row["availableAt"] = explicit
             elif available_time and available_time < datetime.datetime.combine(
-                period_end, datetime.time(), datetime.UTC
+                period_end, datetime.time(), datetime.timezone.utc
             ):
                 raise ValueError(
                     f"Point {index + 1}: available_at precedes the aggregate close."
