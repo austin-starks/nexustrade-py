@@ -1274,13 +1274,13 @@ def HighOfDay(
 __all__.append("HighOfDay")
 
 def Index(
-    metric: Literal["VIX", "SPX", "NDX", "DJI", "RUT", "SKEW", "VVIX", "DXY", "TNX"] = "VIX",
+    metric: Literal["VIX", "SPX", "NDX", "DJI", "RUT", "SKEW", "VVIX", "USDBROAD", "TNX"] = "VIX",
 ) -> Indicator:
     """Index indicator.
     metric: Ticker key matching hydrated index price data (add more in BigQuery + rehydrate as needed)
     """
     d: Dict[str, Any] = {"type": "Index"}
-    d["metric"] = _enum(metric, ["VIX","SPX","NDX","DJI","RUT","SKEW","VVIX","DXY","TNX"], "metric")
+    d["metric"] = _enum(metric, ["VIX","SPX","NDX","DJI","RUT","SKEW","VVIX","USDBROAD","TNX"], "metric")
     return Indicator(d)
 
 __all__.append("Index")
