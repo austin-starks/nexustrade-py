@@ -57,6 +57,7 @@ __all__ = [
 # dependency of the published package.
 _SANDBOX_ONLY_MODULES = {
     "nexustrade.host",
+    "nexustrade.inspect_document",
     "nexustrade.report",
     "nexustrade.scanned_table",
     "nexustrade.signal",
@@ -112,6 +113,7 @@ _LAZY_EXPORTS = {
     "extract_pdf_markdown": ("nexustrade.scanned_table", "extract_pdf_markdown"),
     "extract_pdfs": ("nexustrade.scanned_table", "extract_pdfs"),
     "extract_rows": ("nexustrade.scanned_table", "extract_rows"),
+    "inspect_document": ("nexustrade.inspect_document", "inspect_document"),
     "probe_pdf": ("nexustrade.scanned_table", "probe_pdf"),
     "validate_row": ("nexustrade.signal", "validate_row"),
     "write_rows": ("nexustrade.signal", "write_rows"),
