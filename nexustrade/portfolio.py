@@ -1273,6 +1273,21 @@ def HighOfDay(
 
 __all__.append("HighOfDay")
 
+def ImpliedVolatility(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    dte: float = 30,
+) -> Indicator:
+    """ImpliedVolatility indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    dte: Target constant-maturity tenor in calendar days (e.g. 30)
+    """
+    d: Dict[str, Any] = {"type": "ImpliedVolatility"}
+    _set_asset(d, "targetAsset", asset)
+    d["dte"] = dte
+    return Indicator(d)
+
+__all__.append("ImpliedVolatility")
+
 def Index(
     metric: Literal["VIX", "SPX", "NDX", "DJI", "RUT", "SKEW", "VVIX", "USDBROAD", "TNX"] = "VIX",
 ) -> Indicator:
@@ -1477,6 +1492,55 @@ def IsNotAsset(
     return Indicator(d)
 
 __all__.append("IsNotAsset")
+
+def IVHVRatio(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    hv_window: float = 20,
+) -> Indicator:
+    """IVHVRatio indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    hv_window: Trading days of log-return history for realized volatility
+    """
+    d: Dict[str, Any] = {"type": "IVHVRatio"}
+    _set_asset(d, "targetAsset", asset)
+    d["hvWindow"] = hv_window
+    return Indicator(d)
+
+__all__.append("IVHVRatio")
+
+def IVPercentile(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 252,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """IVPercentile indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "IVPercentile"}
+    _set_asset(d, "targetAsset", asset)
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("IVPercentile")
+
+def IVRank(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 252,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """IVRank indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "IVRank"}
+    _set_asset(d, "targetAsset", asset)
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("IVRank")
 
 def LastOrderPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
