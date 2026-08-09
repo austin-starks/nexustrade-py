@@ -36,6 +36,12 @@ class NlScreen:
 
     ``outcome`` is what to branch on, not truthiness of ``rows``: EMPTY and
     CLARIFICATION both have no rows and mean completely different things.
+
+    ``used_fallback_tables`` is a degradation signal, not a detail: the screen
+    narrows the catalog with a table-selector round first, and when that round
+    fails it falls back to the whole stored table index. The SQL that follows is
+    then written against a much broader context and can silently read the wrong
+    table, so a caller checking provenance has to be able to see it.
     """
 
     id: str
@@ -46,6 +52,7 @@ class NlScreen:
     engine: str | None = None
     catalog_version: str | None = None
     tables: list[str] = field(default_factory=list)
+    used_fallback_tables: bool = False
     as_of_date: str | None = None
     clarification: str | None = None
     question: str | None = None
@@ -82,6 +89,7 @@ class NlScreen:
             engine=result.get("engine"),
             catalog_version=result.get("catalogVersion"),
             tables=list(result.get("tables") or []),
+            used_fallback_tables=bool(result.get("usedFallbackTables")),
             as_of_date=result.get("asOfDate"),
             clarification=result.get("clarification"),
             question=result.get("question"),

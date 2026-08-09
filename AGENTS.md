@@ -308,6 +308,20 @@ Always report `screen.sql` alongside the numbers. It is model-generated, so it
 is the only way anyone can check the result. This method spends LLM credits;
 `nt.lake.sql` does not.
 
+Check `screen.used_fallback_tables` before you trust which tables were read. The
+screen narrows the catalog with a table-selector round first; when that round
+fails it falls back to the whole stored index, and the SQL is then written
+against a much broader context. A `True` here means "verify `screen.tables` is
+what you expected" — the rows can look perfectly reasonable and come from the
+wrong table. Attributes are snake_case: the camelCase spellings in the JSON
+envelope (`usedFallbackTables`, `rowCount`, `asOfDate`) are the wire format and
+raise `AttributeError` on the object.
+
+The symbol column is whatever the generated SQL named it. Probe `screen.rows[0]`
+for `ticker` / `symbol` / `asset` / `targetAsset` rather than indexing a fixed
+key, which raises `KeyError` on a screen that aliased the column or returned an
+aggregate.
+
 Not in this SDK. Do not attempt to reach them through it:
 
 - **Submitting a live order** — impossible from anywhere, not just here. Live
