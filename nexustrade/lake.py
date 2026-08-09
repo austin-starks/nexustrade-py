@@ -15,7 +15,7 @@ import os
 import re
 import uuid
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Union
 
@@ -784,8 +784,102 @@ def describe(
     return _client(client).describe_lake_table(table)
 
 
+class LakeAskFailed(RuntimeError):
+    def __init__(self, message: str, sql: str | None = None) -> None:
+        super().__init__(message)
+        self.sql = sql
+
+
+@dataclass
+class LakeAsk:
+    id: str
+    outcome: str
+    sql: str | None = None
+    params: list[Any] = field(default_factory=list)
+    tables: list[str] = field(default_factory=list)
+    used_fallback_tables: bool = False
+    catalog_version: str | None = None
+    clarification: str | None = None
+    rationale: str | None = None
+    lake_query_id: str | None = None
+    question: str | None = None
+    _client: NexusTradeClient | None = None
+
+    @property
+    def needs_clarification(self) -> bool:
+        return self.outcome == "CLARIFICATION"
+
+    def result(self, **wait_options: Any) -> LakeQueryResult:
+        """Block on the delegated lake query and return its result."""
+        if not self.lake_query_id:
+            raise LakeAskFailed(
+                "This ask produced no query to execute.", sql=self.sql
+            )
+        handle = get(self.lake_query_id, client=self._client)
+        if isinstance(handle, LakeQueryResult):
+            return handle
+        return handle.wait(**wait_options)
+
+    def to_pandas(self, **options: Any) -> Any:
+        return self.result().to_pandas(**options)
+
+    @classmethod
+    def _from_operation(
+        cls,
+        operation: Mapping[str, Any],
+        client: NexusTradeClient,
+    ) -> "LakeAsk":
+        result = operation.get("result") or {}
+        return cls(
+            id=str(operation.get("id", "")),
+            outcome=str(result.get("outcome") or "GENERATION_FAILED"),
+            sql=result.get("sql"),
+            params=list(result.get("params") or []),
+            tables=list(result.get("tables") or []),
+            used_fallback_tables=bool(result.get("usedFallbackTables")),
+            catalog_version=result.get("catalogVersion"),
+            clarification=result.get("clarification"),
+            rationale=result.get("rationale"),
+            lake_query_id=result.get("lakeQueryId"),
+            question=result.get("question"),
+            _client=client,
+        )
+
+
+def ask(
+    question: str,
+    *,
+    client: NexusTradeClient | None = None,
+    **wait_options: Any,
+) -> LakeAsk:
+    """Ask the lake in plain language. Blocks until the query is terminal.
+
+    Unlike ``nl.screen_stocks``, this returns a handle rather than rows:
+    ``.sql`` is the statement that ran and ``.result()`` / ``.to_pandas()``
+    materialize it. The generated SQL is the point — re-run it with
+    ``nt.lake.sql`` for anything you need to reproduce.
+    """
+    resolved = client or NexusTradeClient.from_environment()
+    started = resolved.create_lake_ask(question)
+    operation = resolved.wait_for_lake_ask(
+        str(started["id"]),
+        raise_on_failure=False,
+        **wait_options,
+    )
+    lake_ask = LakeAsk._from_operation(operation, resolved)
+    if operation.get("status") == "failed":
+        error = operation.get("error") or {}
+        raise LakeAskFailed(
+            str(error.get("message") or "Natural-language lake ask failed."),
+            sql=lake_ask.sql,
+        )
+    return lake_ask
+
+
 __all__ = [
     "DEFAULT_QUEUE_ALLOWANCE_SECONDS",
+    "LakeAsk",
+    "LakeAskFailed",
     "LakeBindValue",
     "LakeQueryFailed",
     "LakeQueryHandle",
@@ -793,6 +887,7 @@ __all__ = [
     "LakeResultLimitError",
     "LakeSubmitFailed",
     "LakeTable",
+    "ask",
     "catalog",
     "describe",
     "get",

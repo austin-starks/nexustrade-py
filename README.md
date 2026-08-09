@@ -546,6 +546,10 @@ is missing here, so this list cannot drift from the code.
 | `get_lake_query(query_id)`                      | Read the operation                   |
 | `wait_for_lake_query(query_id, …)`              | Block until terminal                 |
 | `cancel_lake_query(query_id)`                   | Cancel an owned query                |
+| `create_lake_ask(question)`                     | Ask the lake in plain language       |
+| `get_lake_ask(ask_id)`                          | Read the operation                   |
+| `wait_for_lake_ask(ask_id, …)`                  | Block until terminal                 |
+| `cancel_lake_ask(ask_id)`                       | Cancel an owned ask                  |
 | `get_lake_query_manifest(query_id)`             | Schema, checksums, and part metadata |
 | `download_lake_query_part(query_id, part, …)`   | Download one Parquet part            |
 | `get_lake_catalog()`                            | List queryable tables                |

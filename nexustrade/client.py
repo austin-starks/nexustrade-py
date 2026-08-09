@@ -1698,6 +1698,33 @@ class NexusTradeClient:
         """Block until a screen is terminal. See ``wait_for_operation``."""
         return wait_for_operation(self.get_nl_screen, screen_id, **options)
 
+    def create_lake_ask(self, question: str) -> dict[str, Any]:
+        """Submit a natural-language lake ask. Returns immediately; poll it."""
+        response = self._transport.request(
+            "POST",
+            "lake/ask",
+            body={"question": question},
+        )
+        return self._operation(response)
+
+    def get_lake_ask(self, ask_id: str) -> dict[str, Any]:
+        response = self._transport.request(
+            "GET",
+            f"lake/ask/{urllib.parse.quote(ask_id, safe='')}",
+        )
+        return self._operation(response)
+
+    def cancel_lake_ask(self, ask_id: str) -> dict[str, Any]:
+        response = self._transport.request(
+            "POST",
+            f"lake/ask/{urllib.parse.quote(ask_id, safe='')}/cancel",
+        )
+        return self._operation(response)
+
+    def wait_for_lake_ask(self, ask_id: str, **options: Any) -> dict[str, Any]:
+        """Block until a lake ask is terminal. See ``wait_for_operation``."""
+        return wait_for_operation(self.get_lake_ask, ask_id, **options)
+
     def get_lake_catalog(self) -> list[dict[str, Any]]:
         response = self._transport.request("GET", "lake/catalog")
         tables = response.get("tables")

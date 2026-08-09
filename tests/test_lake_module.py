@@ -198,6 +198,10 @@ class LakePackagingTests(unittest.TestCase):
             "create_lake_query",
             "get_lake_query",
             "cancel_lake_query",
+            "create_lake_ask",
+            "get_lake_ask",
+            "cancel_lake_ask",
+            "wait_for_lake_ask",
             "get_lake_query_manifest",
             "download_lake_query_part",
             "get_lake_catalog",
@@ -208,6 +212,50 @@ class LakePackagingTests(unittest.TestCase):
         for name in ("duckdb_relation", "iter_batches", "to_pandas"):
             self.assertFalse(hasattr(nt.NexusTradeClient, name))
             self.assertTrue(callable(getattr(nt.lake.LakeQueryResult, name)))
+
+
+class LakeAskTests(unittest.TestCase):
+    def test_ask_maps_clarification_to_needs_clarification(self) -> None:
+        client = mock.Mock()
+        client.create_lake_ask.return_value = {"id": "la-1", "status": "running"}
+        client.wait_for_lake_ask.return_value = {
+            "id": "la-1",
+            "status": "completed",
+            "result": {
+                "outcome": "CLARIFICATION",
+                "clarification": "Which ticker?",
+                "question": "avg volume",
+            },
+        }
+        ask = nt.lake.ask("avg volume", client=client)
+        self.assertTrue(ask.needs_clarification)
+        self.assertIsNone(ask.lake_query_id)
+
+    def test_ask_raises_lake_ask_failed_with_sql(self) -> None:
+        client = mock.Mock()
+        client.create_lake_ask.return_value = {"id": "la-1", "status": "running"}
+        client.wait_for_lake_ask.return_value = {
+            "id": "la-1",
+            "status": "failed",
+            "result": {
+                "outcome": "GENERATION_FAILED",
+                "sql": "SELECT bad",
+            },
+            "error": {"message": "generation failed"},
+        }
+        with self.assertRaises(nt.lake.LakeAskFailed) as ctx:
+            nt.lake.ask("bad question", client=client)
+        self.assertEqual(ctx.exception.sql, "SELECT bad")
+
+    def test_result_without_lake_query_id_raises(self) -> None:
+        ask = nt.lake.LakeAsk(
+            id="la-1",
+            outcome="CLARIFICATION",
+            sql=None,
+            clarification="Which ticker?",
+        )
+        with self.assertRaises(nt.lake.LakeAskFailed):
+            ask.result()
 
 
 if __name__ == "__main__":

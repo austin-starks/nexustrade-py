@@ -27,6 +27,9 @@ NO_BODY_METHODS = {
     "create_nl_screen",
     "get_nl_screen",
     "cancel_nl_screen",
+    "create_lake_ask",
+    "get_lake_ask",
+    "cancel_lake_ask",
 }
 # Methods that take no positional argument at all; the fixture's `input` is null.
 NO_ARG_METHODS = {"list_brokerages"}

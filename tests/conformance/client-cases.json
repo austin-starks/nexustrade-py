@@ -1301,6 +1301,127 @@
         "kind": "nl_screen",
         "status": "running"
       }
+    },
+    {
+      "name": "create_lake_ask posts the question",
+      "method": "create_lake_ask",
+      "input": "average daily volume for SPY in 2024",
+      "idempotency_key": null,
+      "responses": [
+        {
+          "operation": {
+            "id": "la-1",
+            "kind": "lake_ask",
+            "status": "running"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "lake/ask",
+          "body": {
+            "question": "average daily volume for SPY in 2024"
+          },
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "la-1",
+        "kind": "lake_ask",
+        "status": "running"
+      }
+    },
+    {
+      "name": "get_lake_ask reads an owner-scoped path with no body",
+      "method": "get_lake_ask",
+      "input": "la-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "la-1",
+            "kind": "lake_ask",
+            "status": "completed",
+            "result": {
+              "outcome": "QUERY",
+              "sql": "SELECT avg(volume) FROM lake.sec_daily_ohlc WHERE ticker = 'SPY'",
+              "lakeQueryId": "lq-1"
+            }
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "lake/ask/la-1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "la-1",
+        "kind": "lake_ask",
+        "status": "completed",
+        "result": {
+          "outcome": "QUERY",
+          "sql": "SELECT avg(volume) FROM lake.sec_daily_ohlc WHERE ticker = 'SPY'",
+          "lakeQueryId": "lq-1"
+        }
+      }
+    },
+    {
+      "name": "cancel_lake_ask posts to the cancel sub-path",
+      "method": "cancel_lake_ask",
+      "input": "la-1",
+      "responses": [
+        {
+          "operation": {
+            "id": "la-1",
+            "kind": "lake_ask",
+            "status": "cancelled"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "lake/ask/la-1/cancel",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "la-1",
+        "kind": "lake_ask",
+        "status": "cancelled"
+      }
+    },
+    {
+      "name": "a lake ask id with reserved characters is path-escaped identically",
+      "method": "get_lake_ask",
+      "input": "a b/c!d",
+      "responses": [
+        {
+          "operation": {
+            "id": "a b/c!d",
+            "kind": "lake_ask",
+            "status": "running"
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "lake/ask/a%20b%2Fc%21d",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "id": "a b/c!d",
+        "kind": "lake_ask",
+        "status": "running"
+      }
     }
   ]
 }

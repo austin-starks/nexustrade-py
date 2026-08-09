@@ -216,6 +216,14 @@ result = nt.lake.sql(
 frame = result.to_pandas()
 ```
 
+When the right table or column set is unknown, prefer a one-shot discovery pass:
+
+```python
+ask = nt.lake.ask("average daily volume for SPY in 2024")
+print(ask.sql)  # log the generated SQL
+frame = ask.result().to_pandas()  # materialize the delegated query
+```
+
 Always parameterize with `?` rather than interpolating into the SQL string.
 Requires the `[lake]` extra.
 </details>
