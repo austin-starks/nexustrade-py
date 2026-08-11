@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 import nexustrade as nt
+import nexustrade.host as host
 
 DOCS = Path(__file__).resolve().parent.parent
 CLIENT_CALL = re.compile(r"\bclient\.([a-z_][a-z0-9_]*)\(")
@@ -124,6 +125,13 @@ class DocumentedSymbolTests(unittest.TestCase):
                         f"{name} calls nt.{symbol}(), but {symbol} is a client "
                         "method — write client." + f"{symbol}() instead",
                     )
+
+
+class HostFetchExampleTests(unittest.TestCase):
+    def test_post_example_reads_the_receipt_from_the_result_envelope(self) -> None:
+        doc = host.fetch.__doc__ or ""
+        self.assertIn('inv["data"]["receipt"]', doc)
+        self.assertNotIn('inv["receipt"]', doc)
 
 
 if __name__ == "__main__":

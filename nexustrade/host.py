@@ -298,7 +298,7 @@ def fetch(
     queue_fetch kwargs (method/body/headers/source_receipt) minus request_id:
 
         fetch({"submit": {"url": u, "method": "POST", "body": b,
-                          "source_receipt": inv["receipt"]}})
+                          "source_receipt": inv["data"]["receipt"]}})
 
     Ids are the result cache key: reuse the SAME id for the same resource so a
     later call returns what was already fetched instead of paying for it twice.
