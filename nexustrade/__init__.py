@@ -1,12 +1,10 @@
 """NexusTrade SDK.
 
 The authoring/API surface has no third-party runtime dependencies. Analytics,
-lake, and compute-host helpers live in submodules and are resolved lazily, so
-``pip install nexustrade`` remains useful outside the compute image.
-
-Modules named in ``_SANDBOX_ONLY_MODULES`` ship only inside the NexusTrade
-compute sandbox, which overlays them into this package at image build time.
-``nexustrade.lake`` is published but needs the ``[lake]`` extra.
+lake, document, and compute-host helpers live in public submodules and are
+resolved lazily, so ``pip install nexustrade`` remains useful without extras.
+``nexustrade.lake`` and ``nexustrade.tigris`` need ``[lake]`` for local
+materialization; PDF inspection/OCR needs ``[documents]``.
 
 ``# sandbox-prune:begin/end <region>`` comments mark code the compute image
 strips from its copy of this package — agent runs are refused for compute
@@ -17,7 +15,6 @@ infra/sandbox-compute/prune_agent_surface.py.
 """
 
 from importlib import import_module
-from importlib.util import find_spec
 from typing import Any
 
 from nexustrade import portfolio as _portfolio
@@ -52,27 +49,18 @@ __all__ = [
     "wait_for_operation",
 ]
 
-# Present only inside the compute sandbox. Naming them keeps the historical
-# top-level imports working there without making the lake/host stack a
-# dependency of the published package.
-_SANDBOX_ONLY_MODULES = {
-    "nexustrade.host",
-    "nexustrade.inspect_document",
-    "nexustrade.report",
-    "nexustrade.scanned_table",
-    "nexustrade.signal",
-    "nexustrade.tigris",
-}
-
-# Preserve the historical top-level compute imports without making optional
-# analytics/lake dependencies a requirement for ordinary SDK clients. Resolved
-# on attribute access only — see the note above ``__dir__``.
+# Preserve top-level compute imports without making optional analytics/lake
+# dependencies a requirement for ordinary SDK clients. Resolved on attribute
+# access only — see the note above ``__dir__``.
 # Which extra installs each optional module. `nt.lake` needs duckdb/pyarrow,
 # `nt.stats` needs numpy/pandas — naming the wrong one in the error sends people
 # to install the wrong thing.
 _OPTIONAL_EXTRA_BY_MODULE = {
+    "nexustrade.inspect_document": "documents",
     "nexustrade.lake": "lake",
+    "nexustrade.scanned_table": "documents",
     "nexustrade.stats": "stats",
+    "nexustrade.tigris": "lake",
 }
 
 _LAZY_EXPORTS = {
@@ -88,7 +76,6 @@ _LAZY_EXPORTS = {
     "gateway_chat_json": ("nexustrade.host", "gateway_chat_json"),
     "gateway_chat_text": ("nexustrade.host", "gateway_chat_text"),
     "gateway_fetch_json": ("nexustrade.host", "gateway_fetch_json"),
-    "options_lake": ("nexustrade.host", "options_lake"),
     "poll_backtest": ("nexustrade.host", "poll_backtest"),
     "poll_backtests": ("nexustrade.host", "poll_backtests"),
     "poll_optimization": ("nexustrade.host", "poll_optimization"),
@@ -96,7 +83,6 @@ _LAZY_EXPORTS = {
     "queue_backtest": ("nexustrade.host", "queue_backtest"),
     "queue_backtest_poll": ("nexustrade.host", "queue_backtest_poll"),
     "queue_fetch": ("nexustrade.host", "queue_fetch"),
-    "queue_options_lake": ("nexustrade.host", "queue_options_lake"),
     "queue_portfolio_job": ("nexustrade.host", "queue_portfolio_job"),
     "queue_portfolio_job_read": ("nexustrade.host", "queue_portfolio_job_read"),
     "queue_search": ("nexustrade.host", "queue_search"),
@@ -147,20 +133,23 @@ _LAZY_EXPORTS = {
     "read_year_shards": ("nexustrade.tigris", "read_year_shards"),
 }
 
-# ``__all__`` deliberately excludes ``_LAZY_EXPORTS``. ``import *`` resolves
-# every name in ``__all__`` eagerly, so listing sandbox-only and [stats]-only
-# helpers there would make ``from nexustrade import *`` raise on an ordinary
-# ``pip install nexustrade``. They stay reachable by attribute access
-# (``nt.search``) and by ``from nexustrade import search``, which is how the
-# compute sandbox has always used them — ``__getattr__`` serves both.
-
-
-def _module_is_present(module_name: str) -> bool:
-    """True if the module is importable-by-location (does not execute it)."""
-    try:
-        return find_spec(module_name) is not None
-    except (ImportError, ValueError):
-        return False
+# Base-install-safe lazy modules are part of the explicit public surface.
+# Tigris/stats names remain attribute-accessible but stay out of ``__all__``
+# because ``import *`` resolves every name eagerly and would require extras.
+_PUBLIC_BASE_LAZY_MODULES = {
+    "nexustrade.host",
+    "nexustrade.inspect_document",
+    "nexustrade.report",
+    "nexustrade.scanned_table",
+    "nexustrade.signal",
+}
+__all__.extend(
+    sorted(
+        name
+        for name, (module_name, _attribute) in _LAZY_EXPORTS.items()
+        if module_name in _PUBLIC_BASE_LAZY_MODULES
+    )
+)
 
 
 def __dir__() -> list[str]:
@@ -175,17 +164,6 @@ def __getattr__(name: str) -> Any:
     try:
         module = import_module(module_name)
     except ImportError as error:
-        # Distinguish "the module is not shipped here" from "it is shipped but
-        # its dependencies are missing". Inside the sandbox the overlay IS
-        # present, so a duckdb/pandas failure must not be reported as absence.
-        if module_name in _SANDBOX_ONLY_MODULES and not _module_is_present(
-            module_name
-        ):
-            raise AttributeError(
-                f"'{name}' comes from {module_name}, which exists only inside "
-                "the NexusTrade compute sandbox. The published SDK exposes "
-                "NexusTradeClient and the portfolio authoring builders."
-            ) from error
         extra = _OPTIONAL_EXTRA_BY_MODULE.get(module_name, "stats")
         raise AttributeError(
             f"'{name}' comes from {module_name}, whose optional dependencies "

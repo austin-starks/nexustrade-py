@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -89,14 +90,21 @@ class PackageExportTests(unittest.TestCase):
 
     def test_wildcard_import_works_without_optional_extras(self) -> None:
         # `import *` resolves every name in __all__ eagerly, so lazy helpers
-        # (lake / stats / tigris) must NOT be listed there — otherwise a plain
-        # install without the extras raises on `from nexustrade import *`.
-        self.assertEqual(set(nt._LAZY_EXPORTS).intersection(nt.__all__), set())
+        # backed by optional modules must NOT be listed there — otherwise a
+        # plain install without the extras raises on `from nexustrade import *`.
+        eager_unsafe_names = {
+            name
+            for name, (module, _attribute) in nt._LAZY_EXPORTS.items()
+            if module not in nt._PUBLIC_BASE_LAZY_MODULES
+        }
+        self.assertEqual(eager_unsafe_names.intersection(nt.__all__), set())
 
         namespace: dict[str, object] = {}
         exec("from nexustrade import *", namespace)
         self.assertIn("NexusTradeClient", namespace)
         self.assertIn("portfolio", namespace)
+        self.assertIn("extract_pdfs", namespace)
+        self.assertIn("write_rows", namespace)
 
     def test_lazy_helpers_resolve_by_attribute(self) -> None:
         # How compute code reaches them: nt.read_ohlc / nt.lake, not import *.
@@ -116,14 +124,10 @@ class PackageExportTests(unittest.TestCase):
                 self.assertIsNotNone(getattr(nt, name))
         self.assertTrue(set(lazy_names).issubset(dir(nt)))
 
-    def test_sandbox_only_names_explain_themselves_when_absent(self) -> None:
-        # Published layout: the overlay is not installed, so these must say so
-        # rather than pointing at an extra that would not help.
-        with self.assertRaises(AttributeError) as raised:
-            nt.search
-        self.assertIn(
-            "only inside the NexusTrade compute sandbox", str(raised.exception)
-        )
+    def test_compute_helpers_are_public_and_unknown_names_still_fail(self) -> None:
+        self.assertTrue(callable(nt.search))
+        self.assertTrue(callable(nt.extract_pdfs))
+        self.assertTrue(callable(nt.write_rows))
         with self.assertRaises(AttributeError) as unknown:
             nt.definitely_not_a_real_export
         self.assertIn("has no attribute", str(unknown.exception))
@@ -141,7 +145,11 @@ class PackageExportTests(unittest.TestCase):
         # `make test-sdk-python-stats` installs numpy, so asserting on a real
         # import error passed only in the suite that never had the extra —
         # and failed the one release gate that does.
-        for name, extra in [("spec_curve", "stats"), ("lake", "lake")]:
+        for name, extra in [
+            ("spec_curve", "stats"),
+            ("lake", "lake"),
+            ("extract_pdfs", "documents"),
+        ]:
             # __getattr__ caches into globals(), so a name another test already
             # resolved would never reach the branch under test.
             nt.__dict__.pop(name, None)
@@ -159,6 +167,19 @@ class PackageExportTests(unittest.TestCase):
         # nt.lake resolved but nt.stats raised a bare "no attribute" because
         # only its individual FUNCTIONS were mapped. Both are submodules.
         self.assertEqual(nt._LAZY_EXPORTS["stats"], ("nexustrade.stats", None))
+
+    def test_public_distribution_owns_agent_facing_compute_modules(self) -> None:
+        for name in (
+            "host",
+            "inspect_document",
+            "report",
+            "scanned_table",
+            "signal",
+            "tigris",
+        ):
+            with self.subTest(module=name):
+                self.assertIsNotNone(importlib.util.find_spec(f"nexustrade.{name}"))
+        self.assertIsNone(importlib.util.find_spec("nexustrade.fetch_executor"))
 
 
 if __name__ == "__main__":

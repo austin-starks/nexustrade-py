@@ -95,9 +95,16 @@ hardcode a key into a file you write, and never print one. Exported values win
 over the file, so a `.env` cannot silently override a deployment's real config.
 
 **7. The base install is stdlib-only.** `nt.lake.*` needs `pip install
-'nexustrade[lake]'`; `nt.spec_curve` and friends need `[stats]`. Missing extras
-raise an `AttributeError` that names the extra to install — read it rather than
-guessing.
+'nexustrade[lake]'`; `nt.spec_curve` and friends need `[stats]`; PDF inspection,
+OCR, and schema-bound extraction need `[documents]`. Missing extras raise an
+`AttributeError` that names the extra to install — read it rather than guessing.
+
+The same public modules are installed in NexusTrade compute. Use
+`nt.inspect_document` on representative pages, then `nt.extract_pdfs` or
+`nt.extract_rows` with an explicit schema. Inspect the structured rows and repeat
+extraction with a corrected schema when evidence is missing or ambiguous. Regex
+is not a substitute for OCR plus schema-bound extraction and must not classify
+model-produced asset identities.
 
 **8. Your own data belongs in ONE series.** `create_custom_indicator` mints a
 new series every time it is called with a fresh idempotency key. Recurring

@@ -16,7 +16,9 @@ class LakePackagingTests(unittest.TestCase):
     def test_lake_is_lazy_not_in_all(self) -> None:
         self.assertNotIn("lake", nt.__all__)
         self.assertEqual(nt._LAZY_EXPORTS["lake"], ("nexustrade.lake", None))
-        self.assertEqual(set(nt._LAZY_EXPORTS).intersection(nt.__all__), set())
+        for name in set(nt._LAZY_EXPORTS).intersection(nt.__all__):
+            module, _attribute = nt._LAZY_EXPORTS[name]
+            self.assertIn(module, nt._PUBLIC_BASE_LAZY_MODULES)
 
     def test_lake_module_resolves_by_attribute(self) -> None:
         self.assertTrue(inspect.ismodule(nt.lake))

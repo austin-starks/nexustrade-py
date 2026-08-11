@@ -26,7 +26,15 @@ The base install is **stdlib-only** — no third-party dependencies, importable 
 ```bash
 pip install 'nexustrade[lake]'    # DuckDB/pandas analysis of lake results
 pip install 'nexustrade[stats]'   # spec curves, Newey-West, bootstrap
+pip install 'nexustrade[documents]' # PDF inspection, OCR, structured extraction
+pip install 'nexustrade[compute]' # exact union used by NexusTrade compute
 ```
+
+The public distribution is also the package installed in NexusTrade compute
+sandboxes. Agent-facing helpers such as `nexustrade.host`,
+`nexustrade.scanned_table`, `nexustrade.signal`, `nexustrade.report`, and
+`nexustrade.tigris` therefore have one canonical implementation. Host-backed
+operations still require the short-lived environment supplied by a compute run.
 
 ## Quickstart
 
