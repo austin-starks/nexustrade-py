@@ -56,6 +56,7 @@ documents = [
 # Exact union baked into the NexusTrade compute image. Keeping it public makes
 # the deployed dependency surface reproducible by ordinary SDK users too.
 compute = [
+  "beautifulsoup4==4.15.0",
   "duckdb==1.3.2",
   "liteparse==2.11.0",
   "numpy==2.2.6",
