@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 <img src="https://nexustrade.io/logo192.jpeg" alt="NexusTrade" width="88" height="88">
@@ -678,7 +680,7 @@ nor the poll timeout bounds how long a _job_ takes.
 
 Portfolio drafting, backtesting, optimization, walk-forward studies, and
 read-only SQL over the market-data lake, versioned under `/api/v1/nexustrade`.
-The screener and creating a live deployment remain outside this surface.
+Creating a live deployment remains outside this surface; the NL screener is now included.
 Orders are reachable, but a live order is only ever staged for human approval —
 never submitted. `deploy` and `undeploy` act on whatever an existing id already
 is, live included.
