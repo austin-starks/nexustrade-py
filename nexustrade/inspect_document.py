@@ -246,7 +246,7 @@ def inspect_document(
     if not isinstance(analysis, dict):
         raise RuntimeError("inspect_document expected a JSON object from the gateway")
 
-    return {
+    result = {
         "kind": kind,
         "probe": probe,
         "pages_inspected": pages_inspected,
@@ -254,3 +254,7 @@ def inspect_document(
         "analysis": analysis,
         "model": inspect_model,
     }
+    from nexustrade.document_inspect_receipt import persist_inspect_receipt
+
+    persist_inspect_receipt(result)
+    return result

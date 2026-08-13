@@ -1159,6 +1159,9 @@ def extract_pdfs(
     # it raises instead of returning 62 identical `error` entries after paying
     # for 62 OCRs.
     if rows_schema is not None:
+        from nexustrade.document_inspect_receipt import require_prior_inspect_receipt
+
+        require_prior_inspect_receipt()
         rows_schema = normalize_rows_schema(rows_schema)
 
     items: list[tuple[str, bytes]] = (
@@ -1411,9 +1414,10 @@ DEFAULT_EXTRACT_ROWS_MODEL = "openai/gpt-5.6-luna"
 # instruction was NOT measured and should not be assumed equivalent.
 _EXTRACT_ROWS_SYSTEM = (
     "You convert OCR markdown of a document table into JSON rows matching the "
-    "provided schema. Transcribe; do not summarise, filter, merge or "
-    "deduplicate \u2014 two rows that look identical are two separate records and "
-    "must both appear.\n\n"
+    "provided schema. Transcribe; do not summarise, filter, or drop records. "
+    "Two complete records that look identical are two separate records and "
+    "must both appear. A table row that continues onto the next page is one "
+    "record: emit it once with one amount, not two fragments.\n\n"
     "The mistakes that matter, in order of how often they are made:\n"
     "1. A value in ROUND parentheses and a code in SQUARE brackets can COLLIDE "
     "(e.g. `AllianceBernstein Holding L.P. Units (AB) [AB]`). Read each from its "
@@ -1424,8 +1428,10 @@ _EXTRACT_ROWS_SYSTEM = (
     "When a schema field has no dedicated column and prose is the only evidence, "
     "transcribe from that prose into the schema field once; do not run a second "
     "keyword or regex classification pass afterward.\n"
-    "3. A row can WRAP across lines or across a page boundary. Check the start "
-    "of each page for a row continuing from the previous one.\n"
+    "3. A row can WRAP across lines or across a page boundary. The continued "
+    "fragment is the same record, not a second row and not a row to reject. "
+    "Combine it into one JSON object before emitting; never add the amount "
+    "twice.\n"
     "4. Older documents may omit a code entirely. Return null; never infer one."
 )
 
@@ -1746,6 +1752,9 @@ def extract_rows(
     reconciliation from that field before grading, so omitting it leaves the run
     unable to prove what it extracted from where.
     """
+    from nexustrade.document_inspect_receipt import require_prior_inspect_receipt
+
+    require_prior_inspect_receipt()
     # Before the OCR hop, not after: a schema the provider will reject costs
     # nothing to catch here and a full document's OCR to catch downstream.
     normalized_schema = normalize_rows_schema(schema)
