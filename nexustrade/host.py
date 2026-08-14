@@ -19,13 +19,15 @@ HOST_REQUESTS_PATH = "/work/host_requests.jsonl"
 HOST_RESULTS_PATH = "/work/host_results.jsonl"
 
 _pending_requests: list[dict[str, Any]] = []
-# Mirrors the broker's FETCH_CONCURRENCY so batch latency is comparable.
+# Keep gateway fan-out below the server's per-host limits. The gateway itself
+# owns retries and pacing; a 16-wide client burst used to reach several gateway
+# machines at once and defeat each process-local limiter.
 def _gateway_fetch_concurrency() -> int:
-    raw = os.environ.get("SANDBOX_FETCH_CONCURRENCY", "16")
+    raw = os.environ.get("SANDBOX_FETCH_CONCURRENCY", "4")
     try:
         return max(1, int(raw))
     except ValueError:
-        return 16
+        return 4
 
 
 _GATEWAY_FETCH_CONCURRENCY = _gateway_fetch_concurrency()
