@@ -101,6 +101,47 @@ def read_result(request_id: str) -> dict[str, Any] | None:
     return read_results().get(request_id)
 
 
+def _fetch_request_url(spec: str | dict[str, Any]) -> str:
+    if isinstance(spec, str):
+        return spec
+    url = spec.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("fetch request spec requires a non-empty url")
+    return url
+
+
+def _recorded_fetch_url(row: dict[str, Any]) -> str | None:
+    direct = row.get("url")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    data = row.get("data")
+    if isinstance(data, dict):
+        nested = data.get("url")
+        if isinstance(nested, str) and nested.strip():
+            return nested
+    return None
+
+
+def _assert_fetch_id_matches_request(
+    request_id: str,
+    spec: str | dict[str, Any],
+    row: dict[str, Any],
+) -> None:
+    requested_url = _fetch_request_url(spec).strip()
+    recorded_url = _recorded_fetch_url(row)
+    if recorded_url is None:
+        raise ValueError(
+            f"fetch id {request_id!r} already has a result whose request URL "
+            "cannot be verified; use a new deterministic versioned id"
+        )
+    if recorded_url.strip() != requested_url:
+        raise ValueError(
+            f"fetch id {request_id!r} is already bound to {recorded_url!r}, "
+            f"not {requested_url!r}; preserve the original specification or use "
+            "a new deterministic versioned id"
+        )
+
+
 def queue_fetch(
     request_id: str,
     url: str,
@@ -325,6 +366,10 @@ def fetch(
     stored, so the batch never drains and nothing announces it.
     """
     results = read_results()
+    for rid, spec in requests.items():
+        existing = results.get(rid)
+        if existing is not None:
+            _assert_fetch_id_matches_request(rid, spec, existing)
     missing = {rid: spec for rid, spec in requests.items() if rid not in results}
     if not missing:
         return {rid: results[rid] for rid in requests}
