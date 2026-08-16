@@ -1269,9 +1269,27 @@ def gateway_fetch_json(url: str, timeout_sec: int = 120) -> dict[str, Any]:
 
 
 DEFAULT_GATEWAY_LLM_MODEL = "openai/gpt-5.6-luna"
-_GATEWAY_CHAT_MAX_ATTEMPTS = 3
+_GATEWAY_CHAT_MAX_ATTEMPTS = 4
 _GATEWAY_CHAT_RETRY_BASE_SECONDS = 0.25
-_GATEWAY_CHAT_TRANSIENT_HTTP_STATUSES = {408, 425, 500, 502, 503, 504}
+# Cloudflare's 52x edge failures are transport outcomes, not evidence that the
+# exact model request is invalid. Keep 526 excluded because an invalid origin
+# certificate is configuration, while 520-525 and 527 can clear on a later
+# bounded attempt just like an ordinary gateway timeout.
+_GATEWAY_CHAT_TRANSIENT_HTTP_STATUSES = {
+    408,
+    425,
+    500,
+    502,
+    503,
+    504,
+    520,
+    521,
+    522,
+    523,
+    524,
+    525,
+    527,
+}
 
 
 class GatewayChatError(RuntimeError):
