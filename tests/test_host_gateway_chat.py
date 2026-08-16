@@ -34,6 +34,50 @@ def _http_error(status: int) -> urllib.error.HTTPError:
 
 
 class GatewayChatRetryTest(unittest.TestCase):
+    def test_accepts_positional_prompt_text(self) -> None:
+        captured_body: dict[str, object] = {}
+
+        def fake_urlopen(request: object, **__: object) -> _Response:
+            nonlocal captured_body
+            data = getattr(request, "data", None)
+            self.assertIsInstance(data, bytes)
+            captured_body = json.loads(data.decode("utf-8"))
+            return _Response(
+                {
+                    "choices": [{"message": {"content": '{"ok":true}'}}],
+                    "model": "test",
+                }
+            )
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+        ):
+            result = host.gateway_chat_json(
+                "adjudicate this transaction",
+                system="Use source evidence only.",
+                json_schema={"type": "object"},
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            captured_body["messages"],
+            [
+                {"role": "system", "content": "Use source evidence only."},
+                {"role": "user", "content": "adjudicate this transaction"},
+            ],
+        )
+
+    def test_rejects_positional_and_keyword_prompt_together(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not both"):
+            host.gateway_chat("one", prompt="two")
+
     def test_retries_cloudflare_524_then_succeeds(self) -> None:
         calls = 0
 

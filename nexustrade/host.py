@@ -1355,11 +1355,16 @@ def gateway_multimodal_messages(
 
 
 def _build_chat_messages(
-    messages: list[dict[str, Any]] | None,
+    messages: list[dict[str, Any]] | str | None,
     *,
     prompt: str | None,
     system: str | None,
 ) -> list[dict[str, Any]]:
+    if isinstance(messages, str):
+        if prompt is not None:
+            raise ValueError("pass positional prompt text or prompt=, not both")
+        prompt = messages
+        messages = None
     if messages is not None:
         if not messages:
             raise ValueError("messages must be non-empty when provided")
@@ -1388,7 +1393,7 @@ def _parse_json_content(content: str) -> Any:
 
 
 def gateway_chat(
-    messages: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, Any]] | str | None = None,
     *,
     prompt: str | None = None,
     system: str | None = None,
@@ -1402,11 +1407,12 @@ def gateway_chat(
     OpenAI-compatible chat completion via the sandbox gateway (/chat/completions).
     Returns the raw OpenAI response object (choices, usage, model, …).
     """
+    built_messages = _build_chat_messages(messages, prompt=prompt, system=system)
     base, api_key = _gateway_credentials()
     body: dict[str, Any] = {
         "model": model or _default_gateway_model(),
         "temperature": temperature,
-        "messages": _build_chat_messages(messages, prompt=prompt, system=system),
+        "messages": built_messages,
     }
     if response_format is not None:
         body["response_format"] = response_format
@@ -1454,7 +1460,7 @@ def gateway_chat(
 
 
 def gateway_chat_text(
-    messages: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, Any]] | str | None = None,
     *,
     prompt: str | None = None,
     system: str | None = None,
@@ -1486,7 +1492,7 @@ def gateway_chat_text(
 
 
 def gateway_chat_json(
-    messages: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, Any]] | str | None = None,
     *,
     prompt: str | None = None,
     system: str | None = None,
