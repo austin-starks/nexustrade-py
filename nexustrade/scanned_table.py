@@ -1693,6 +1693,36 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
         ):
             # `rows` is the extraction protocol, not an optional caller field.
             return _strict_json_schema(rows_schema, force_required=frozenset({"rows"}))
+
+        # `rows_schema` describes ONE extracted row. A common caller mistake is
+        # to pass a second collection envelope such as {"records": [...]}. It
+        # is valid JSON Schema, so blindly wrapping it produces
+        # {"rows": [{"records": [...]}]}: one outer result per document. The
+        # extraction succeeds and downstream code can then silently see zero
+        # semantic rows. Reject that ambiguous shape before OCR instead.
+        if len(properties) == 1:
+            collection_name, collection_schema = next(iter(properties.items()))
+            collection_items = (
+                collection_schema.get("items")
+                if isinstance(collection_schema, Mapping)
+                else None
+            )
+            if (
+                collection_name != "rows"
+                and isinstance(collection_schema, Mapping)
+                and _schema_has_type(collection_schema, "array")
+                and isinstance(collection_items, Mapping)
+                and (
+                    _schema_has_type(collection_items, "object")
+                    or isinstance(collection_items.get("properties"), Mapping)
+                )
+            ):
+                raise RowsSchemaError(
+                    "rows_schema describes ONE extracted row, but the supplied "
+                    f"schema is a collection envelope named {collection_name!r}. "
+                    "Pass the array's item object as rows_schema, or use the "
+                    "reserved JSON Schema `rows` array extraction envelope."
+                )
         return _rows_envelope(_strict_json_schema(rows_schema))
 
     row_properties: dict[str, Any] = {}
