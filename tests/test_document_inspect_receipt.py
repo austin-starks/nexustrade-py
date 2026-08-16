@@ -91,9 +91,11 @@ class ExtractRowsContinuationWordingTests(unittest.TestCase):
     def test_system_prompt_treats_a_page_wrap_as_one_record(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         prompt = scanned_table._EXTRACT_ROWS_SYSTEM
-        self.assertIn("continues onto the next page is one record", prompt)
-        self.assertIn("never add the amount twice", prompt)
-        self.assertNotIn("do not summarise, filter, merge or deduplicate", prompt)
+        self.assertIn("page-boundary continuations", prompt)
+        self.assertIn("never emit a continuation as another row", prompt)
+        self.assertIn("not a semantic classification task", prompt)
+        self.assertIn("return null", prompt)
+        self.assertNotIn("AllianceBernstein", prompt)
 
 
 if __name__ == "__main__":

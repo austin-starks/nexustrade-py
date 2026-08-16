@@ -960,6 +960,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v1"
+DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
 
 
 def _gateway_json(
@@ -1007,6 +1008,8 @@ def _document_request_key(
     rows_schema: dict[str, Any] | None,
     rows_model: str | None,
     rows_retries: int,
+    rows_include_pdf: bool,
+    rows_pdf_max_bytes: int,
     extra_fields: dict[str, Any] | None,
 ) -> str:
     descriptor = {
@@ -1017,9 +1020,16 @@ def _document_request_key(
         "max_pages": max_pages,
         "target_schema": normalize_target_schema(target_schema),
         "rows_schema": rows_schema,
+        "rows_system_sha256": (
+            hashlib.sha256(_EXTRACT_ROWS_SYSTEM.encode("utf-8")).hexdigest()
+            if rows_schema is not None
+            else None
+        ),
         "rows_model": rows_model or os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
         or DEFAULT_EXTRACT_ROWS_MODEL,
         "rows_retries": rows_retries,
+        "rows_include_pdf": rows_include_pdf,
+        "rows_pdf_max_bytes": rows_pdf_max_bytes,
         "extra_fields": extra_fields,
     }
     encoded = json.dumps(
@@ -1123,6 +1133,8 @@ def extract_pdfs(
     rows_schema: dict[str, Any] | None = None,
     rows_model: str | None = None,
     rows_retries: int = 1,
+    rows_include_pdf: bool = True,
+    rows_pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
 ) -> dict[str, dict[str, Any]]:
     """OCR many PDFs concurrently. One gateway call per DOCUMENT, fanned out.
 
@@ -1164,6 +1176,8 @@ def extract_pdfs(
         from nexustrade.document_inspect_receipt import require_prior_inspect_receipt
 
         require_prior_inspect_receipt()
+        if rows_pdf_max_bytes < 1:
+            raise ValueError("rows_pdf_max_bytes must be positive")
         rows_schema = normalize_rows_schema(rows_schema)
 
     items: list[tuple[str, bytes]] = (
@@ -1193,6 +1207,8 @@ def extract_pdfs(
             rows_schema=rows_schema,
             rows_model=rows_model,
             rows_retries=rows_retries,
+            rows_include_pdf=rows_include_pdf,
+            rows_pdf_max_bytes=rows_pdf_max_bytes,
             extra_fields=(extra_fields_by_key or {}).get(key),
         )
         for key, pdf_bytes in items
@@ -1215,6 +1231,8 @@ def extract_pdfs(
                 max_pages=max_pages,
                 source_id=key,
                 retries=rows_retries,
+                include_pdf=rows_include_pdf,
+                pdf_max_bytes=rows_pdf_max_bytes,
             )
             return {
                 "rows": extracted.rows,
@@ -1222,6 +1240,7 @@ def extract_pdfs(
                 "page_audit": extracted.page_audit,
                 "apparent_table_rows": extracted.apparent_table_rows,
                 "needs_review": extracted.needs_review,
+                "pdf_attached": extracted.pdf_attached,
                 "error": None,
             }
         if markdown:
@@ -1412,30 +1431,27 @@ def extract_pdf_markdown(
 
 DEFAULT_EXTRACT_ROWS_MODEL = "openai/gpt-5.6-luna"
 
-# The care points below are not decoration: this exact wording is what scored
-# 220/220 rows across 64 documents on 2026-07-22. A generic "extract the rows"
-# instruction was NOT measured and should not be assumed equivalent.
 _EXTRACT_ROWS_SYSTEM = (
-    "You convert OCR markdown of a document table into JSON rows matching the "
-    "provided schema. Transcribe; do not summarise, filter, or drop records. "
-    "Two complete records that look identical are two separate records and "
-    "must both appear. A table row that continues onto the next page is one "
-    "record: emit it once with one amount, not two fragments.\n\n"
-    "The mistakes that matter, in order of how often they are made:\n"
-    "1. A value in ROUND parentheses and a code in SQUARE brackets can COLLIDE "
-    "(e.g. `AllianceBernstein Holding L.P. Units (AB) [AB]`). Read each from its "
-    "own bracket type; never copy one into the other, and never drop a row "
-    "because they match.\n"
-    "2. When the schema includes a dedicated column for a semantic field, "
-    "transcribe that column literally — description prose must not override it. "
-    "When a schema field has no dedicated column and prose is the only evidence, "
-    "transcribe from that prose into the schema field once; do not run a second "
-    "keyword or regex classification pass afterward.\n"
-    "3. A row can WRAP across lines or across a page boundary. The continued "
-    "fragment is the same record, not a second row and not a row to reject. "
-    "Combine it into one JSON object before emitting; never add the amount "
-    "twice.\n"
-    "4. Older documents may omit a code entirely. Return null; never infer one."
+    "Recover the logical source-table rows as JSON matching the provided schema. "
+    "Use the attached PDF as the primary visual source when present and the OCR "
+    "markdown as a structured second view. This is a source transcription task, "
+    "not a semantic "
+    "classification task. Copy only observations visible in the row, its table "
+    "headers, an inspected source legend, or document metadata included in the "
+    "input. Use schema field names and descriptions to locate those observations; "
+    "a requested observation may be embedded inside another table cell rather "
+    "than have a standalone column. Never normalize, calculate, filter, resolve "
+    "identity, decide "
+    "eligibility, or fill a field from world knowledge. When the requested source "
+    "observation is absent or ambiguous, return null.\n\n"
+    "Emit exactly one object per logical source row and preserve source order. "
+    "Two complete rows that look identical are two separate rows and must both "
+    "appear. Wrapped lines and page-boundary continuations belong to their source "
+    "row: combine the fragments into that one object and never emit a continuation "
+    "as another row. Preserve separate columns, codes, descriptions, and bracketed "
+    "values in their matching schema fields; a plausible value in one field never "
+    "authorizes copying or interpreting it as another field. Return every source "
+    "row even when its fields conflict."
 )
 
 
@@ -1457,6 +1473,7 @@ class ExtractedRows:
     page_audit: list[dict[str, Any]] = field(default_factory=list)
     apparent_table_rows: int = 0
     needs_review: bool = False
+    pdf_attached: bool = False
 
     def __iter__(self):
         return iter(self.rows)
@@ -1581,10 +1598,11 @@ def _strict_json_schema(
 ) -> dict[str, Any]:
     """Recursively adapt JSON Schema to strict structured-output semantics.
 
-    JSON Schema normally expresses an optional field by leaving it out of
-    `required`. Strict structured output instead requires every property name,
-    so optional fields become required-but-nullable. This preserves the
-    caller's semantics while ensuring absent values are returned explicitly.
+    Strict structured output requires every property name. Source extraction
+    cannot also require every observation to be non-null: an absent source value
+    would force the structuring model to fabricate one. Every ordinary property
+    therefore becomes required-but-nullable. `force_required` is reserved for
+    protocol fields such as the non-null `rows` envelope.
     """
     out = dict(schema)
     explicitly_nullable = _schema_allows_null(schema)
@@ -1620,7 +1638,6 @@ def _strict_json_schema(
                 + ", ".join(sorted(unknown_required))
             )
 
-        semantically_required = set(declared_required) | set(force_required)
         normalized_properties: dict[str, Any] = {}
         for field_name, property_schema in properties.items():
             if not isinstance(field_name, str) or not isinstance(
@@ -1630,7 +1647,7 @@ def _strict_json_schema(
                     "rows_schema object properties must map field names to schemas"
                 )
             normalized = _strict_json_schema(property_schema)
-            if field_name not in semantically_required:
+            if field_name not in force_required:
                 normalized = _nullable_schema(normalized)
             normalized_properties[field_name] = normalized
 
@@ -1667,10 +1684,10 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
       {"type": "object", "properties":
           {"rows": {"type": "array", ...}}}      - already the envelope
 
-    Full JSON Schema retains its normal optional-field semantics: properties
-    omitted from the caller's `required` list become required-but-nullable in
-    the provider schema. Every object is recursively closed and all keys are
-    returned, so missing evidence is explicit `null` rather than a missing key.
+    Every source property becomes required-but-nullable in the provider schema.
+    Strict mode still returns every key, while a source value the document does
+    not provide remains explicit `null` instead of forcing an invented value.
+    The reserved `rows` protocol envelope remains required and non-null.
 
     Anything else raises rather than reaching the provider as an invalid schema.
     """
@@ -1751,7 +1768,7 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
             f"schema, got {type(spec).__name__}"
         )
 
-    return _rows_envelope(_strict_object_schema(row_properties))
+    return _rows_envelope(_strict_json_schema(_strict_object_schema(row_properties)))
 
 
 def extract_rows(
@@ -1764,6 +1781,8 @@ def extract_rows(
     schema_name: str = "extract_rows",
     source_id: str | None = None,
     retries: int = 1,
+    include_pdf: bool = True,
+    pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
 ) -> ExtractedRows:
     """OCR the document, then structure the markdown with a cheap schema-bound LLM.
 
@@ -1775,11 +1794,23 @@ def extract_rows(
     Bare json_object mode does NOT bind every model \u2014 always pass an explicit
     schema. Without one, some provider routes return prose fragments.
 
-    `schema` describes ONE ROW and is normalized by `normalize_rows_schema`, so
+    `schema` describes ONE SOURCE ROW and is normalized by
+    `normalize_rows_schema`, so
     the flat `{"ticker": "string", "amount": "number"}` shorthand and a full
     JSON Schema object are both accepted; the `{"rows": [...]}` envelope strict
     mode needs is added for you. An uninterpretable schema raises
     `RowsSchemaError` before any OCR or gateway call.
+
+    Schema keys are always present but source observations are nullable:
+    extraction never invents a value merely to satisfy strict structured output.
+    Derive classifications, normalized meanings, calculations, and eligibility
+    in a separate computation over these retained source rows.
+
+    By default the structuring model receives both the original PDF and cached
+    OCR markdown. The PDF resolves visual page boundaries and embedded cells;
+    the markdown preserves the auditable text view. PDFs larger than
+    `pdf_max_bytes` use OCR-only structuring rather than constructing an
+    unbounded base64 request. Set `include_pdf=False` to force OCR-only mode.
 
     `source_id` and a host-owned zero-based `_source_row_index` are stamped onto
     every returned row. The host derives per-document reconciliation from
@@ -1794,7 +1825,15 @@ def extract_rows(
     # nothing to catch here and a full document's OCR to catch downstream.
     normalized_schema = normalize_rows_schema(schema)
 
-    from nexustrade.host import GatewayChatError, gateway_chat_json
+    from nexustrade.host import (
+        GatewayChatError,
+        gateway_chat_json,
+        gateway_file_part,
+        gateway_multimodal_messages,
+    )
+
+    if pdf_max_bytes < 1:
+        raise ValueError("pdf_max_bytes must be positive")
 
     markdown, page_audit = extract_pdf_markdown_with_audit(
         pdf_bytes, max_pages=max_pages, force_ocr=force_ocr
@@ -1809,13 +1848,30 @@ def extract_rows(
     user_prompt = markdown
     if source_id:
         user_prompt = f"source_id: {source_id}\n\n{markdown}"
+    pdf_attached = include_pdf and len(pdf_bytes) <= pdf_max_bytes
+    chat_input: dict[str, Any]
+    if pdf_attached:
+        chat_input = {
+            "messages": gateway_multimodal_messages(
+                user_prompt,
+                [
+                    gateway_file_part(
+                        pdf_bytes,
+                        filename="source.pdf",
+                        mime_type="application/pdf",
+                    )
+                ],
+            )
+        }
+    else:
+        chat_input = {"prompt": user_prompt}
 
     attempts = max(1, retries + 1)
     rows: list[dict[str, Any]] = []
     for attempt in range(attempts):
         try:
             result = gateway_chat_json(
-                prompt=user_prompt,
+                **chat_input,
                 system=_EXTRACT_ROWS_SYSTEM,
                 model=structure_model,
                 json_schema=normalized_schema,
@@ -1856,4 +1912,5 @@ def extract_rows(
         page_audit=page_audit,
         apparent_table_rows=apparent_table_rows,
         needs_review=needs_review,
+        pdf_attached=pdf_attached,
     )

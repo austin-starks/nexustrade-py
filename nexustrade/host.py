@@ -1363,6 +1363,8 @@ def _build_chat_messages(
     if messages is not None:
         if not messages:
             raise ValueError("messages must be non-empty when provided")
+        if system is not None and str(system).strip():
+            return [{"role": "system", "content": system}, *messages]
         return messages
     if prompt is None or not str(prompt).strip():
         raise ValueError("gateway_chat requires messages or a non-empty prompt")
