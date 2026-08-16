@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
 import urllib.error
 from io import BytesIO
@@ -34,6 +36,20 @@ def _http_error(status: int) -> urllib.error.HTTPError:
 
 
 class GatewayChatRetryTest(unittest.TestCase):
+    def test_touches_runner_activity_file_without_growing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            activity_path = os.path.join(directory, "host-activity")
+            with patch.dict(
+                host.os.environ,
+                {"NEXUSTRADE_HOST_ACTIVITY_FILE": activity_path},
+            ):
+                host._touch_host_activity()
+                first_mtime = os.stat(activity_path).st_mtime_ns
+                host._touch_host_activity()
+
+            self.assertEqual(os.path.getsize(activity_path), 0)
+            self.assertGreaterEqual(os.stat(activity_path).st_mtime_ns, first_mtime)
+
     def test_accepts_positional_prompt_text(self) -> None:
         captured_body: dict[str, object] = {}
 
@@ -101,12 +117,14 @@ class GatewayChatRetryTest(unittest.TestCase):
             patch.object(host.urllib.request, "urlopen", fake_urlopen),
             patch.object(host.time, "sleep") as sleep,
             patch.object(host.random, "uniform", return_value=0.5),
+            patch.object(host, "_touch_host_activity") as touch_activity,
         ):
             result = host.gateway_chat(prompt="extract this document")
 
         self.assertEqual(result["model"], "test")
         self.assertEqual(calls, 3)
         self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(touch_activity.call_count, 6)
 
     def test_reports_524_as_transport_after_bounded_retries(self) -> None:
         calls = 0

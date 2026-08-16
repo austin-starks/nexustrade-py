@@ -17,8 +17,31 @@ from typing import Any
 
 HOST_REQUESTS_PATH = "/work/host_requests.jsonl"
 HOST_RESULTS_PATH = "/work/host_results.jsonl"
+_HOST_ACTIVITY_FILE_ENV = "NEXUSTRADE_HOST_ACTIVITY_FILE"
 
 _pending_requests: list[dict[str, Any]] = []
+
+
+def _touch_host_activity() -> None:
+    """Refresh the parent runner's liveness proof around a brokered host call.
+
+    OpenCode does not stream a shell tool's child stdout until that tool exits.
+    A script can therefore be productively issuing multiple bounded gateway
+    calls while its outer JSON event stream remains unchanged. The runner owns
+    the path and treats only its modification time as advisory progress.
+    """
+    path = os.environ.get(_HOST_ACTIVITY_FILE_ENV, "").strip()
+    if not path:
+        return
+    try:
+        with open(path, "ab"):
+            pass
+        os.utime(path, None)
+    except OSError:
+        # Liveness reporting must never turn a valid SDK call into a failure.
+        pass
+
+
 # Keep gateway fan-out below the server's per-host limits. The gateway itself
 # owns retries and pacing; a 16-wide client burst used to reach several gateway
 # machines at once and defeat each process-local limiter.
@@ -285,10 +308,13 @@ def _gateway_fetch_many(
             },
             method="POST",
         )
+        _touch_host_activity()
         try:
             with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
                 row = json.loads(resp.read().decode("utf-8"))
+            _touch_host_activity()
         except urllib.error.HTTPError as exc:
+            _touch_host_activity()
             if exc.code == 404:
                 return None  # server predates the route — broker handles it
             # ok=False is TERMINAL per the fetch contract, and _record_host_result
@@ -296,6 +322,7 @@ def _gateway_fetch_many(
             # this id — degrade to the broker, which retries properly.
             return None
         except urllib.error.URLError:
+            _touch_host_activity()
             # Socket/DNS failure. The broker path survived these; propagating
             # here would kill the whole script.
             return None
@@ -1121,8 +1148,10 @@ def _gateway_search(
     def _error_detail(exc: urllib.error.HTTPError) -> str:
         return exc.read().decode("utf-8", errors="replace")
 
+    _touch_host_activity()
     try:
         with urllib.request.urlopen(submit_req, timeout=request_timeout_sec) as resp:
+            _touch_host_activity()
             if resp.status == 200:
                 return _read_json(resp)
             if resp.status != 202:
@@ -1130,6 +1159,7 @@ def _gateway_search(
                     f"search({query!r}) unexpected HTTP {resp.status}"
                 )
     except urllib.error.HTTPError as exc:
+        _touch_host_activity()
         if exc.code == 404:
             return None
         if exc.code == 502:
@@ -1148,10 +1178,12 @@ def _gateway_search(
             headers={"Authorization": f"Bearer {api_key}"},
             method="GET",
         )
+        _touch_host_activity()
         try:
             with urllib.request.urlopen(
                 poll_req, timeout=request_timeout_sec
             ) as poll_resp:
+                _touch_host_activity()
                 if poll_resp.status == 200:
                     return _read_json(poll_resp)
                 if poll_resp.status == 202:
@@ -1160,11 +1192,14 @@ def _gateway_search(
                     f"search({query!r}) poll unexpected HTTP {poll_resp.status}"
                 )
         except urllib.error.HTTPError as exc:
+            _touch_host_activity()
             if exc.code == 404:
                 # Lost the claim (budget release / stale reclaim) — resubmit once.
+                _touch_host_activity()
                 with urllib.request.urlopen(
                     submit_req, timeout=request_timeout_sec
                 ) as retry_resp:
+                    _touch_host_activity()
                     if retry_resp.status == 200:
                         return _read_json(retry_resp)
                     if retry_resp.status != 202:
@@ -1257,10 +1292,13 @@ def gateway_fetch_json(url: str, timeout_sec: int = 120) -> dict[str, Any]:
         },
         method="POST",
     )
+    _touch_host_activity()
     try:
         with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
+        _touch_host_activity()
     except urllib.error.HTTPError as exc:
+        _touch_host_activity()
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"gateway fetch HTTP {exc.code}: {detail}") from exc
     if not isinstance(payload, dict):
@@ -1420,6 +1458,7 @@ def gateway_chat(
     encoded_body = json.dumps(body).encode("utf-8")
     payload: Any = None
     for attempt in range(_GATEWAY_CHAT_MAX_ATTEMPTS):
+        _touch_host_activity()
         req = urllib.request.Request(
             f"{base}/chat/completions",
             data=encoded_body,
@@ -1432,8 +1471,10 @@ def gateway_chat(
         try:
             with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
+            _touch_host_activity()
             break
         except urllib.error.HTTPError as exc:
+            _touch_host_activity()
             detail = exc.read().decode("utf-8", errors="replace")
             if (
                 exc.code not in _GATEWAY_CHAT_TRANSIENT_HTTP_STATUSES
@@ -1446,6 +1487,7 @@ def gateway_chat(
                 )
                 raise error_type(f"gateway chat HTTP {exc.code}: {detail}") from exc
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            _touch_host_activity()
             if attempt + 1 == _GATEWAY_CHAT_MAX_ATTEMPTS:
                 raise GatewayChatTransportError(
                     f"gateway chat transport failed after "

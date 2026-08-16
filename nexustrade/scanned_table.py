@@ -16,6 +16,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .host import _touch_host_activity
+
 DEFAULT_MISTRAL_OCR_MODEL = "mistral-ocr-latest"
 _MISTRAL_POOR_CONFIDENCE = 0.70
 _MISTRAL_FAIR_CONFIDENCE = 0.85
@@ -487,10 +489,13 @@ def _mistral_ocr_document(
         },
         method="POST",
     )
+    _touch_host_activity()
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
+        _touch_host_activity()
     except urllib.error.HTTPError as exc:
+        _touch_host_activity()
         detail = exc.read().decode("utf-8", errors="replace")
         if exc.code == 429:
             raise OcrBudgetExhausted(
@@ -985,13 +990,16 @@ def _gateway_json(
     )
     last: Exception | None = None
     for attempt in range(3):
+        _touch_host_activity()
         try:
             with urllib.request.urlopen(request, timeout=timeout_sec) as response:
                 parsed = json.loads(response.read().decode("utf-8"))
+            _touch_host_activity()
             if not isinstance(parsed, dict):
                 raise RuntimeError(f"document extraction gateway returned {type(parsed)}")
             return parsed
         except Exception as exc:  # noqa: BLE001 - bounded transport retry
+            _touch_host_activity()
             last = exc
             if attempt < 2:
                 time.sleep(0.25 * (2**attempt))
