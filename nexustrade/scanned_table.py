@@ -689,8 +689,9 @@ def extract_pdf(
     `target_schema` (dict of field -> aliases, or a sequence of field names) normalizes
     column keys. Unmapped columns are preserved; declared fields default to None.
 
-    `source_id` (the host fetch key / filing id) is stamped onto every returned row,
-    exactly as `extract_rows` does and as `extract_pdfs` does from the document key.
+    `source_id` (the host fetch key / filing id) and a host-owned zero-based
+    `_source_row_index` are stamped onto every returned row, exactly as
+    `extract_rows` does and as `extract_pdfs` does from the document key.
     The host reconciles emitted rows against its own fetch ledger by this field before
     grading, and blocks a run whose document-derived rows cannot be attributed. This
     function is the serial fallback when the batch path fails; it used to be the one
@@ -743,8 +744,9 @@ def extract_pdf(
     # constrains the model directly.
     flag_domain_violations(rows, schema_value_domains(target_schema))
     if source_id:
-        for row in rows:
+        for row_index, row in enumerate(rows):
             row["source_id"] = source_id
+            row["_source_row_index"] = row_index
     return rows
 
 
@@ -1235,6 +1237,7 @@ def extract_pdfs(
                 extra_fields=(extra_fields_by_key or {}).get(key),
                 max_pages=max_pages,
                 target_schema=target_schema,
+                source_id=key,
             ),
             "error": None,
         }
@@ -1778,9 +1781,11 @@ def extract_rows(
     mode needs is added for you. An uninterpretable schema raises
     `RowsSchemaError` before any OCR or gateway call.
 
-    `source_id` is stamped onto every returned row. The host derives per-document
-    reconciliation from that field before grading, so omitting it leaves the run
-    unable to prove what it extracted from where.
+    `source_id` and a host-owned zero-based `_source_row_index` are stamped onto
+    every returned row. The host derives per-document reconciliation from
+    `source_id`; the row index keeps every extracted source row distinct when
+    callers build a transaction ledger or combine batch and serial fallback
+    results.
     """
     from nexustrade.document_inspect_receipt import require_prior_inspect_receipt
 
@@ -1836,8 +1841,9 @@ def extract_rows(
                 ) from exc
 
     if source_id:
-        for row in rows:
+        for row_index, row in enumerate(rows):
             row["source_id"] = source_id
+            row["_source_row_index"] = row_index
     if needs_review:
         for row in rows:
             row.setdefault("_needs_review", True)
