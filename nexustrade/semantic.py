@@ -5,7 +5,13 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+
+
+DEFAULT_BATCH_SIZE = 40
+DEFAULT_MAX_WORKERS = 8
+DEFAULT_MAX_SPLIT_DEPTH = 2
 
 
 class SemanticProjectionError(ValueError):
@@ -96,81 +102,143 @@ def derive_rows(
     derived_schema: Mapping[str, Any],
     model: str | None = None,
     system: str | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+    max_split_depth: int = DEFAULT_MAX_SPLIT_DEPTH,
 ) -> list[dict[str, Any]]:
     """Derive namespaced semantics without permitting mutation of source observations.
 
     ``rows`` are serialized verbatim with a host-owned ``input_index``. The model may
-    return only that index and fields allowed by ``derived_schema``. The result contains
-    one ``{"raw": ..., "derived": ...}`` object per input row in original order.
+    return only that index and fields allowed by ``derived_schema``. Large inputs are
+    processed in bounded parallel batches; malformed structured responses are split a
+    bounded number of times and transport failures remain owned by the gateway retry
+    policy. The result contains one ``{"raw": ..., "derived": ...}`` object per input
+    row in original order, and no partial batch is returned.
     """
     if not isinstance(instruction, str) or not instruction.strip():
         raise SemanticProjectionError("instruction must be non-empty")
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
+    if isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers < 1:
+        raise ValueError("max_workers must be a positive integer")
+    if (
+        isinstance(max_split_depth, bool)
+        or not isinstance(max_split_depth, int)
+        or max_split_depth < 0
+    ):
+        raise ValueError("max_split_depth must be a non-negative integer")
     raw_rows = [copy.deepcopy(dict(row)) for row in rows]
     if not raw_rows:
         return []
     strict_derived_schema = _strict_object_schema(derived_schema)
-    schema = _response_schema(strict_derived_schema)
     expected_derived_keys = set(strict_derived_schema["properties"])
-    payload = {
-        "instruction": instruction.strip(),
-        "records": [
-            {"input_index": index, "raw": row}
-            for index, row in enumerate(raw_rows)
-        ],
-    }
+    schema = _response_schema(strict_derived_schema)
 
-    from nexustrade.host import gateway_chat_json
+    def project_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from nexustrade.host import gateway_chat_json
 
-    result = gateway_chat_json(
-        prompt=json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
-        system=(system.strip() + "\n\n" if system and system.strip() else "")
-        + _SYSTEM_PROMPT,
-        model=model,
-        temperature=0,
-        json_schema=schema,
-        schema_name="semantic_projection",
-    )
-    projected = result.get("rows") if isinstance(result, Mapping) else None
-    if not isinstance(projected, list):
-        raise SemanticProjectionError("semantic projection response omitted rows")
-    by_index: dict[int, dict[str, Any]] = {}
-    for item in projected:
-        if not isinstance(item, Mapping):
-            raise SemanticProjectionError("semantic projection row is not an object")
-        index = item.get("input_index")
-        derived = item.get("derived")
-        if not isinstance(index, int) or isinstance(index, bool):
-            raise SemanticProjectionError(
-                "semantic projection input_index is not an integer"
-            )
-        if index < 0 or index >= len(raw_rows):
-            raise SemanticProjectionError(
-                f"semantic projection index {index} is out of range"
-            )
-        if index in by_index:
-            raise SemanticProjectionError(f"semantic projection duplicated index {index}")
-        if not isinstance(derived, Mapping):
-            raise SemanticProjectionError(
-                f"semantic projection derived value for index {index} is not an object"
-            )
-        actual_derived_keys = set(derived)
-        if actual_derived_keys != expected_derived_keys:
-            missing = sorted(expected_derived_keys.difference(actual_derived_keys))
-            extra = sorted(actual_derived_keys.difference(expected_derived_keys))
-            raise SemanticProjectionError(
-                f"semantic projection derived keys for index {index} do not match "
-                f"the schema (missing={missing}, extra={extra})"
-            )
-        by_index[index] = dict(derived)
-    expected = set(range(len(raw_rows)))
-    if set(by_index) != expected:
-        missing = sorted(expected.difference(by_index))
-        raise SemanticProjectionError(
-            f"semantic projection omitted input index(es): {missing}"
+        payload = {
+            "instruction": instruction.strip(),
+            "records": [
+                {"input_index": index, "raw": row}
+                for index, row in enumerate(batch)
+            ],
+        }
+        result = gateway_chat_json(
+            prompt=json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
+            system=(system.strip() + "\n\n" if system and system.strip() else "")
+            + _SYSTEM_PROMPT,
+            model=model,
+            temperature=0,
+            json_schema=schema,
+            schema_name="semantic_projection",
         )
+        projected = result.get("rows") if isinstance(result, Mapping) else None
+        if not isinstance(projected, list):
+            raise SemanticProjectionError("semantic projection response omitted rows")
+        by_index: dict[int, dict[str, Any]] = {}
+        for item in projected:
+            if not isinstance(item, Mapping):
+                raise SemanticProjectionError("semantic projection row is not an object")
+            index = item.get("input_index")
+            derived = item.get("derived")
+            if not isinstance(index, int) or isinstance(index, bool):
+                raise SemanticProjectionError(
+                    "semantic projection input_index is not an integer"
+                )
+            if index < 0 or index >= len(batch):
+                raise SemanticProjectionError(
+                    f"semantic projection index {index} is out of range"
+                )
+            if index in by_index:
+                raise SemanticProjectionError(
+                    f"semantic projection duplicated index {index}"
+                )
+            if not isinstance(derived, Mapping):
+                raise SemanticProjectionError(
+                    f"semantic projection derived value for index {index} is not an object"
+                )
+            actual_derived_keys = set(derived)
+            if actual_derived_keys != expected_derived_keys:
+                missing = sorted(expected_derived_keys.difference(actual_derived_keys))
+                extra = sorted(actual_derived_keys.difference(expected_derived_keys))
+                raise SemanticProjectionError(
+                    f"semantic projection derived keys for index {index} do not match "
+                    f"the schema (missing={missing}, extra={extra})"
+                )
+            by_index[index] = dict(derived)
+        expected = set(range(len(batch)))
+        if set(by_index) != expected:
+            missing = sorted(expected.difference(by_index))
+            raise SemanticProjectionError(
+                f"semantic projection omitted input index(es): {missing}"
+            )
+        return [
+            {"raw": copy.deepcopy(batch[index]), "derived": by_index[index]}
+            for index in range(len(batch))
+        ]
+
+    def project_with_split(
+        batch: list[dict[str, Any]], split_depth: int = 0
+    ) -> list[dict[str, Any]]:
+        try:
+            return project_batch(batch)
+        except SemanticProjectionError:
+            if len(batch) == 1 or split_depth >= max_split_depth:
+                raise
+            midpoint = len(batch) // 2
+            return project_with_split(
+                batch[:midpoint], split_depth + 1
+            ) + project_with_split(
+                batch[midpoint:], split_depth + 1
+            )
+
+    batches = [
+        (start, raw_rows[start : start + batch_size])
+        for start in range(0, len(raw_rows), batch_size)
+    ]
+    projected_batches: dict[int, list[dict[str, Any]]] = {}
+    workers = min(max_workers, len(batches))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(project_with_split, batch): (index, start, len(batch))
+            for index, (start, batch) in enumerate(batches)
+        }
+        for future in as_completed(futures):
+            index, start, length = futures[future]
+            try:
+                projected_batches[index] = future.result()
+            except SemanticProjectionError as exc:
+                end = start + length - 1
+                raise SemanticProjectionError(
+                    "semantic projection failed for source row range "
+                    f"{start}-{end}: {exc}"
+                ) from exc
+    projected_rows = [
+        row
+        for index in range(len(batches))
+        for row in projected_batches[index]
+    ]
     if [dict(row) for row in rows] != raw_rows:
         raise SemanticProjectionError("source rows changed during semantic projection")
-    return [
-        {"raw": copy.deepcopy(raw_rows[index]), "derived": by_index[index]}
-        for index in range(len(raw_rows))
-    ]
+    return projected_rows
