@@ -174,6 +174,7 @@ class PackageExportTests(unittest.TestCase):
             "inspect_document",
             "report",
             "scanned_table",
+            "semantic",
             "signal",
             "tigris",
         ):

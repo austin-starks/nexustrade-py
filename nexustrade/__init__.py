@@ -99,6 +99,7 @@ _LAZY_EXPORTS = {
     "extract_pdf_markdown": ("nexustrade.scanned_table", "extract_pdf_markdown"),
     "extract_pdfs": ("nexustrade.scanned_table", "extract_pdfs"),
     "extract_rows": ("nexustrade.scanned_table", "extract_rows"),
+    "derive_rows": ("nexustrade.semantic", "derive_rows"),
     "inspect_document": ("nexustrade.inspect_document", "inspect_document"),
     "probe_pdf": ("nexustrade.scanned_table", "probe_pdf"),
     "validate_row": ("nexustrade.signal", "validate_row"),
@@ -141,6 +142,7 @@ _PUBLIC_BASE_LAZY_MODULES = {
     "nexustrade.inspect_document",
     "nexustrade.report",
     "nexustrade.scanned_table",
+    "nexustrade.semantic",
     "nexustrade.signal",
 }
 __all__.extend(

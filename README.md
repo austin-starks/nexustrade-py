@@ -36,6 +36,28 @@ sandboxes. Agent-facing helpers such as `nexustrade.host`,
 `nexustrade.tigris` therefore have one canonical implementation. Host-backed
 operations still require the short-lived environment supplied by a compute run.
 
+For document-derived computation, keep extraction and interpretation separate.
+`extract_rows`/`extract_pdfs` preserve source observations; `derive_rows` adds a
+schema-bound `derived` object while retaining every raw record unchanged:
+
+```python
+projected = nt.derive_rows(
+    source_rows,
+    instruction="Derive the user-requested eligibility predicate from all fields in each record.",
+    derived_schema={
+        "type": "object",
+        "properties": {
+            "eligible": {"type": "boolean"},
+            "resolution_status": {"type": "string"},
+            "evidence": {"type": "array", "items": {"type": "string"}},
+        },
+    },
+)
+```
+
+The model can only return task-specific derived fields keyed to a host-owned
+input index; it cannot rewrite or drop the raw record.
+
 ## Quickstart
 
 ```python
