@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import secrets
 import tempfile
 import time
 import urllib.error
@@ -964,7 +965,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v1"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v2"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -1010,6 +1011,7 @@ def _document_request_key(
     key: str,
     pdf_bytes: bytes,
     *,
+    invocation_nonce: str,
     markdown: bool,
     max_pages: int | None,
     target_schema: Any,
@@ -1022,6 +1024,10 @@ def _document_request_key(
 ) -> str:
     descriptor = {
         "protocol": DOCUMENT_EXTRACTION_PROTOCOL_VERSION,
+        # Schema-bound LLM rows are deliberately non-cacheable. The nonce
+        # makes this a durable execution identity, not a deterministic lookup
+        # key that could replay a prior model answer.
+        "invocation_nonce": invocation_nonce,
         "document_id": key,
         "document_sha256": hashlib.sha256(pdf_bytes).hexdigest(),
         "markdown": markdown,
@@ -1058,19 +1064,7 @@ def _document_batch_key(request_keys: dict[str, str]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _document_cache_lookup(request_key: str) -> dict[str, Any] | None:
-    response = _gateway_json(
-        "document-extractions/lookup", {"requestKey": request_key}
-    )
-    if response is None or response.get("hit") is not True:
-        return None
-    payload = response.get("payload")
-    if not isinstance(payload, dict):
-        raise RuntimeError("document extraction cache hit has no payload object")
-    return payload
-
-
-def _document_cache_record(
+def _document_result_record(
     *,
     batch_key: str,
     request_key: str,
@@ -1205,10 +1199,12 @@ def extract_pdfs(
     )
     stop = False
 
+    invocation_nonce = secrets.token_hex(16)
     request_keys = {
         key: _document_request_key(
             key,
             pdf_bytes,
+            invocation_nonce=invocation_nonce,
             markdown=markdown,
             max_pages=max_pages,
             target_schema=target_schema,
@@ -1269,16 +1265,13 @@ def extract_pdfs(
             "error": None,
         }
 
-    def run_one(key: str, pdf_bytes: bytes) -> tuple[dict[str, Any], bool]:
+    def run_one(key: str, pdf_bytes: bytes) -> dict[str, Any]:
         """Retry transient failures here so the caller never has to re-drive the loop.
 
         A single network blip used to cost a whole document silently. Budget
         exhaustion is NEVER retried — a 429 is backpressure, and retrying it just
         spends the remaining allowance faster.
         """
-        cached = _document_cache_lookup(request_keys[key])
-        if cached is not None:
-            return cached, True
         last: Exception | None = None
         result: dict[str, Any] | None = None
         for attempt in range(max_attempts):
@@ -1299,7 +1292,7 @@ def extract_pdfs(
         if result is None:
             raise last if last else RuntimeError("ocr failed with no exception")
         try:
-            _document_cache_record(
+            _document_result_record(
                 batch_key=batch_key,
                 request_key=request_keys[key],
                 document_id=key,
@@ -1307,17 +1300,10 @@ def extract_pdfs(
                 total=len(items),
             )
         except Exception as exc:
-            # The server may have committed before its response socket died.
-            # Resolve that ambiguity from the durable store; never pay to
-            # re-extract a valid result merely because its acknowledgement was
-            # lost.
-            committed = _document_cache_lookup(request_keys[key])
-            if committed is not None:
-                return committed, True
             raise RuntimeError(
                 f"validated extraction could not be durably committed: {exc}"
             ) from exc
-        return result, False
+        return result
 
     empty = "markdown" if markdown else "rows"
     blank = "" if markdown else []
@@ -1343,10 +1329,9 @@ def extract_pdfs(
             done = next(as_completed(list(in_flight)))
             key = in_flight.pop(done)
             try:
-                result, cache_hit = done.result()
+                result = done.result()
                 results[key] = result
                 completed += 1
-                cache_hits += int(cache_hit)
             except OcrBudgetExhausted as exc:
                 stop = True
                 results[key] = unstarted(f"budget_exhausted: {exc}")
@@ -1835,6 +1820,7 @@ def extract_rows(
 
     from nexustrade.host import (
         GatewayChatError,
+        GatewayChatTransportError,
         gateway_chat_json,
         gateway_file_part,
         gateway_multimodal_messages,
@@ -1893,6 +1879,16 @@ def extract_rows(
                     f"{apparent_table_rows} apparent OCR table row(s)"
                 )
             break
+        except GatewayChatTransportError:
+            # A PDF+OCR multimodal request can repeatedly outlive an HTTP edge
+            # even when the already-extracted OCR is complete and sufficient.
+            # Spend the one caller-owned semantic retry on a materially smaller
+            # OCR-only request instead of repeating the same 524-prone payload.
+            if pdf_attached and attempt < attempts - 1:
+                pdf_attached = False
+                chat_input = {"prompt": user_prompt}
+                continue
+            raise
         except GatewayChatError:
             raise
         except Exception as exc:  # noqa: BLE001 - retried, re-raised on the last attempt
