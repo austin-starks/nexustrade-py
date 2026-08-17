@@ -20,8 +20,11 @@ class SemanticProjectionError(ValueError):
 
 _SYSTEM_PROMPT = """You derive task-specific semantic fields from immutable source records.
 Return exactly one result for every input_index and put every interpretation under derived.
-Read every relevant field in the same record. A short code is one observation, not an
-authoritative conclusion when another same-row field describes a conflicting event.
+Read every relevant field in the same record. Do not assume a universal priority among prose,
+codes, labels, identifiers, and metadata. Infer their distinct roles and authority from the
+caller's instruction, supplied source definitions, and record context. Resolve apparently
+conflicting evidence only when that context gives an evidence-grounded reason; otherwise keep
+the conflict unresolved in the caller-provided schema.
 Do not copy, rewrite, normalize, or omit raw source fields. When evidence conflicts or is
 insufficient, express that uncertainty in the caller-provided derived schema rather than
 silently choosing a convenient value. Do not infer from neighboring records."""

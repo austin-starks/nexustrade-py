@@ -69,7 +69,8 @@ class SemanticProjectionTest(unittest.TestCase):
         sent = json.loads(str(captured["prompt"]))
         self.assertEqual(sent["records"][0]["raw"], original[0])
         self.assertIn("every relevant field", str(captured["system"]))
-        self.assertIn("conflicting event", str(captured["system"]))
+        self.assertIn("Do not assume a universal priority", str(captured["system"]))
+        self.assertIn("roles and authority", str(captured["system"]))
 
     def test_rejects_missing_duplicate_and_out_of_range_indices(self) -> None:
         rows = [{"raw": "a"}, {"raw": "b"}]
