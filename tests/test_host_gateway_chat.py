@@ -90,6 +90,46 @@ class GatewayChatRetryTest(unittest.TestCase):
             ],
         )
 
+    def test_accepts_positional_mapping_as_json_prompt(self) -> None:
+        captured_body: dict[str, object] = {}
+
+        def fake_urlopen(request: object, **__: object) -> _Response:
+            nonlocal captured_body
+            data = getattr(request, "data", None)
+            self.assertIsInstance(data, bytes)
+            captured_body = json.loads(data.decode("utf-8"))
+            return _Response(
+                {
+                    "choices": [{"message": {"content": '{"ok":true}'}}],
+                    "model": "test",
+                }
+            )
+
+        payload = {"task": "adjudicate", "records": [{"input_index": 0}]}
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+        ):
+            result = host.gateway_chat_json(payload, system="Use source evidence only.")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            captured_body["messages"],
+            [
+                {"role": "system", "content": "Use source evidence only."},
+                {
+                    "role": "user",
+                    "content": '{"task":"adjudicate","records":[{"input_index":0}]}',
+                },
+            ],
+        )
+
     def test_rejects_positional_and_keyword_prompt_together(self) -> None:
         with self.assertRaisesRegex(ValueError, "not both"):
             host.gateway_chat("one", prompt="two")

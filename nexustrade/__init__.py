@@ -99,6 +99,7 @@ _LAZY_EXPORTS = {
     "extract_pdf_markdown": ("nexustrade.scanned_table", "extract_pdf_markdown"),
     "extract_pdfs": ("nexustrade.scanned_table", "extract_pdfs"),
     "extract_rows": ("nexustrade.scanned_table", "extract_rows"),
+    "audit_inclusions": ("nexustrade.semantic", "audit_inclusions"),
     "derive_rows": ("nexustrade.semantic", "derive_rows"),
     "inspect_document": ("nexustrade.inspect_document", "inspect_document"),
     "probe_pdf": ("nexustrade.scanned_table", "probe_pdf"),

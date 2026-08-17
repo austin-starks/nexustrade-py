@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -1393,11 +1393,16 @@ def gateway_multimodal_messages(
 
 
 def _build_chat_messages(
-    messages: list[dict[str, Any]] | str | None,
+    messages: list[dict[str, Any]] | Mapping[str, Any] | str | None,
     *,
     prompt: str | None,
     system: str | None,
 ) -> list[dict[str, Any]]:
+    if isinstance(messages, Mapping):
+        if prompt is not None:
+            raise ValueError("pass positional prompt payload or prompt=, not both")
+        prompt = json.dumps(messages, separators=(",", ":"), ensure_ascii=False)
+        messages = None
     if isinstance(messages, str):
         if prompt is not None:
             raise ValueError("pass positional prompt text or prompt=, not both")
@@ -1431,7 +1436,7 @@ def _parse_json_content(content: str) -> Any:
 
 
 def gateway_chat(
-    messages: list[dict[str, Any]] | str | None = None,
+    messages: list[dict[str, Any]] | Mapping[str, Any] | str | None = None,
     *,
     prompt: str | None = None,
     system: str | None = None,
@@ -1443,6 +1448,8 @@ def gateway_chat(
 ) -> dict[str, Any]:
     """
     OpenAI-compatible chat completion via the sandbox gateway (/chat/completions).
+    A positional mapping is serialized as the user prompt; a positional list is
+    treated as an already-formed OpenAI messages array.
     Returns the raw OpenAI response object (choices, usage, model, …).
     """
     built_messages = _build_chat_messages(messages, prompt=prompt, system=system)
@@ -1502,7 +1509,7 @@ def gateway_chat(
 
 
 def gateway_chat_text(
-    messages: list[dict[str, Any]] | str | None = None,
+    messages: list[dict[str, Any]] | Mapping[str, Any] | str | None = None,
     *,
     prompt: str | None = None,
     system: str | None = None,
@@ -1534,7 +1541,7 @@ def gateway_chat_text(
 
 
 def gateway_chat_json(
-    messages: list[dict[str, Any]] | str | None = None,
+    messages: list[dict[str, Any]] | Mapping[str, Any] | str | None = None,
     *,
     prompt: str | None = None,
     system: str | None = None,

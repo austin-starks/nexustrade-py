@@ -126,6 +126,7 @@ class PackageExportTests(unittest.TestCase):
 
     def test_compute_helpers_are_public_and_unknown_names_still_fail(self) -> None:
         self.assertTrue(callable(nt.search))
+        self.assertTrue(callable(nt.audit_inclusions))
         self.assertTrue(callable(nt.extract_pdfs))
         self.assertTrue(callable(nt.write_rows))
         with self.assertRaises(AttributeError) as unknown:

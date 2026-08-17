@@ -43,7 +43,10 @@ schema-bound `derived` object while retaining every raw record unchanged:
 ```python
 projected = nt.derive_rows(
     source_rows,
-    instruction="Derive the user-requested eligibility predicate from all fields in each record.",
+    instruction={
+        "request": user_request,
+        "decision": "Derive the requested component predicates from the complete record.",
+    },
     derived_schema={
         "type": "object",
         "properties": {
@@ -52,8 +55,38 @@ projected = nt.derive_rows(
             "evidence": {"type": "array", "items": {"type": "string"}},
         },
     },
+    evidence_requirements={"eligible": "always"},
 )
 ```
+
+`evidence_requirements` is optional. Its values are `always`, `truthy`,
+`falsey`, or `nonempty`. When a condition applies, the model must cite a scalar
+value through an RFC 6901 JSON Pointer relative to the same raw row. The SDK
+resolves the pointer and attaches the immutable value under `evidence_refs`;
+free-form model quotations are not the evidence boundary.
+Malformed multi-row responses are split into smaller batches. When splitting
+reaches its configured depth, that terminal batch receives up to two
+schema-repair attempts by default via `max_validation_retries`. Repair feedback
+includes bounded valid scalar paths from the same row, never another row or a
+hidden answer. Gateway transport retries remain a separate policy.
+
+For acceptance-critical semantic filters, code computes the requested Boolean
+predicate from independent derived fields and may then audit only the proposed
+inclusions. Preserve each raw record and its candidate predicates; the audit can
+block direct contradictions or explicit exclusions but cannot invent a stricter
+proof burden from missing corroboration:
+
+```python
+audited = nt.audit_inclusions(
+    proposed,
+    instruction="The user's exact inclusion and exclusion contract.",
+)
+```
+
+A blocked audit result always includes a host-validated record-local evidence
+reference. Its `value` is copied by the SDK from the proposed row, not authored
+by the model. The exact result shape is one `{raw, derived}` pair per input;
+`derived` contains `inclusion_supported`, `reason`, and `evidence_refs`.
 
 The model can only return task-specific derived fields keyed to a host-owned
 input index; it cannot rewrite or drop the raw record.
