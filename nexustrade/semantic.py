@@ -73,7 +73,9 @@ attaches cited values after validation; you return only predicate and path."""
 _VALIDATION_REPAIR_PROMPT = """A prior structured response for this same input failed host
 validation. Use the supplied validation_feedback only to repair the response contract. Re-read
 the immutable record and original instruction; do not relax or reinterpret the task predicate,
-invent evidence, or copy a neighboring record."""
+invent evidence, or copy a neighboring record. When validation_feedback lists valid non-empty
+scalar paths, copy an applicable listed path exactly, including every parent segment; do not
+shorten, rename, or reconstruct a near-equivalent path."""
 
 
 _INCLUSION_AUDIT_SCHEMA: dict[str, Any] = {
@@ -273,41 +275,83 @@ def _encode_pointer_token(token: str) -> str:
 
 
 def _scalar_evidence_paths(value: Any, *, limit: int = 16) -> list[str]:
-    """Return bounded non-empty scalar pointers, preferring shallower fields."""
+    """Return bounded non-empty scalar pointers with top-level branch coverage.
 
-    found: list[str] = []
+    Validation feedback previously walked depth-first and stopped after 16
+    paths. A large instruction branch such as ``record_criteria`` could consume
+    that entire budget before the traversal reached ``record`` or
+    ``document_context``. The repair model was then told that prompt prose was
+    valid evidence while every useful row path remained invisible.
 
-    def visit(current: Any, prefix: str) -> None:
-        if len(found) >= limit:
-            return
-        children: list[tuple[str, Any]] = []
+    Keep direct scalars first, collect a bounded shallow-first list within each
+    remaining top-level branch, then round-robin those branch lists. A global
+    collection ceiling would let one unusually large early branch starve every
+    later source branch before round-robin selection began.
+    """
+
+    def children_of(current: Any, prefix: str) -> list[tuple[str, Any]]:
         if isinstance(current, Mapping):
-            children = [
+            return [
                 (f"{prefix}/{_encode_pointer_token(str(key))}", child)
                 for key, child in current.items()
             ]
-        elif isinstance(current, Sequence) and not isinstance(
+        if isinstance(current, Sequence) and not isinstance(
             current, (str, bytes, bytearray)
         ):
-            children = [
+            return [
                 (f"{prefix}/{index}", child)
                 for index, child in enumerate(current)
             ]
-        for child_path, child in children:
-            if child is None or isinstance(child, (Mapping, list, tuple)):
-                continue
-            if isinstance(child, str) and not child.strip():
-                continue
-            found.append(child_path)
-            if len(found) >= limit:
-                return
-        for child_path, child in children:
-            if isinstance(child, (Mapping, list, tuple)):
-                visit(child, child_path)
-                if len(found) >= limit:
-                    return
+        return []
 
-    visit(value, "")
+    def is_container(candidate: Any) -> bool:
+        return isinstance(candidate, Mapping) or (
+            isinstance(candidate, Sequence)
+            and not isinstance(candidate, (str, bytes, bytearray))
+        )
+
+    def is_non_empty_scalar(candidate: Any) -> bool:
+        return candidate is not None and not is_container(candidate) and not (
+            isinstance(candidate, str) and not candidate.strip()
+        )
+
+    direct: list[str] = []
+    branch_roots: list[tuple[str, Any]] = []
+    for child_path, child in children_of(value, ""):
+        if is_non_empty_scalar(child):
+            direct.append(child_path)
+        elif is_container(child):
+            branch_roots.append((child_path, child))
+
+    if len(direct) >= limit:
+        return direct[:limit]
+
+    by_branch: list[list[str]] = []
+    for root_path, root_value in branch_roots:
+        branch_paths: list[str] = []
+        queue = children_of(root_value, root_path)
+        cursor = 0
+        while cursor < len(queue) and len(branch_paths) < limit:
+            child_path, child = queue[cursor]
+            cursor += 1
+            if is_non_empty_scalar(child):
+                branch_paths.append(child_path)
+            elif is_container(child):
+                queue.extend(children_of(child, child_path))
+        by_branch.append(branch_paths)
+
+    found = list(direct)
+    while len(found) < limit:
+        added = False
+        for paths in by_branch:
+            if not paths:
+                continue
+            found.append(paths.pop(0))
+            added = True
+            if len(found) >= limit:
+                break
+        if not added:
+            break
     return found
 
 

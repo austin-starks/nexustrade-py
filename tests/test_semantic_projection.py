@@ -674,6 +674,56 @@ class SemanticProjectionTest(unittest.TestCase):
                 max_validation_retries=0,
             )
 
+    def test_retry_feedback_covers_late_record_branch_after_large_contract(self) -> None:
+        response = {
+            "rows": [
+                {
+                    "input_index": 0,
+                    "derived": {
+                        "economic_event": "purchase",
+                        "eligible": True,
+                        "resolution_status": "resolved",
+                        "evidence": [],
+                        "evidence_refs": [
+                            {
+                                "predicate": "eligible",
+                                "path": "/complete_reconstructed_record/0/id",
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+        raw = {
+            "source_row": "row-1",
+            "record_criteria": [
+                {
+                    "id": f"criterion-{index}",
+                    "condition": f"condition-{index}",
+                    "interpretation": f"interpretation-{index}",
+                }
+                for index in range(700)
+            ],
+            "complete_reconstructed_record": [
+                {"id": None, "asset": "Purchased listed contract"}
+            ],
+        }
+        with (
+            patch("nexustrade.host.gateway_chat_json", return_value=response),
+            self.assertRaisesRegex(
+                SemanticProjectionError,
+                "valid non-empty scalar paths.*"
+                "'/complete_reconstructed_record/0/asset'",
+            ),
+        ):
+            derive_rows(
+                [raw],
+                instruction="Select the requested event.",
+                derived_schema=DERIVED_SCHEMA,
+                evidence_requirements={"eligible": "truthy"},
+                max_validation_retries=0,
+            )
+
     def test_retries_terminal_multi_row_validation_batch(self) -> None:
         calls = 0
 
