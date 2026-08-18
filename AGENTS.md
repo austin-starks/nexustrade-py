@@ -106,6 +106,14 @@ extraction with a corrected schema when evidence is missing or ambiguous. Regex
 is not a substitute for OCR plus schema-bound extraction and must not classify
 model-produced asset identities.
 
+For a material semantic decision that already has a positive condition,
+proposed outcome, reason, and record-local RFC 6901 citations, use
+`nt.verify_semantic_citations(...)` before trusting the proposal. The host
+resolves the citations, exposes the complete same-record scalar evidence to an
+independent native-Luna verifier, and rejects changed identities or cross-record
+evidence. The verifier reports support, contradiction, or insufficiency; it
+does not rewrite the decision or invent task criteria.
+
 **8. Your own data belongs in ONE series.** `create_custom_indicator` mints a
 new series every time it is called with a fresh idempotency key. Recurring
 collection must `append_custom_indicator_points` onto the id it created the

@@ -90,6 +90,37 @@ by the model. The exact result shape is one `{raw, derived}` pair per input;
 `explicit_exclusion_present` components, `reason`, and `evidence_refs`. The SDK
 mechanically adds `inclusion_supported` as the negation of those two blockers.
 
+When a material task-local decision already has a positive condition, proposed
+outcome, reason, and same-record evidence pointers, independently verify that
+the proposal agrees with the complete record before trusting it:
+
+```python
+verification = nt.verify_semantic_citations(
+    evidence_id="semantic-batch-1",
+    request=user_request,
+    assertions=[
+        {
+            "assertionId": "source-row-1",
+            "completeRecordEvidence": source_row,
+            "criteria": [
+                {
+                    "criterionId": "requested-state",
+                    "positiveCondition": "The requested state is present.",
+                    "proposedOutcome": "true",
+                    "proposedReason": "The complete record supports it.",
+                    "citedPaths": ["/status"],
+                }
+            ],
+        }
+    ],
+)
+```
+
+The host resolves each RFC 6901 pointer, exposes all scalar evidence from that
+same record to the native-Luna verifier, and rejects changed IDs, lost
+decisions, or cross-record citations. Verdicts are `supported`,
+`contradicted`, or `insufficient`; the verifier never rewrites the proposal.
+
 The model can only return task-specific derived fields keyed to a host-owned
 input index; it cannot rewrite or drop the raw record.
 

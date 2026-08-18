@@ -60,7 +60,13 @@ Apply explicit exclusions by ordinary semantic meaning; equivalent source langua
 repeat the caller's exact words.
 Do not copy, rewrite, normalize, or omit raw source fields. When evidence conflicts or is
 insufficient, express that uncertainty in the caller-provided derived schema rather than
-silently choosing a convenient value. Do not infer from neighboring records."""
+silently choosing a convenient value. Do not infer from neighboring records.
+Every caller-provided criterion is phrased so that its satisfied condition maps to true. Before
+returning, compare each boolean or true/false/unknown outcome with your own reason and cited
+source value. If the reason says the condition is satisfied, do not return false; if it names a
+direct contradiction, do not return true. Apply the same interpretation to records with the same
+load-bearing evidence; identity, ordering, date, or amount may change an outcome only when the
+criterion makes that field relevant."""
 
 
 _EVIDENCE_REFERENCE_PROMPT = """The caller requires machine-verifiable record-local evidence.
@@ -97,9 +103,11 @@ describe orthogonal dimensions of the same record. Preserve every proposed inclu
 direct blocking evidence. Do not invent a new population predicate from source metadata that
 the caller did not make load-bearing. An opaque abbreviation, compact code, identifier, or
 unlabeled category that appears only as metadata and lacks a supplied source definition cannot
-establish a contradiction by itself. This does not prohibit ordinary interpretation of an
-unambiguous conventional term or legal-form abbreviation inside a natural-language description;
-evaluate that description as a whole.
+establish a contradiction by itself. Interpret a natural-language description as a whole. A
+source term may establish only the semantic dimension it actually describes; do not make it
+decide an orthogonal event, category, identity, or status merely because the same record also
+contains that term. Apply the same source-grounded interpretation to materially identical
+load-bearing descriptions across the audited batch.
 Audit required predicates as well as exclusions. When the source
 explicitly names a different event from the event the caller requires, that is a direct
 contradiction even if the events have a related economic outcome. Cite the direct evidence
@@ -761,3 +769,46 @@ def audit_inclusions(
         derived_with_decision["inclusion_supported"] = not (contradiction or exclusion)
         pair["derived"] = derived_with_decision
     return audited
+
+
+def verify_semantic_citations(
+    *,
+    evidence_id: str,
+    request: str,
+    assertions: Sequence[Mapping[str, Any]],
+    source_authority: str | None = None,
+) -> dict[str, Any]:
+    """Independently verify proposed criterion outcomes against cited evidence.
+
+    Each assertion supplies ``assertionId``, ``completeRecordEvidence``, and
+    criterion decisions with ``criterionId``, ``positiveCondition``,
+    ``proposedOutcome``, ``proposedReason``, and same-record RFC 6901
+    ``citedPaths``. The host resolves those pointers, exposes all scalar values
+    from the same record to catch selective citation, runs the stored native-Luna
+    verifier, and validates every returned id and evidence reference. The
+    verifier reports support, contradiction, or insufficiency; it never rewrites
+    the caller's decision.
+    """
+    if not isinstance(evidence_id, str) or not evidence_id.strip():
+        raise ValueError("evidence_id must be non-empty")
+    if not isinstance(request, str) or not request.strip():
+        raise ValueError("request must be non-empty")
+    if not isinstance(assertions, Sequence) or isinstance(assertions, (str, bytes)):
+        raise ValueError("assertions must be a non-empty sequence")
+    normalized_assertions = [
+        copy.deepcopy(dict(assertion)) for assertion in assertions
+    ]
+    if not normalized_assertions:
+        raise ValueError("assertions must be a non-empty sequence")
+    payload: dict[str, Any] = {
+        "evidenceId": evidence_id.strip(),
+        "request": request.strip(),
+        "assertions": normalized_assertions,
+    }
+    if source_authority is not None and not isinstance(source_authority, str):
+        raise ValueError("source_authority must be a string when supplied")
+    if source_authority is not None and source_authority.strip():
+        payload["sourceAuthority"] = source_authority.strip()
+    from nexustrade.host import gateway_semantic_verify
+
+    return gateway_semantic_verify(payload)

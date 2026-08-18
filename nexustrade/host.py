@@ -1579,3 +1579,67 @@ def gateway_chat_json(
         **extra,
     )
     return _parse_json_content(content)
+
+
+def gateway_semantic_verify(
+    payload: Mapping[str, Any],
+    *,
+    timeout_sec: int = 300,
+) -> dict[str, Any]:
+    """Run the host-owned semantic citation verifier.
+
+    The host resolves every cited RFC 6901 pointer, expands the complete
+    same-record evidence inventory, pins the stored verifier prompt to native
+    Luna, and rejects changed ids, cardinality, or cross-record evidence.
+    """
+    if not isinstance(payload, Mapping) or not payload:
+        raise ValueError("semantic verifier payload must be a non-empty mapping")
+    base, api_key = _gateway_credentials()
+    encoded_body = json.dumps(dict(payload)).encode("utf-8")
+    response_payload: Any = None
+    for attempt in range(_GATEWAY_CHAT_MAX_ATTEMPTS):
+        _touch_host_activity()
+        req = urllib.request.Request(
+            f"{base}/semantic/verify",
+            data=encoded_body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                response_payload = json.loads(resp.read().decode("utf-8"))
+            _touch_host_activity()
+            break
+        except urllib.error.HTTPError as exc:
+            _touch_host_activity()
+            detail = exc.read().decode("utf-8", errors="replace")
+            if (
+                exc.code not in _GATEWAY_CHAT_TRANSIENT_HTTP_STATUSES
+                or attempt + 1 == _GATEWAY_CHAT_MAX_ATTEMPTS
+            ):
+                error_type = (
+                    GatewayChatTransportError
+                    if exc.code in _GATEWAY_CHAT_TRANSIENT_HTTP_STATUSES
+                    else GatewayChatRequestError
+                )
+                raise error_type(
+                    f"gateway semantic verifier HTTP {exc.code}: {detail}"
+                ) from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            _touch_host_activity()
+            if attempt + 1 == _GATEWAY_CHAT_MAX_ATTEMPTS:
+                raise GatewayChatTransportError(
+                    "gateway semantic verifier transport failed after "
+                    f"{_GATEWAY_CHAT_MAX_ATTEMPTS} attempts: {exc}"
+                ) from exc
+        retry_base = _GATEWAY_CHAT_RETRY_BASE_SECONDS * (2**attempt)
+        time.sleep(random.uniform(retry_base * 0.5, retry_base * 1.5))
+    if not isinstance(response_payload, dict):
+        raise RuntimeError("gateway semantic verifier returned non-object response")
+    result = response_payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("gateway semantic verifier response omitted result")
+    return result

@@ -11,6 +11,7 @@ from nexustrade.semantic import (
     SemanticProjectionError,
     audit_inclusions,
     derive_rows,
+    verify_semantic_citations,
 )
 
 
@@ -28,6 +29,42 @@ DERIVED_SCHEMA = {
 class SemanticProjectionTest(unittest.TestCase):
     def test_default_parallelism_is_twenty_four(self) -> None:
         self.assertEqual(DEFAULT_MAX_WORKERS, 24)
+
+    def test_semantic_verifier_forwards_only_the_bounded_contract(self) -> None:
+        assertion = {
+            "assertionId": "row-1",
+            "completeRecordEvidence": {"event": "Purchased"},
+            "criteria": [
+                {
+                    "criterionId": "purchase",
+                    "positiveCondition": "The event is a purchase.",
+                    "proposedOutcome": "false",
+                    "proposedReason": "The event was not a purchase.",
+                    "citedPaths": ["/event"],
+                }
+            ],
+        }
+        expected = {"evidenceId": "bundle-1", "assertions": []}
+        with patch(
+            "nexustrade.host.gateway_semantic_verify",
+            return_value=expected,
+        ) as gateway:
+            result = verify_semantic_citations(
+                evidence_id="bundle-1",
+                request="Return purchase events.",
+                assertions=[assertion],
+                source_authority="Descriptions name the event.",
+            )
+
+        self.assertEqual(result, expected)
+        gateway.assert_called_once_with(
+            {
+                "evidenceId": "bundle-1",
+                "request": "Return purchase events.",
+                "assertions": [assertion],
+                "sourceAuthority": "Descriptions name the event.",
+            }
+        )
 
     def test_audits_only_direct_blockers_without_rewriting_source(self) -> None:
         rows = [
@@ -87,8 +124,9 @@ class SemanticProjectionTest(unittest.TestCase):
         self.assertIn("Absence of additional evidence is not a blocker", payload["instruction"])
         self.assertIn("Do not invent a new population predicate", payload["instruction"])
         self.assertIn("appears only as metadata", payload["instruction"])
-        self.assertIn("legal-form abbreviation", payload["instruction"])
-        self.assertIn("evaluate that description as a whole", payload["instruction"])
+        self.assertIn("natural-language description as a whole", payload["instruction"])
+        self.assertIn("only the semantic dimension", payload["instruction"])
+        self.assertNotIn("legal-form", payload["instruction"])
         self.assertIn("Audit required predicates as well as exclusions", payload["instruction"])
         self.assertIn("different event", payload["instruction"])
         response_schema = captured["json_schema"]
