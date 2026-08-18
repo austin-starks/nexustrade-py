@@ -30,6 +30,120 @@ class SemanticProjectionTest(unittest.TestCase):
     def test_default_parallelism_is_twenty_four(self) -> None:
         self.assertEqual(DEFAULT_MAX_WORKERS, 24)
 
+    def test_host_raw_wrapper_prefix_is_normalized_for_evidence(self) -> None:
+        with patch("nexustrade.host.gateway_chat_json") as gateway:
+            gateway.return_value = {
+                "rows": [
+                    {
+                        "input_index": 0,
+                        "derived": {
+                            "matches": True,
+                            "evidence_refs": [
+                                {
+                                    "predicate": "matches",
+                                    "path": "/raw/event",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+            result = derive_rows(
+                [{"event": "Purchased"}],
+                instruction="Return whether the event matches.",
+                derived_schema={
+                    "type": "object",
+                    "properties": {"matches": {"type": "boolean"}},
+                },
+                evidence_requirements={"matches": "always"},
+            )
+
+        self.assertEqual(
+            result[0]["derived"]["evidence_refs"],
+            [
+                {
+                    "predicate": "matches",
+                    "path": "/event",
+                    "value": "Purchased",
+                }
+            ],
+        )
+
+    def test_real_raw_property_keeps_its_literal_evidence_path(self) -> None:
+        with patch("nexustrade.host.gateway_chat_json") as gateway:
+            gateway.return_value = {
+                "rows": [
+                    {
+                        "input_index": 0,
+                        "derived": {
+                            "matches": True,
+                            "evidence_refs": [
+                                {
+                                    "predicate": "matches",
+                                    "path": "/raw/event",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+            result = derive_rows(
+                [{"raw": {"event": "Purchased"}, "event": "Sold"}],
+                instruction="Return whether the nested event matches.",
+                derived_schema={
+                    "type": "object",
+                    "properties": {"matches": {"type": "boolean"}},
+                },
+                evidence_requirements={"matches": "always"},
+            )
+
+        self.assertEqual(
+            result[0]["derived"]["evidence_refs"],
+            [
+                {
+                    "predicate": "matches",
+                    "path": "/raw/event",
+                    "value": "Purchased",
+                }
+            ],
+        )
+
+    def test_host_raw_wrapper_alias_cannot_duplicate_evidence(self) -> None:
+        with (
+            patch("nexustrade.host.gateway_chat_json") as gateway,
+            self.assertRaisesRegex(
+                SemanticProjectionError,
+                "duplicated for 'matches' at '/event'",
+            ),
+        ):
+            gateway.return_value = {
+                "rows": [
+                    {
+                        "input_index": 0,
+                        "derived": {
+                            "matches": True,
+                            "evidence_refs": [
+                                {"predicate": "matches", "path": "/event"},
+                                {
+                                    "predicate": "matches",
+                                    "path": "/raw/event",
+                                },
+                            ],
+                        },
+                    }
+                ]
+            }
+            derive_rows(
+                [{"event": "Purchased"}],
+                instruction="Return whether the event matches.",
+                derived_schema={
+                    "type": "object",
+                    "properties": {"matches": {"type": "boolean"}},
+                },
+                evidence_requirements={"matches": "always"},
+                max_validation_retries=0,
+            )
+
     def test_semantic_verifier_forwards_only_the_bounded_contract(self) -> None:
         assertion = {
             "assertionId": "row-1",

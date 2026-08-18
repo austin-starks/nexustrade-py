@@ -71,9 +71,11 @@ criterion makes that field relevant."""
 
 _EVIDENCE_REFERENCE_PROMPT = """The caller requires machine-verifiable record-local evidence.
 Return evidence_refs as predicate/path pairs. Each path is an RFC 6901 JSON Pointer relative to
-the same record's raw object and must resolve to a concrete scalar source value that directly
-supports that predicate. Do not quote, paraphrase, or cite another record. The host resolves and
-attaches cited values after validation; you return only predicate and path."""
+the contents of the same record's raw object and must resolve to a concrete scalar source value
+that directly supports that predicate. The request envelope's `raw` key is host-owned and is not
+part of the pointer: cite `/field`, never `/raw/field`. Do not quote, paraphrase, or cite another
+record. The host resolves and attaches cited values after validation; you return only predicate
+and path."""
 
 
 _VALIDATION_REPAIR_PROMPT = """A prior structured response for this same input failed host
@@ -81,7 +83,8 @@ validation. Use the supplied validation_feedback only to repair the response con
 the immutable record and original instruction; do not relax or reinterpret the task predicate,
 invent evidence, or copy a neighboring record. When validation_feedback lists valid non-empty
 scalar paths, copy an applicable listed path exactly, including every parent segment; do not
-shorten, rename, or reconstruct a near-equivalent path."""
+shorten, rename, or reconstruct a near-equivalent path. The host-owned request-envelope key
+`raw` is never a pointer segment; replace `/raw/field` with the listed `/field` path."""
 
 
 _INCLUSION_AUDIT_SCHEMA: dict[str, Any] = {
@@ -405,6 +408,31 @@ def _resolve_evidence_pointer(row: Mapping[str, Any], path: str) -> Any:
     return current
 
 
+def _resolve_evidence_pointer_compat(
+    row: Mapping[str, Any], path: str
+) -> tuple[str, Any]:
+    """Resolve record-relative evidence with host-envelope compatibility.
+
+    The model sees a record inside a host-owned ``raw`` field and may therefore
+    cite ``/raw/field`` even though the public contract is relative to that
+    field's contents. Try the literal pointer first so a caller-owned ``raw``
+    property keeps its normal RFC 6901 meaning. Strip the wrapper only when the
+    literal pointer is invalid and the record-relative alternative resolves.
+    """
+    try:
+        return path, _resolve_evidence_pointer(row, path)
+    except SemanticProjectionError as literal_error:
+        if not path.startswith("/raw/"):
+            raise
+        normalized_path = path[len("/raw") :]
+        try:
+            return normalized_path, _resolve_evidence_pointer(
+                row, normalized_path
+            )
+        except SemanticProjectionError:
+            raise literal_error
+
+
 def _requires_evidence(value: Any, requirement: EvidenceRequirement) -> bool:
     if requirement == "always":
         return True
@@ -446,14 +474,10 @@ def _validate_evidence_refs(
             )
         if not isinstance(path, str):
             raise SemanticProjectionError("semantic evidence reference path is not a string")
-        identity = (predicate, path)
-        if identity in seen:
-            raise SemanticProjectionError(
-                f"semantic evidence reference is duplicated for {predicate!r} at {path!r}"
-            )
-        seen.add(identity)
         try:
-            value = _resolve_evidence_pointer(raw_row, path)
+            normalized_path, value = _resolve_evidence_pointer_compat(
+                raw_row, path
+            )
         except SemanticProjectionError as exc:
             candidates = _scalar_evidence_paths(raw_row)
             suffix = (
@@ -463,9 +487,20 @@ def _validate_evidence_refs(
                 else "; this row contains no non-empty scalar evidence paths"
             )
             raise SemanticProjectionError(f"{exc}{suffix}") from exc
+        identity = (predicate, normalized_path)
+        if identity in seen:
+            raise SemanticProjectionError(
+                "semantic evidence reference is duplicated for "
+                f"{predicate!r} at {normalized_path!r}"
+            )
+        seen.add(identity)
         covered.add(predicate)
         enriched_refs.append(
-            {"predicate": predicate, "path": path, "value": copy.deepcopy(value)}
+            {
+                "predicate": predicate,
+                "path": normalized_path,
+                "value": copy.deepcopy(value),
+            }
         )
     for predicate, requirement in requirements.items():
         if _requires_evidence(derived[predicate], requirement) and predicate not in covered:
