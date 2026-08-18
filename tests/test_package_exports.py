@@ -88,6 +88,57 @@ class PackageExportTests(unittest.TestCase):
             },
         )
 
+    def test_adaptive_allocation_builders_work_for_equity_and_options(self) -> None:
+        policy = nt.mean_variance_allocation(
+            lookback_periods=126,
+            minimum_observations=40,
+            risk_aversion=6,
+        )
+        equity = nt.dynamic_rebalance(
+            universe_config=nt.universe("SP500"),
+            pipeline=[],
+            weight_indicator=nt.Value(1),
+            allocation_policy=policy,
+        )
+        options = nt.rebalance_option(
+            universe_config=nt.universe("SP500"),
+            pipeline=[],
+            weight_indicator=nt.Value(1),
+            structure_templates=[],
+            allocation_policy=policy,
+        )
+
+        self.assertEqual(equity["allocationPolicy"], policy)
+        self.assertEqual(options["allocationPolicy"], policy)
+        self.assertEqual(
+            nt.rebalance_expected_benefit().to_dict()["metric"],
+            "expectedBenefit",
+        )
+        self.assertEqual(
+            nt.rebalance_estimated_cost().to_dict()["metric"],
+            "estimatedCost",
+        )
+
+    def test_allocation_policies_compose_with_volatility_targeting(self) -> None:
+        exposure = nt.volatility_target(
+            target_annualized_volatility_percent=10,
+        )
+        policies = [
+            nt.mean_variance_allocation(),
+            nt.risk_parity_allocation(),
+            nt.maximum_diversification_allocation(),
+        ]
+        for policy in policies:
+            action = nt.dynamic_rebalance(
+                universe_config=nt.universe("SP500"),
+                pipeline=[],
+                weight_indicator=nt.Value(1),
+                allocation_policy=policy,
+                exposure_policy=exposure,
+            )
+            self.assertEqual(action["allocationPolicy"], policy)
+            self.assertEqual(action["exposurePolicy"], exposure)
+
     def test_wildcard_import_works_without_optional_extras(self) -> None:
         # `import *` resolves every name in __all__ eagerly, so lazy helpers
         # backed by optional modules must NOT be listed there — otherwise a

@@ -30,6 +30,15 @@ __all__: List[str] = [
     "alert",
     "launch_agent",
     "dynamic_rebalance",
+    "mean_variance_allocation",
+    "risk_parity_allocation",
+    "maximum_diversification_allocation",
+    "volatility_target",
+    "rebalance_allocation_drift",
+    "rebalance_planned_turnover",
+    "rebalance_estimated_cost",
+    "rebalance_expected_benefit",
+    "rebalance_net_benefit",
     "leg",
     "options_builder",
     "against_parent",
@@ -451,6 +460,106 @@ def launch_agent(
     )
 
 
+def mean_variance_allocation(
+    *,
+    lookback_periods: int = 252,
+    minimum_observations: int = 60,
+    risk_aversion: float = 4.0,
+    expected_return_shrinkage: float = 0.5,
+    covariance_shrinkage: float = 0.25,
+    turnover_penalty: float = 1.0,
+    estimated_transaction_cost_bps: float = 10.0,
+) -> Dict[str, Any]:
+    return {
+        "type": "MeanVariance",
+        "lookbackPeriods": lookback_periods,
+        "minimumObservations": minimum_observations,
+        "riskAversion": risk_aversion,
+        "expectedReturnShrinkage": expected_return_shrinkage,
+        "covarianceShrinkage": covariance_shrinkage,
+        "turnoverPenalty": turnover_penalty,
+        "estimatedTransactionCostBps": estimated_transaction_cost_bps,
+    }
+
+
+def risk_parity_allocation(
+    *,
+    lookback_periods: int = 252,
+    minimum_observations: int = 60,
+    covariance_shrinkage: float = 0.25,
+    turnover_penalty: float = 1.0,
+    estimated_transaction_cost_bps: float = 10.0,
+) -> Dict[str, Any]:
+    return {
+        "type": "RiskParity",
+        "lookbackPeriods": lookback_periods,
+        "minimumObservations": minimum_observations,
+        "covarianceShrinkage": covariance_shrinkage,
+        "turnoverPenalty": turnover_penalty,
+        "estimatedTransactionCostBps": estimated_transaction_cost_bps,
+    }
+
+
+def maximum_diversification_allocation(
+    *,
+    lookback_periods: int = 252,
+    minimum_observations: int = 60,
+    covariance_shrinkage: float = 0.25,
+    turnover_penalty: float = 1.0,
+    estimated_transaction_cost_bps: float = 10.0,
+) -> Dict[str, Any]:
+    return {
+        "type": "MaximumDiversification",
+        "lookbackPeriods": lookback_periods,
+        "minimumObservations": minimum_observations,
+        "covarianceShrinkage": covariance_shrinkage,
+        "turnoverPenalty": turnover_penalty,
+        "estimatedTransactionCostBps": estimated_transaction_cost_bps,
+    }
+
+
+def volatility_target(
+    *,
+    lookback_periods: int = 60,
+    minimum_observations: int = 20,
+    covariance_shrinkage: float = 0.25,
+    target_annualized_volatility_percent: float = 12.0,
+    estimated_transaction_cost_bps: float = 10.0,
+) -> Dict[str, Any]:
+    return {
+        "type": "VolatilityTarget",
+        "lookbackPeriods": lookback_periods,
+        "minimumObservations": minimum_observations,
+        "covarianceShrinkage": covariance_shrinkage,
+        "targetAnnualizedVolatilityPercent": target_annualized_volatility_percent,
+        "estimatedTransactionCostBps": estimated_transaction_cost_bps,
+    }
+
+
+def _rebalance_decision_metric(metric: str) -> Indicator:
+    return Indicator({"type": "RebalanceDecisionMetric", "metric": metric})
+
+
+def rebalance_allocation_drift() -> Indicator:
+    return _rebalance_decision_metric("allocationDrift")
+
+
+def rebalance_planned_turnover() -> Indicator:
+    return _rebalance_decision_metric("plannedTurnover")
+
+
+def rebalance_estimated_cost() -> Indicator:
+    return _rebalance_decision_metric("estimatedCost")
+
+
+def rebalance_expected_benefit() -> Indicator:
+    return _rebalance_decision_metric("expectedBenefit")
+
+
+def rebalance_net_benefit() -> Indicator:
+    return _rebalance_decision_metric("netBenefit")
+
+
 def dynamic_rebalance(
     universe: Optional[Dict[str, Any]] = None,
     pipeline: Optional[Sequence[Dict[str, Any]]] = None,
@@ -461,6 +570,8 @@ def dynamic_rebalance(
     deployment_percent: Optional[float] = None,
     per_name_allocation: Optional[Dict[str, Any]] = None,
     can_sell: Optional[Condition] = None,
+    allocation_policy: Optional[Dict[str, Any]] = None,
+    exposure_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if universe is not None and universe_config is not None:
         raise ValueError(
@@ -487,6 +598,8 @@ def dynamic_rebalance(
                 if can_sell is not None
                 else None
             ),
+            "allocationPolicy": allocation_policy,
+            "exposurePolicy": exposure_policy,
         }
     )
 
@@ -659,6 +772,8 @@ def rebalance_option(
     per_name_allocation: Optional[Dict[str, Any]] = None,
     position_scope: Optional[str] = None,
     sleeves: Optional[Sequence[Dict[str, Any]]] = None,
+    allocation_policy: Optional[Dict[str, Any]] = None,
+    exposure_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -672,6 +787,8 @@ def rebalance_option(
             "perNameAllocation": per_name_allocation,
             "positionScope": position_scope,
             "sleeves": list(sleeves) if sleeves is not None else None,
+            "allocationPolicy": allocation_policy,
+            "exposurePolicy": exposure_policy,
         }
     )
 
@@ -2179,6 +2296,18 @@ PriceStdDev = PriceStandardDeviation
 __all__.append("PriceStandardDeviation")
 __all__.append("PriceStdDev")
 
+def RebalanceDecisionMetric(
+    metric: Literal["allocationDrift", "plannedTurnover", "estimatedCost", "expectedBenefit", "netBenefit"] = "netBenefit",
+) -> Indicator:
+    """RebalanceDecisionMetric indicator.
+    metric: Reads the prospective plan calculated by DynamicRebalance or RebalanceOption before the strategy condition runs.
+    """
+    d: Dict[str, Any] = {"type": "RebalanceDecisionMetric"}
+    d["metric"] = _enum(metric, ["allocationDrift","plannedTurnover","estimatedCost","expectedBenefit","netBenefit"], "metric")
+    return Indicator(d)
+
+__all__.append("RebalanceDecisionMetric")
+
 def RelativeStrengthIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
@@ -2768,6 +2897,36 @@ def gene_structure_kind(
     }
 
 __all__.append("gene_structure_kind")
+
+def gene_allocation_policy(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep AllocationPolicy (Action scope) over a value set."""
+    return {
+        "field": "AllocationPolicy",
+        "scope": "Action",
+        "target": {"scope": "Action", "field": "AllocationPolicy", "strategy_index": strategy_index},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_allocation_policy")
+
+def gene_exposure_policy(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep ExposurePolicy (Action scope) over a value set."""
+    return {
+        "field": "ExposurePolicy",
+        "scope": "Action",
+        "target": {"scope": "Action", "field": "ExposurePolicy", "strategy_index": strategy_index},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_exposure_policy")
 
 def gene_option_delta(
     *,
