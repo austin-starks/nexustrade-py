@@ -439,10 +439,12 @@ def derive_rows(
     accepts either prose or a structured mapping. The model may return only that index and
     fields allowed by ``derived_schema``. Optional ``evidence_requirements`` names predicates
     whose load-bearing values need a same-row JSON Pointer; the host validates each pointer
-    and attaches its immutable source value. Large inputs are processed in bounded parallel
-    batches; malformed structured responses are split and terminal validation batches are
-    retried a bounded number of times. Transport failures remain owned by the gateway retry
-    policy. The result contains one
+    and attaches its immutable source value. Evidence-owned projections isolate records into
+    separate model requests so a neighboring record cannot contaminate a load-bearing
+    interpretation. Independent requests still run with bounded parallelism. Projections
+    without evidence requirements retain bounded multi-record batching. Malformed structured
+    responses are split and terminal validation batches are retried a bounded number of times.
+    Transport failures remain owned by the gateway retry policy. The result contains one
     ``{"raw": ..., "derived": ...}`` object per input row in original order, and no
     partial batch is returned.
     """
@@ -625,9 +627,10 @@ def derive_rows(
                 latest_error = retry_error
         raise latest_error
 
+    request_batch_size = 1 if normalized_evidence_requirements else batch_size
     batches = [
-        (start, raw_rows[start : start + batch_size])
-        for start in range(0, len(raw_rows), batch_size)
+        (start, raw_rows[start : start + request_batch_size])
+        for start in range(0, len(raw_rows), request_batch_size)
     ]
     projected_batches: dict[int, list[dict[str, Any]]] = {}
     workers = min(max_workers, len(batches))

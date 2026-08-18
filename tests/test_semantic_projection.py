@@ -577,32 +577,36 @@ class SemanticProjectionTest(unittest.TestCase):
             "Purchased listed contract",
         )
 
-    def test_retries_only_rows_with_invalid_evidence(self) -> None:
+    def test_isolates_evidence_owned_rows_and_retries_only_the_invalid_record(self) -> None:
         calls: list[dict[str, object]] = []
+        attempts: dict[str, int] = {}
 
         def fake_gateway_chat_json(**kwargs: object) -> object:
             payload = json.loads(str(kwargs["prompt"]))
             calls.append(payload)
             records = payload["records"]
-            if len(records) == 2:
-                paths = ["/description", "/missing"]
-            else:
-                paths = ["/description"]
+            self.assertEqual(len(records), 1)
+            description = records[0]["raw"]["description"]
+            attempts[description] = attempts.get(description, 0) + 1
+            path = (
+                "/missing"
+                if description.endswith("B") and attempts[description] == 1
+                else "/description"
+            )
             return {
                 "rows": [
                     {
-                        "input_index": index,
+                        "input_index": 0,
                         "derived": {
                             "economic_event": "purchase",
                             "eligible": True,
                             "resolution_status": "resolved",
                             "evidence": [],
                             "evidence_refs": [
-                                {"predicate": "eligible", "path": paths[index]}
+                                {"predicate": "eligible", "path": path}
                             ],
                         },
                     }
-                    for index, _record in enumerate(records)
                 ]
             }
 
@@ -616,13 +620,16 @@ class SemanticProjectionTest(unittest.TestCase):
                 instruction="Select the requested event.",
                 derived_schema=DERIVED_SCHEMA,
                 evidence_requirements={"eligible": "truthy"},
+                batch_size=40,
+                max_workers=1,
             )
 
-        self.assertEqual([len(call["records"]) for call in calls], [2, 1])
+        self.assertEqual([len(call["records"]) for call in calls], [1, 1, 1])
         self.assertNotIn("validation_feedback", calls[0])
-        self.assertIn("valid non-empty scalar paths", calls[1]["validation_feedback"])
+        self.assertNotIn("validation_feedback", calls[1])
+        self.assertIn("valid non-empty scalar paths", calls[2]["validation_feedback"])
         self.assertEqual(
-            calls[1]["records"][0]["raw"],
+            calls[2]["records"][0]["raw"],
             {"description": "Purchased listed contract B"},
         )
         self.assertEqual([row["raw"] for row in result], rows)
