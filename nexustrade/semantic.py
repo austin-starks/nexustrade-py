@@ -10,7 +10,11 @@ from typing import Any, Literal
 
 
 DEFAULT_BATCH_SIZE = 40
-DEFAULT_MAX_WORKERS = 8
+# Evidence-owned projections deliberately use one request per source record.
+# Twenty-four concurrent network-bound requests keeps large corpora moving while
+# the gateway owns transport retries and this module retains all-or-nothing
+# result assembly.
+DEFAULT_MAX_WORKERS = 24
 DEFAULT_MAX_SPLIT_DEPTH = 2
 DEFAULT_MAX_VALIDATION_RETRIES = 2
 EVIDENCE_REFS_FIELD = "evidence_refs"

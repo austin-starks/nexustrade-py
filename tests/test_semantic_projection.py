@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from nexustrade.semantic import (
+    DEFAULT_MAX_WORKERS,
     SemanticProjectionError,
     audit_inclusions,
     derive_rows,
@@ -25,6 +26,9 @@ DERIVED_SCHEMA = {
 
 
 class SemanticProjectionTest(unittest.TestCase):
+    def test_default_parallelism_is_twenty_four(self) -> None:
+        self.assertEqual(DEFAULT_MAX_WORKERS, 24)
+
     def test_audits_only_direct_blockers_without_rewriting_source(self) -> None:
         rows = [
             {
