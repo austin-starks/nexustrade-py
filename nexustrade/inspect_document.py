@@ -14,7 +14,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
-from nexustrade.scanned_table import probe_pdf
+from nexustrade.scanned_table import probe_pdf, render_pdf_page_png
 
 DEFAULT_INSPECT_MODEL = "openai/gpt-5.6-luna"
 
@@ -161,6 +161,11 @@ def _build_user_prompt(
             + ", ".join(str(page) for page in pages_inspected)
             + "."
         )
+        if kind == "pdf":
+            lines.append(
+                "The attached rendered page images correspond exactly to those page "
+                "numbers in the same order; no unrequested PDF page is attached."
+            )
     if probe is not None:
         lines.append(f"probe_pdf summary: {probe}")
     if question and question.strip():
@@ -172,15 +177,22 @@ def _gateway_attachments(
     data: bytes,
     kind: str,
     *,
+    pages_inspected: Sequence[int],
     filename: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
-    from nexustrade.host import gateway_file_part, gateway_image_url_part
+    from nexustrade.host import gateway_image_url_part
 
     if kind == "pdf":
-        name = filename or "document.pdf"
+        attachments = [
+            gateway_image_url_part(
+                render_pdf_page_png(data, page_number - 1),
+                mime_type="image/png",
+            )
+            for page_number in pages_inspected
+        ]
         return (
-            [gateway_file_part(data, filename=name, mime_type="application/pdf")],
-            "pdf_file",
+            attachments,
+            "rendered_pdf_pages(" + ",".join(str(page) for page in pages_inspected) + ")",
         )
     mime = _image_mime(data)
     ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(
@@ -204,8 +216,9 @@ def inspect_document(
 ) -> dict[str, Any]:
     """Sample a PDF or image and report layout evidence for schema design.
 
-    PDFs attach natively via OpenRouter ``file``+base64 (Luna reads the document).
-    Images attach via ``image_url``. Always runs ``probe_pdf`` first for PDFs.
+    Requested PDF pages render to page-scoped PNG attachments so vision cannot
+    confuse evidence from an unrequested page. Images attach via ``image_url``.
+    Always runs ``probe_pdf`` first for PDFs.
     """
     if not data:
         raise ValueError("inspect_document requires non-empty bytes")
@@ -224,7 +237,10 @@ def inspect_document(
         pages_inspected = [1]
 
     attachments, attachment_kind = _gateway_attachments(
-        data, kind, filename=filename
+        data,
+        kind,
+        pages_inspected=pages_inspected,
+        filename=filename,
     )
     configured = os.environ.get("INSPECT_DOCUMENT_MODEL", "").strip()
     inspect_model = model or configured or DEFAULT_INSPECT_MODEL
@@ -250,6 +266,12 @@ def inspect_document(
         "kind": kind,
         "probe": probe,
         "pages_inspected": pages_inspected,
+        "page_coordinates": {
+            "pages_inspected_one_based": pages_inspected,
+            "pages_inspected_zero_based": [page - 1 for page in pages_inspected],
+            "inspection_page_base": 1,
+            "page_audit_index_base": 0,
+        },
         "attachment_kind": attachment_kind,
         "analysis": analysis,
         "model": inspect_model,

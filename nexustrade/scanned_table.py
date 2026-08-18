@@ -271,10 +271,9 @@ def inject_extra_fields(
 def text_layer_is_suspect(sample: str) -> tuple[bool, int, int]:
     """Detect a present-but-unusable PDF text layer. Returns (suspect, bad_chars, scrambled).
 
-    A PDF can carry a full text layer that decodes to garbage: House PTRs render "AAPL"
-    while encoding "aaPl", and broken ToUnicode maps decode to U+FFFD/U+FFFE or the
-    private-use area. 62 of the 64 Pelosi PTRs trip this, so `has_text_layer` alone is a
-    trap — it is what led every bake-off model to regex a corrupt layer.
+    A PDF can carry a full text layer that looks complete yet decodes visible labels with
+    implausible mixed case, while broken ToUnicode maps decode to U+FFFD/U+FFFE or the
+    private-use area. `has_text_layer` alone therefore cannot establish usability.
     """
     bad_chars = sum(
         1 for ch in sample if ch in "\ufffd\ufffe\uffff" or "\ue000" <= ch <= "\uf8ff"
@@ -295,14 +294,15 @@ def _review_reason(
     page_index: int,
     grade: str | None,
     row_count: int,
-    failed_pages: set[int],
+    page_failures: dict[int, str],
 ) -> str | None:
-    if page_index in failed_pages and row_count <= 0:
-        return "mistral_zero_rows"
-    if page_index in failed_pages:
-        return "mistral_table_parse_failed"
+    failure_reason = page_failures.get(page_index)
+    if failure_reason is not None:
+        return failure_reason
     if row_count <= 0:
-        return "zero_rows"
+        if grade in _LOW_CONFIDENCE_GRADES:
+            return "no_apparent_table_low_confidence"
+        return "no_apparent_table"
     if grade in _LOW_CONFIDENCE_GRADES:
         return "low_confidence"
     return None
@@ -436,6 +436,26 @@ def _mistral_page_rows(page: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _mistral_page_has_table_evidence(page: dict[str, Any]) -> bool:
+    """Return whether Mistral exposed table-shaped evidence on this page.
+
+    A prose-only page returning no rows is not a failed table extraction. A page
+    carrying a table payload or materialized table markup but yielding no parsed
+    rows is. Keep this mechanical distinction separate from the caller's later
+    decision about whether prose on the page matters to the requested task.
+    """
+    tables = page.get("tables")
+    if isinstance(tables, list):
+        for table in tables:
+            if not isinstance(table, dict):
+                continue
+            content = table.get("content") or table.get("markdown") or table.get("html")
+            if isinstance(content, str) and content.strip():
+                return True
+    markdown = page.get("markdown")
+    return isinstance(markdown, str) and _apparent_markdown_table_rows(markdown) > 0
+
+
 def build_ocr_request_body(
     *,
     document_url: str,
@@ -513,7 +533,7 @@ def _mistral_rows_by_page(
     *,
     page_count: int,
     total_pages: int | None = None,
-) -> tuple[dict[int, list[dict[str, Any]]], dict[int, str | None], set[int]]:
+) -> tuple[dict[int, list[dict[str, Any]]], dict[int, str | None], dict[int, str]]:
     """Run Mistral OCR and return per-page table rows + confidence grades."""
     payload = _mistral_ocr_document(
         pdf_bytes, page_count=page_count, total_pages=total_pages
@@ -524,33 +544,52 @@ def _mistral_rows_by_page(
 
     by_page: dict[int, list[dict[str, Any]]] = {i: [] for i in range(page_count)}
     grades: dict[int, str | None] = dict.fromkeys(range(page_count), None)
-    failed_pages: set[int] = set()
-
+    page_failures: dict[int, str] = {}
+    pages_by_index: dict[int, dict[str, Any]] = {}
     for page in pages:
         if not isinstance(page, dict):
             continue
         page_index = page.get("index")
         if not isinstance(page_index, int) or page_index < 0 or page_index >= page_count:
             continue
+        if page_index in pages_by_index:
+            page_failures[page_index] = "duplicate_ocr_page"
+            continue
+        pages_by_index[page_index] = page
+
+    for page_index in range(page_count):
+        page = pages_by_index.get(page_index)
+        if page is None:
+            page_failures[page_index] = "missing_ocr_page"
+            continue
         confidence = page.get("confidence_scores")
         grade = _mistral_grade_from_confidence(
             confidence if isinstance(confidence, dict) else None
         )
         grades[page_index] = grade
+        has_table_evidence = _mistral_page_has_table_evidence(page)
         try:
             page_rows = _mistral_page_rows(page)
         except Exception:
-            failed_pages.add(page_index)
+            page_failures[page_index] = "table_parse_failed"
             continue
-        if not page_rows:
-            failed_pages.add(page_index)
+        if not page_rows and has_table_evidence:
+            page_failures[page_index] = "table_parse_failed"
+        if (
+            not page_rows
+            and not has_table_evidence
+            and not _mistral_page_markdown(page).strip()
+        ):
+            page_failures[page_index] = "empty_ocr_page"
         for row in page_rows:
             row["_extract_source"] = "mistral"
             row["_page_index"] = page_index
+            row["_page_number"] = page_index + 1
+            row["_page_index_base"] = 0
             if grade is not None:
                 row["_page_grade"] = grade
             by_page[page_index].append(row)
-    return by_page, grades, failed_pages
+    return by_page, grades, page_failures
 
 
 def dataframe_to_rows(
@@ -579,6 +618,8 @@ def dataframe_to_rows(
             continue
         row["_extract_source"] = source
         row["_page_index"] = page_index
+        row["_page_number"] = page_index + 1
+        row["_page_index_base"] = 0
         if page_grade is not None:
             row["_page_grade"] = page_grade
         rows.append(row)
@@ -604,18 +645,34 @@ def ocr_png_bytes(png_bytes: bytes) -> str:
         return ""
 
 
-def _png_from_pdf_page(pdf_bytes: bytes, page_index: int, scale: float = 2.0) -> bytes:
+def render_pdf_page_png(pdf_bytes: bytes, page_index: int, scale: float = 2.0) -> bytes:
+    """Render one zero-based PDF page to PNG bytes for page-scoped vision."""
     import pypdfium2 as pdfium
 
     doc = pdfium.PdfDocument(pdf_bytes)
-    if page_index < 0 or page_index >= len(doc):
-        raise IndexError(f"page_index {page_index} out of range (pages={len(doc)})")
-    page = doc[page_index]
-    bitmap = page.render(scale=scale)
-    pil = bitmap.to_pil()
-    buf = io.BytesIO()
-    pil.save(buf, format="PNG")
-    return buf.getvalue()
+    try:
+        page_count = len(doc)
+        if page_index < 0 or page_index >= page_count:
+            raise IndexError(
+                f"page_index {page_index} out of range (pages={page_count})"
+            )
+        page = doc[page_index]
+        try:
+            bitmap = page.render(scale=scale)
+            try:
+                pil = bitmap.to_pil()
+                try:
+                    buf = io.BytesIO()
+                    pil.save(buf, format="PNG")
+                    return buf.getvalue()
+                finally:
+                    pil.close()
+            finally:
+                bitmap.close()
+        finally:
+            page.close()
+    finally:
+        doc.close()
 
 
 def _unresolved_page_marker(
@@ -631,9 +688,33 @@ def _unresolved_page_marker(
     return {
         "_extract_source": "unresolved",
         "_page_index": page_index,
+        "_page_number": page_index + 1,
+        "_page_index_base": 0,
         "_page_grade": grade,
         "_needs_review": True,
         "_reason": reason,
+    }
+
+
+def _no_apparent_table_marker(
+    page_index: int,
+    grade: str | None,
+) -> dict[str, Any]:
+    """Preserve coverage for a page with no table-shaped evidence.
+
+    This is deliberately not an unresolved extraction row. The page may still
+    contain task-relevant prose, but the table extractor did not encounter a
+    table that it failed to parse. Callers can inspect the self-described page
+    when the natural-language request makes that prose material.
+    """
+    return {
+        "_extract_source": "page_audit",
+        "_page_index": page_index,
+        "_page_number": page_index + 1,
+        "_page_index_base": 0,
+        "_page_grade": grade,
+        "_needs_review": False,
+        "_reason": "no_apparent_table",
     }
 
 
@@ -645,7 +726,7 @@ def _assemble_mistral_extract_rows(
     extra_fields: dict[str, Any] | None,
     by_page: dict[int, list[dict[str, Any]]],
     grades: dict[int, str | None],
-    failed_pages: set[int],
+    page_failures: dict[int, str],
 ) -> list[dict[str, Any]]:
     """Normalize Mistral rows and flag thin pages — no secondary LLM parser."""
     all_rows: list[dict[str, Any]] = []
@@ -659,7 +740,7 @@ def _assemble_mistral_extract_rows(
             page_index=page_index,
             grade=grade,
             row_count=len(page_rows),
-            failed_pages=failed_pages,
+            page_failures=page_failures,
         )
         if reason is not None:
             if page_rows:
@@ -667,7 +748,12 @@ def _assemble_mistral_extract_rows(
                     row["_needs_review"] = True
                     row["_reason"] = reason
             else:
-                all_rows.append(_unresolved_page_marker(page_index, grade, reason))
+                marker = (
+                    _no_apparent_table_marker(page_index, grade)
+                    if reason == "no_apparent_table"
+                    else _unresolved_page_marker(page_index, grade, reason)
+                )
+                all_rows.append(marker)
                 continue
         for row in page_rows:
             inject_extra_fields(row, extra_fields)
@@ -684,9 +770,11 @@ def extract_pdf(
 ) -> list[dict[str, Any]]:
     """Extract rows from every page (or up to max_pages) of a PDF via Mistral OCR.
 
-    Mistral parses table structure; thin pages (zero rows, parse failure, low confidence)
-    are flagged `_needs_review` or emit an `_extract_source=unresolved` sentinel — never
-    a second vision-model pass on the same page.
+    Mistral parses table structure. A page with no apparent table emits a
+    metadata-only `_extract_source=page_audit` coverage marker; a page whose
+    apparent table could not be parsed or whose evidence is low-confidence is
+    flagged `_needs_review` or emits `_extract_source=unresolved`. Neither path
+    silently drops a page, and neither runs a second vision-model parser.
 
     Raises RuntimeError when the OCR backend itself is unreachable. Per-PAGE trouble is
     reported in the rows; a whole-DOCUMENT failure is raised, so an outage can never be
@@ -718,7 +806,7 @@ def extract_pdf(
     alias_map = build_schema_alias_map(target_schema)
     fields = schema_fields(target_schema)
     try:
-        by_page, grades, failed_pages = _mistral_rows_by_page(
+        by_page, grades, page_failures = _mistral_rows_by_page(
             pdf_bytes, page_count=limit, total_pages=page_count
         )
     except Exception as exc:
@@ -743,7 +831,7 @@ def extract_pdf(
         extra_fields=extra_fields,
         by_page=by_page,
         grades=grades,
-        failed_pages=failed_pages,
+        page_failures=page_failures,
     )
     # Opt-in per-field value domains. No-op unless the caller declared one; the
     # `rows_schema` path needs nothing here because JSON Schema `enum` already
@@ -765,7 +853,7 @@ def ocr_pdf_text(pdf_bytes: bytes, max_pages: int | None = None) -> str:
     limit = page_count if max_pages is None else min(page_count, max_pages)
     pages: list[str] = []
     for page_index in range(limit):
-        text = ocr_png_bytes(_png_from_pdf_page(pdf_bytes, page_index))
+        text = ocr_png_bytes(render_pdf_page_png(pdf_bytes, page_index))
         if text.strip():
             pages.append(f"--- PAGE {page_index + 1} ---\n{text.strip()}")
     return "\n\n".join(pages)
@@ -890,6 +978,8 @@ def _mistral_document_markdown_with_audit(
             audit.append(
                 {
                     "page_index": page_index,
+                    "page_number": page_index + 1,
+                    "page_index_base": 0,
                     "confidence_grade": None,
                     "average_confidence": None,
                     "minimum_confidence": None,
@@ -919,6 +1009,8 @@ def _mistral_document_markdown_with_audit(
         audit.append(
             {
                 "page_index": page_index,
+                "page_number": page_index + 1,
+                "page_index_base": 0,
                 "confidence_grade": grade,
                 "average_confidence": (
                     confidence_dict.get("average_page_confidence_score")
@@ -943,6 +1035,8 @@ def _mistral_document_markdown_with_audit(
         audit.append(
             {
                 "page_index": None,
+                "page_number": None,
+                "page_index_base": 0,
                 "confidence_grade": None,
                 "average_confidence": None,
                 "minimum_confidence": None,
@@ -1396,6 +1490,8 @@ def extract_pdf_markdown_with_audit(
         audit.append(
             {
                 "page_index": page_index,
+                "page_number": page_index + 1,
+                "page_index_base": 0,
                 "confidence_grade": None,
                 "average_confidence": None,
                 "minimum_confidence": None,
