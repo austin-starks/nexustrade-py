@@ -180,6 +180,121 @@ class SemanticProjectionTest(unittest.TestCase):
             }
         )
 
+    def test_semantic_verifier_isolates_and_reorders_multiple_assertions(self) -> None:
+        assertions = [
+            {
+                "assertionId": assertion_id,
+                "completeRecordEvidence": {"event": event},
+                "criteria": [
+                    {
+                        "criterionId": "purchase",
+                        "positiveCondition": "The event is a purchase.",
+                        "proposedOutcome": "true",
+                        "proposedReason": f"The event was {event}.",
+                        "citedPaths": ["/event"],
+                    }
+                ],
+            }
+            for assertion_id, event in (
+                ("row-1", "Purchased"),
+                ("row-2", "Acquired"),
+                ("row-3", "Bought"),
+            )
+        ]
+        completed: list[int] = []
+
+        def fake_gateway(payload: dict[str, object]) -> object:
+            request = dict(payload)
+            index = int(str(request["evidenceId"]).rsplit(":", 1)[1])
+            completed.append(index)
+            request_assertions = request["assertions"]
+            if not isinstance(request_assertions, list):
+                raise AssertionError("expected assertion list")
+            assertion = request_assertions[0]
+            if not isinstance(assertion, dict):
+                raise AssertionError("expected assertion object")
+            return {
+                "evidenceId": request["evidenceId"],
+                "assertions": [
+                    {
+                        "assertionId": assertion["assertionId"],
+                        "criteria": [],
+                    }
+                ],
+            }
+
+        with patch(
+            "nexustrade.host.gateway_semantic_verify",
+            side_effect=fake_gateway,
+        ) as gateway:
+            result = verify_semantic_citations(
+                evidence_id="bundle-1",
+                request="Return purchase events.",
+                assertions=assertions,
+            )
+
+        self.assertEqual(gateway.call_count, 3)
+        self.assertCountEqual(completed, [0, 1, 2])
+        self.assertEqual(result["evidenceId"], "bundle-1")
+        self.assertEqual(
+            [item["assertionId"] for item in result["assertions"]],
+            ["row-1", "row-2", "row-3"],
+        )
+
+    def test_semantic_verifier_fails_closed_when_one_assertion_fails(self) -> None:
+        assertions = [
+            {
+                "assertionId": assertion_id,
+                "completeRecordEvidence": {"event": "Purchased"},
+                "criteria": [
+                    {
+                        "criterionId": "purchase",
+                        "positiveCondition": "The event is a purchase.",
+                        "proposedOutcome": "true",
+                        "proposedReason": "The event was Purchased.",
+                        "citedPaths": ["/event"],
+                    }
+                ],
+            }
+            for assertion_id in ("row-1", "row-2")
+        ]
+
+        def fake_gateway(payload: dict[str, object]) -> object:
+            request = dict(payload)
+            if str(request["evidenceId"]).endswith(":1"):
+                raise RuntimeError("provider unavailable")
+            request_assertions = request["assertions"]
+            if not isinstance(request_assertions, list):
+                raise AssertionError("expected assertion list")
+            assertion = request_assertions[0]
+            if not isinstance(assertion, dict):
+                raise AssertionError("expected assertion object")
+            return {
+                "evidenceId": request["evidenceId"],
+                "assertions": [
+                    {
+                        "assertionId": assertion["assertionId"],
+                        "criteria": [],
+                    }
+                ],
+            }
+
+        with (
+            patch(
+                "nexustrade.host.gateway_semantic_verify",
+                side_effect=fake_gateway,
+            ),
+            self.assertRaisesRegex(
+                SemanticProjectionError,
+                "failed for assertion 1: provider unavailable",
+            ),
+        ):
+            verify_semantic_citations(
+                evidence_id="bundle-1",
+                request="Return purchase events.",
+                assertions=assertions,
+            )
+
     def test_audits_only_direct_blockers_without_rewriting_source(self) -> None:
         rows = [
             {

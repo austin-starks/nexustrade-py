@@ -835,15 +835,74 @@ def verify_semantic_citations(
     ]
     if not normalized_assertions:
         raise ValueError("assertions must be a non-empty sequence")
-    payload: dict[str, Any] = {
-        "evidenceId": evidence_id.strip(),
-        "request": request.strip(),
-        "assertions": normalized_assertions,
-    }
+    normalized_evidence_id = evidence_id.strip()
+    normalized_request = request.strip()
     if source_authority is not None and not isinstance(source_authority, str):
         raise ValueError("source_authority must be a string when supplied")
-    if source_authority is not None and source_authority.strip():
-        payload["sourceAuthority"] = source_authority.strip()
+    normalized_source_authority = (
+        source_authority.strip()
+        if source_authority is not None and source_authority.strip()
+        else None
+    )
     from nexustrade.host import gateway_semantic_verify
 
-    return gateway_semantic_verify(payload)
+    def verify_one(index: int, assertion: Mapping[str, Any]) -> dict[str, Any]:
+        child_evidence_id = (
+            normalized_evidence_id
+            if len(normalized_assertions) == 1
+            else f"{normalized_evidence_id}:assertion:{index}"
+        )
+        payload: dict[str, Any] = {
+            "evidenceId": child_evidence_id,
+            "request": normalized_request,
+            "assertions": [copy.deepcopy(dict(assertion))],
+        }
+        if normalized_source_authority is not None:
+            payload["sourceAuthority"] = normalized_source_authority
+        result = gateway_semantic_verify(payload)
+        if len(normalized_assertions) == 1:
+            return result
+        if result.get("evidenceId") != child_evidence_id:
+            raise SemanticProjectionError(
+                f"semantic verifier changed evidence id for assertion {index}"
+            )
+        verified_assertions = result.get("assertions")
+        if not isinstance(verified_assertions, list) or len(verified_assertions) != 1:
+            raise SemanticProjectionError(
+                f"semantic verifier changed cardinality for assertion {index}"
+            )
+        expected_assertion_id = assertion.get("assertionId")
+        verified_assertion = verified_assertions[0]
+        if (
+            not isinstance(verified_assertion, Mapping)
+            or verified_assertion.get("assertionId") != expected_assertion_id
+        ):
+            raise SemanticProjectionError(
+                f"semantic verifier changed identity for assertion {index}"
+            )
+        return copy.deepcopy(dict(verified_assertion))
+
+    if len(normalized_assertions) == 1:
+        return verify_one(0, normalized_assertions[0])
+
+    verified_by_index: dict[int, dict[str, Any]] = {}
+    workers = min(DEFAULT_MAX_WORKERS, len(normalized_assertions))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(verify_one, index, assertion): index
+            for index, assertion in enumerate(normalized_assertions)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                verified_by_index[index] = future.result()
+            except Exception as exc:
+                raise SemanticProjectionError(
+                    f"semantic verifier failed for assertion {index}: {exc}"
+                ) from exc
+    return {
+        "evidenceId": normalized_evidence_id,
+        "assertions": [
+            verified_by_index[index] for index in range(len(normalized_assertions))
+        ],
+    }
