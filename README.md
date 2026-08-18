@@ -86,7 +86,9 @@ audited = nt.audit_inclusions(
 A blocked audit result always includes a host-validated record-local evidence
 reference. Its `value` is copied by the SDK from the proposed row, not authored
 by the model. The exact result shape is one `{raw, derived}` pair per input;
-`derived` contains `inclusion_supported`, `reason`, and `evidence_refs`.
+`derived` contains the model-reported `required_predicate_contradicted` and
+`explicit_exclusion_present` components, `reason`, and `evidence_refs`. The SDK
+mechanically adds `inclusion_supported` as the negation of those two blockers.
 
 The model can only return task-specific derived fields keyed to a host-owned
 input index; it cannot rewrite or drop the raw record.

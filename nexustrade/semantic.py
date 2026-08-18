@@ -75,7 +75,8 @@ invent evidence, or copy a neighboring record."""
 _INCLUSION_AUDIT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "inclusion_supported": {"type": "boolean"},
+        "required_predicate_contradicted": {"type": "boolean"},
+        "explicit_exclusion_present": {"type": "boolean"},
         "reason": {"type": "string"},
     },
 }
@@ -97,7 +98,14 @@ Audit required predicates as well as exclusions. When the source
 explicitly names a different event from the event the caller requires, that is a direct
 contradiction even if the events have a related economic outcome. Cite the direct evidence
 through the required record-local evidence reference and return a concise reason; never rewrite
-the source record or invent a replacement result."""
+the source record or invent a replacement result.
+Report the two blocking dimensions independently. Set required_predicate_contradicted=true only
+for direct contradictory evidence. Set explicit_exclusion_present=true when the record directly
+matches an exclusion in the caller's exact task. Do not add a qualifier to an exclusion or let a
+different satisfied predicate override it: if the caller excludes X, direct evidence of X remains
+an exclusion even when the same record also has Y, unless the caller explicitly states that
+exception. Do not return an inclusion_supported field; the SDK computes that final decision
+mechanically as not (required_predicate_contradicted or explicit_exclusion_present)."""
 
 
 def _strict_schema_node(schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -671,11 +679,14 @@ def audit_inclusions(
     audit_instruction = (
         _instruction_text(instruction) + "\n\n" + _INCLUSION_AUDIT_INSTRUCTION
     )
-    return derive_rows(
+    audited = derive_rows(
         rows,
         instruction=audit_instruction,
         derived_schema=_INCLUSION_AUDIT_SCHEMA,
-        evidence_requirements={"inclusion_supported": "falsey"},
+        evidence_requirements={
+            "required_predicate_contradicted": "truthy",
+            "explicit_exclusion_present": "truthy",
+        },
         model=model,
         system=system,
         batch_size=batch_size,
@@ -683,3 +694,19 @@ def audit_inclusions(
         max_split_depth=max_split_depth,
         max_validation_retries=max_validation_retries,
     )
+    for index, pair in enumerate(audited):
+        derived = pair.get("derived")
+        if not isinstance(derived, Mapping):
+            raise SemanticProjectionError(
+                f"inclusion audit row {index} has no derived decision"
+            )
+        contradiction = derived.get("required_predicate_contradicted")
+        exclusion = derived.get("explicit_exclusion_present")
+        if not all(isinstance(value, bool) for value in (contradiction, exclusion)):
+            raise SemanticProjectionError(
+                f"inclusion audit row {index} has non-boolean decision components"
+            )
+        derived_with_decision = dict(derived)
+        derived_with_decision["inclusion_supported"] = not (contradiction or exclusion)
+        pair["derived"] = derived_with_decision
+    return audited

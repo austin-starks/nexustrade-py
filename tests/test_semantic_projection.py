@@ -44,11 +44,12 @@ class SemanticProjectionTest(unittest.TestCase):
                     {
                         "input_index": 0,
                         "derived": {
-                            "inclusion_supported": False,
+                            "required_predicate_contradicted": False,
+                            "explicit_exclusion_present": True,
                             "reason": "The raw record directly matches an exclusion.",
                             "evidence_refs": [
                                 {
-                                    "predicate": "inclusion_supported",
+                                    "predicate": "explicit_exclusion_present",
                                     "path": "/raw_record/description",
                                 }
                             ],
@@ -69,7 +70,7 @@ class SemanticProjectionTest(unittest.TestCase):
             result[0]["derived"]["evidence_refs"],
             [
                 {
-                    "predicate": "inclusion_supported",
+                    "predicate": "explicit_exclusion_present",
                     "path": "/raw_record/description",
                     "value": "Holding L.P. Units",
                 }
@@ -92,11 +93,34 @@ class SemanticProjectionTest(unittest.TestCase):
         self.assertEqual(
             set(derived["properties"]),
             {
-                "inclusion_supported",
+                "required_predicate_contradicted",
+                "explicit_exclusion_present",
                 "reason",
                 "evidence_refs",
             },
         )
+
+    def test_mechanically_supports_an_inclusion_without_a_blocking_component(self) -> None:
+        response = {
+            "rows": [
+                {
+                    "input_index": 0,
+                    "derived": {
+                        "required_predicate_contradicted": False,
+                        "explicit_exclusion_present": False,
+                        "reason": "No direct blocker is present.",
+                        "evidence_refs": [],
+                    },
+                }
+            ]
+        }
+        with patch("nexustrade.host.gateway_chat_json", return_value=response):
+            result = audit_inclusions(
+                [{"description": "Eligible record with no direct blocker"}],
+                instruction="Include records matching one predicate but exclude this category.",
+                max_validation_retries=0,
+            )
+        self.assertTrue(result[0]["derived"]["inclusion_supported"])
 
     def test_resolves_record_local_evidence_refs_and_attaches_values(self) -> None:
         rows = [
