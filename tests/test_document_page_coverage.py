@@ -300,3 +300,34 @@ class InspectDocumentPageCoordinatesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NormalizePdfPagesTest(unittest.TestCase):
+    """An over-broad page request is ordinary, not an error.
+
+    A caller asking for the first three pages before it knows the page count is being
+    reasonable. Raising took down a whole sandbox exec step over a one-page filing.
+    """
+
+    def setUp(self) -> None:
+        self.normalize = importlib.import_module(
+            "nexustrade.inspect_document"
+        )._normalize_pdf_pages
+
+    def test_keeps_the_pages_that_exist(self) -> None:
+        self.assertEqual(self.normalize(1, [1, 2, 3], 10), [1])
+        self.assertEqual(self.normalize(2, [1, 2, 3], 10), [1, 2])
+
+    def test_raises_when_no_requested_page_exists(self) -> None:
+        with self.assertRaises(IndexError) as caught:
+            self.normalize(1, [4, 5], 10)
+        self.assertIn("none of the requested pages exist", str(caught.exception))
+
+    def test_still_rejects_a_zero_or_negative_page(self) -> None:
+        with self.assertRaises(IndexError):
+            self.normalize(3, [0], 10)
+        with self.assertRaises(IndexError):
+            self.normalize(3, [-1], 10)
+
+    def test_respects_the_cap_and_dedupes(self) -> None:
+        self.assertEqual(self.normalize(9, [1, 1, 2, 3], 2), [1, 2])

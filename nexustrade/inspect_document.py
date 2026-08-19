@@ -126,17 +126,26 @@ def _normalize_pdf_pages(
         return list(range(1, min(page_count, cap) + 1))
     normalized: list[int] = []
     for page in pages:
-        if page < 1 or page > page_count:
+        # Below 1 is a caller mistake about the 1-based contract, not an over-broad range.
+        if page < 1:
             raise IndexError(
-                f"page {page} out of range for PDF with {page_count} page(s) "
+                f"page {page} is invalid for a PDF with {page_count} page(s) "
                 "(pages are 1-based)"
             )
+        # Past the end is an ordinary over-request: a caller asking for the first three pages
+        # before it knows the page count is being reasonable, and raising took down the whole
+        # exec step over a one-page document. Return the pages that exist.
+        if page > page_count:
+            continue
         if page not in normalized:
             normalized.append(page)
         if len(normalized) >= cap:
             break
     if not normalized:
-        raise ValueError("pages must include at least one 1-based page index")
+        raise IndexError(
+            f"none of the requested pages exist in a PDF with {page_count} page(s) "
+            "(pages are 1-based)"
+        )
     return normalized
 
 
