@@ -1217,9 +1217,12 @@ def _gateway_search(
                 f"search({query!r}) poll HTTP {exc.code}: {detail}"
             ) from exc
 
-    raise RuntimeError(
-        f"search({query!r}) timed out after {timeout_sec}s waiting for results"
-    )
+    # Not ready is not failure. The caller already treats None as "no gateway answer, use
+    # the broker", queues the same stable id, and lets the next host round collect it. Raising
+    # here killed the whole exec step instead, and a slow Discover Sources took two steps and
+    # six minutes off a real run before the operator rewrote its query to something the
+    # gateway happened to answer faster.
+    return None
 
 
 def search(
