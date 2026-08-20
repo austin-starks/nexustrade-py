@@ -2855,14 +2855,17 @@ __all__.append("gene_deployment_pct")
 
 def gene_roll_trigger_dte(
     *,
-    strategy_index: int,
     values: Sequence[Any],
+    strategy_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Sweep RollTriggerDte (Action scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Action", "field": "RollTriggerDte"}
+    if strategy_index is not None:
+        target["strategy_index"] = strategy_index
     return {
         "field": "RollTriggerDte",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "RollTriggerDte", "strategy_index": strategy_index},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2870,14 +2873,17 @@ __all__.append("gene_roll_trigger_dte")
 
 def gene_take_profit_pct(
     *,
-    strategy_index: int,
     values: Sequence[Any],
+    strategy_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Sweep TakeProfitPct (Action scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Action", "field": "TakeProfitPct"}
+    if strategy_index is not None:
+        target["strategy_index"] = strategy_index
     return {
         "field": "TakeProfitPct",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "TakeProfitPct", "strategy_index": strategy_index},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
