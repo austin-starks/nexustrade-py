@@ -2889,6 +2889,24 @@ def gene_take_profit_pct(
 
 __all__.append("gene_take_profit_pct")
 
+def gene_stop_loss_pct(
+    *,
+    values: Sequence[Any],
+    strategy_index: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Sweep StopLossPct (Action scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Action", "field": "StopLossPct"}
+    if strategy_index is not None:
+        target["strategy_index"] = strategy_index
+    return {
+        "field": "StopLossPct",
+        "scope": "Action",
+        "target": target,
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_stop_loss_pct")
+
 def gene_structure_kind(
     *,
     strategy_index: int,
@@ -2981,6 +2999,22 @@ def gene_dte_bracket(
     }
 
 __all__.append("gene_dte_bracket")
+
+def gene_max_spread_pct(
+    *,
+    strategy_index: int,
+    leg_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep MaxSpreadPct (OptionLeg scope) over a value set."""
+    return {
+        "field": "MaxSpreadPct",
+        "scope": "OptionLeg",
+        "target": {"scope": "OptionLeg", "field": "MaxSpreadPct", "strategy_index": strategy_index, "leg_index": leg_index},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_max_spread_pct")
 
 def gene_select_top_limit(
     *,
