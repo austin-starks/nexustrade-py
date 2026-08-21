@@ -8,7 +8,6 @@ import io
 import json
 import os
 import re
-import secrets
 import tempfile
 import time
 import urllib.error
@@ -1059,7 +1058,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v2"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v3"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -1105,7 +1104,6 @@ def _document_request_key(
     key: str,
     pdf_bytes: bytes,
     *,
-    invocation_nonce: str,
     markdown: bool,
     max_pages: int | None,
     target_schema: Any,
@@ -1118,10 +1116,9 @@ def _document_request_key(
 ) -> str:
     descriptor = {
         "protocol": DOCUMENT_EXTRACTION_PROTOCOL_VERSION,
-        # Schema-bound LLM rows are deliberately non-cacheable. The nonce
-        # makes this a durable execution identity, not a deterministic lookup
-        # key that could replay a prior model answer.
-        "invocation_nonce": invocation_nonce,
+        # The gateway scopes lookups to one compute session. Keeping this key
+        # deterministic inside that scope lets a code-only remediation reuse
+        # the exact validated extraction without leaking answers across runs.
         "document_id": key,
         "document_sha256": hashlib.sha256(pdf_bytes).hexdigest(),
         "markdown": markdown,
@@ -1178,6 +1175,19 @@ def _document_result_record(
     )
     if response is not None and response.get("ok") is not True:
         raise RuntimeError("document extraction result was not durably committed")
+
+
+def _document_result_lookup(request_key: str) -> dict[str, Any] | None:
+    response = _gateway_json(
+        "document-extractions/lookup",
+        {"requestKey": request_key},
+    )
+    if response is None or response.get("hit") is not True:
+        return None
+    payload = response.get("payload")
+    if not isinstance(payload, dict):
+        raise RuntimeError("document extraction replay payload is not an object")
+    return payload
 
 
 def _document_batch_progress(
@@ -1293,12 +1303,10 @@ def extract_pdfs(
     )
     stop = False
 
-    invocation_nonce = secrets.token_hex(16)
     request_keys = {
         key: _document_request_key(
             key,
             pdf_bytes,
-            invocation_nonce=invocation_nonce,
             markdown=markdown,
             max_pages=max_pages,
             target_schema=target_schema,
@@ -1359,13 +1367,17 @@ def extract_pdfs(
             "error": None,
         }
 
-    def run_one(key: str, pdf_bytes: bytes) -> dict[str, Any]:
+    def run_one(key: str, pdf_bytes: bytes) -> tuple[dict[str, Any], bool]:
         """Retry transient failures here so the caller never has to re-drive the loop.
 
         A single network blip used to cost a whole document silently. Budget
         exhaustion is NEVER retried — a 429 is backpressure, and retrying it just
         spends the remaining allowance faster.
         """
+        replay = _document_result_lookup(request_keys[key])
+        if replay is not None:
+            return replay, True
+
         last: Exception | None = None
         result: dict[str, Any] | None = None
         for attempt in range(max_attempts):
@@ -1397,7 +1409,7 @@ def extract_pdfs(
             raise RuntimeError(
                 f"validated extraction could not be durably committed: {exc}"
             ) from exc
-        return result
+        return result, False
 
     empty = "markdown" if markdown else "rows"
     blank = "" if markdown else []
@@ -1423,9 +1435,11 @@ def extract_pdfs(
             done = next(as_completed(list(in_flight)))
             key = in_flight.pop(done)
             try:
-                result = done.result()
+                result, replayed = done.result()
                 results[key] = result
                 completed += 1
+                if replayed:
+                    cache_hits += 1
             except OcrBudgetExhausted as exc:
                 stop = True
                 results[key] = unstarted(f"budget_exhausted: {exc}")

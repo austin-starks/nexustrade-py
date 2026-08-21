@@ -4,9 +4,10 @@ from unittest import mock
 
 
 class ScannedTableExtractionReplayTests(unittest.TestCase):
-    def test_repeated_batches_rerun_extraction_and_record_distinct_results(self) -> None:
+    def test_repeated_batches_replay_exact_result_within_gateway_scope(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         gateway_calls: list[tuple[str, dict[str, object]]] = []
+        recorded: dict[str, dict[str, object]] = {}
 
         def gateway(
             path: str,
@@ -16,6 +17,18 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         ) -> dict[str, object]:
             del timeout_sec
             gateway_calls.append((path, payload))
+            if path == "document-extractions/lookup":
+                cached = recorded.get(str(payload["requestKey"]))
+                return (
+                    {"ok": True, "hit": True, "payload": cached}
+                    if cached is not None
+                    else {"ok": True, "hit": False}
+                )
+            if path == "document-extractions/record":
+                result_payload = payload["payload"]
+                if not isinstance(result_payload, dict):
+                    raise AssertionError("record payload must be an object")
+                recorded[str(payload["requestKey"])] = result_payload
             return {"ok": True}
 
         with (
@@ -23,32 +36,40 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             mock.patch.object(
                 scanned_table,
                 "extract_pdf",
-                side_effect=[[{"ticker": "FIRST"}], [{"ticker": "SECOND"}]],
+                return_value=[{"ticker": "FIRST"}],
             ) as extract_pdf,
-            mock.patch.object(
-                scanned_table.secrets,
-                "token_hex",
-                side_effect=["a" * 32, "b" * 32],
-            ),
         ):
             first = scanned_table.extract_pdfs({"filing": b"same-pdf"})
             second = scanned_table.extract_pdfs({"filing": b"same-pdf"})
 
-        self.assertEqual(extract_pdf.call_count, 2)
+        self.assertEqual(extract_pdf.call_count, 1)
         self.assertEqual(first["filing"]["rows"], [{"ticker": "FIRST"}])
-        self.assertEqual(second["filing"]["rows"], [{"ticker": "SECOND"}])
-        self.assertNotIn(
-            "document-extractions/lookup",
-            [path for path, _payload in gateway_calls],
+        self.assertEqual(second, first)
+        self.assertEqual(
+            [path for path, _payload in gateway_calls].count(
+                "document-extractions/lookup"
+            ),
+            2,
         )
         records = [
             payload
             for path, payload in gateway_calls
             if path == "document-extractions/record"
         ]
-        self.assertEqual(len(records), 2)
-        self.assertNotEqual(records[0]["requestKey"], records[1]["requestKey"])
-        self.assertNotEqual(records[0]["batchKey"], records[1]["batchKey"])
+        self.assertEqual(len(records), 1)
+        begins = [
+            payload
+            for path, payload in gateway_calls
+            if path == "document-extractions/begin"
+        ]
+        self.assertEqual(len(begins), 2)
+        self.assertEqual(begins[0]["batchKey"], begins[1]["batchKey"])
+        final_progress = [
+            payload
+            for path, payload in gateway_calls
+            if path == "document-extractions/progress" and payload["done"] is True
+        ]
+        self.assertEqual(final_progress[-1]["cacheHits"], 1)
 
     def test_pdf_transport_exhaustion_falls_back_once_to_ocr_only(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
