@@ -30,7 +30,15 @@ from nexustrade.client import (
     wait_for_operation,
 )
 from nexustrade.portfolio import *
-from nexustrade.portfolio_handle import DeployResult, Portfolio, PortfolioList
+from nexustrade.portfolio_handle import (
+    DeployResult,
+    Portfolio,
+    PortfolioAutomatedApproval,
+    PortfolioIndustryFilter,
+    PortfolioList,
+    PortfolioPolicy,
+    PortfolioStockEligibility,
+)
 
 __all__ = [
     *_portfolio.__all__,
@@ -43,7 +51,11 @@ __all__ = [
     "NexusTradeApiError",
     "NexusTradeClient",
     "Portfolio",
+    "PortfolioAutomatedApproval",
+    "PortfolioIndustryFilter",
     "PortfolioList",
+    "PortfolioPolicy",
+    "PortfolioStockEligibility",
     "create_custom_indicator",
     "create_portfolio",
     "wait_for_operation",

@@ -8,9 +8,54 @@ returns this class. It subclasses ``dict`` so ``portfolio["name"]``,
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional, TypedDict, cast
 
-__all__ = ["DeployResult", "Portfolio", "PortfolioList"]
+__all__ = [
+    "DeployResult",
+    "Portfolio",
+    "PortfolioIndustryFilter",
+    "PortfolioList",
+    "PortfolioPolicy",
+    "PortfolioStockEligibility",
+    "PortfolioAutomatedApproval",
+]
+
+
+class PortfolioIndustryFilter(TypedDict):
+    """Read-only industry eligibility snapshot returned by the API."""
+
+    mode: Literal["ALL", "INCLUDE_ONLY"]
+    match: Literal["ANY", "ALL"]
+    industries: list[str]
+
+
+class PortfolioStockEligibility(TypedDict):
+    """Dynamic stock and option-underlying eligibility rules."""
+
+    minimumMarketCapUsd: int
+    maximumMarketCapUsd: int | None
+    industryFilter: PortfolioIndustryFilter
+    missingMarketCapBehavior: Literal["EXCLUDE"]
+    missingIndustryBehavior: Literal["EXCLUDE_WHEN_FILTER_SET"]
+    appliesTo: Literal["DYNAMIC_STOCK_UNIVERSES"]
+
+
+class PortfolioAutomatedApproval(TypedDict):
+    """Read-only automation configuration returned with a portfolio."""
+
+    enabled: bool
+    maxAutomatedTradesPerDay: int
+    countingUnit: Literal["TRADE_ACTION"]
+    dailyWindow: Literal["AMERICA_NEW_YORK_CALENDAR_DAY"]
+
+
+class PortfolioPolicy(TypedDict):
+    """Server-owned trading policy. SDK authoring calls never submit it."""
+
+    schemaVersion: Literal[2]
+    revision: int
+    stockEligibility: PortfolioStockEligibility
+    automatedApproval: PortfolioAutomatedApproval
 
 
 class DeployResult(dict):
@@ -78,6 +123,16 @@ class Portfolio(dict):
     def __repr__(self) -> str:
         return f"Portfolio({dict(self)!r})"
 
+    @property
+    def policy(self) -> PortfolioPolicy | None:
+        value = self.get("policy")
+        return cast(PortfolioPolicy, value) if isinstance(value, Mapping) else None
+
+    def _authoring_payload(self) -> dict[str, Any]:
+        payload = dict(self)
+        payload.pop("policy", None)
+        return payload
+
     def _resolve_client(self, client: Any = None) -> Any:
         if client is not None:
             return client
@@ -97,7 +152,7 @@ class Portfolio(dict):
         """Persist this portfolio as a chat draft. Sets ``.id`` to the ChatPortfolio id."""
         resolved = self._resolve_client(client)
         result = resolved.create_portfolio(
-            self,
+            self._authoring_payload(),
             idempotency_key=idempotency_key,
         )
         portfolio_id = result.get("portfolioId")
@@ -156,7 +211,7 @@ class Portfolio(dict):
             }
         else:
             body = {
-                "portfolio": dict(self),
+                "portfolio": self._authoring_payload(),
                 "startDate": start_date,
                 "endDate": end_date,
             }

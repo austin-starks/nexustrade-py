@@ -296,6 +296,11 @@ client.list_portfolios(include_paper=True, include_positions=True)
 client.get_portfolio(portfolio_id)
 ```
 
+Fetched portfolios include a read-only `policy` snapshot. Trading policy
+changes are intentionally unavailable through the SDK; edit them in Portfolio
+Settings. Portfolio authoring and backtest payloads omit this server-owned
+snapshot even when they start from a fetched handle.
+
 `list_portfolios` filters with `include_paper`, `include_live`,
 `include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
 `include_positions` defaults off when `search` is set.

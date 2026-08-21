@@ -58,6 +58,42 @@ class PortfolioHandleTests(unittest.TestCase):
         self.assertNotIn("id", transport.calls[0]["body"])
         self.assertNotIn("portfolioId", transport.calls[0]["body"])
 
+    def test_fetched_policy_is_readable_but_never_authored(self) -> None:
+        policy = {
+            "schemaVersion": 2,
+            "revision": 4,
+            "stockEligibility": {
+                "minimumMarketCapUsd": 500_000_000,
+                "maximumMarketCapUsd": None,
+                "industryFilter": {
+                    "mode": "INCLUDE_ONLY",
+                    "match": "ALL",
+                    "industries": ["artificialIntelligence", "biotechnology"],
+                },
+                "missingMarketCapBehavior": "EXCLUDE",
+                "missingIndustryBehavior": "EXCLUDE_WHEN_FILTER_SET",
+                "appliesTo": "DYNAMIC_STOCK_UNIVERSES",
+            },
+            "automatedApproval": {
+                "enabled": False,
+                "maxAutomatedTradesPerDay": 2,
+                "countingUnit": "TRADE_ACTION",
+                "dailyWindow": "AMERICA_NEW_YORK_CALENDAR_DAY",
+            },
+        }
+        transport = FakeTransport(
+            [{"portfolio": {"portfolioId": "chat-1", "portfolioName": "Policy"}}]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+        book = Portfolio(
+            {"name": "Policy", "strategies": [], "policy": policy},
+            client=client,
+        )
+
+        self.assertEqual(book.policy, policy)
+        book.save(idempotency_key="policy-v1")
+        self.assertNotIn("policy", transport.calls[0]["body"])
+
     def test_backtest_uses_portfolio_id_once_saved(self) -> None:
         transport = FakeTransport(
             [
