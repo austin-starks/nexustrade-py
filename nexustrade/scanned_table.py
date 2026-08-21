@@ -1058,7 +1058,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v3"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v4"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -1112,7 +1112,9 @@ def _document_request_key(
     rows_retries: int,
     rows_include_pdf: bool,
     rows_pdf_max_bytes: int,
-    extra_fields: dict[str, Any] | None,
+    rows_force_ocr: bool = True,
+    rows_schema_name: str = "extract_rows",
+    extra_fields: dict[str, Any] | None = None,
 ) -> str:
     descriptor = {
         "protocol": DOCUMENT_EXTRACTION_PROTOCOL_VERSION,
@@ -1135,6 +1137,8 @@ def _document_request_key(
         "rows_retries": rows_retries,
         "rows_include_pdf": rows_include_pdf,
         "rows_pdf_max_bytes": rows_pdf_max_bytes,
+        "rows_force_ocr": rows_force_ocr,
+        "rows_schema_name": rows_schema_name,
         "extra_fields": extra_fields,
     }
     encoded = json.dumps(
@@ -1162,6 +1166,7 @@ def _document_result_record(
     document_id: str,
     payload: dict[str, Any],
     total: int,
+    track_progress: bool = True,
 ) -> None:
     response = _gateway_json(
         "document-extractions/record",
@@ -1171,6 +1176,7 @@ def _document_result_record(
             "documentId": document_id,
             "payload": payload,
             "total": total,
+            "trackProgress": track_progress,
         },
     )
     if response is not None and response.get("ok") is not True:
@@ -1315,6 +1321,8 @@ def extract_pdfs(
             rows_retries=rows_retries,
             rows_include_pdf=rows_include_pdf,
             rows_pdf_max_bytes=rows_pdf_max_bytes,
+            rows_force_ocr=True,
+            rows_schema_name="extract_rows",
             extra_fields=(extra_fields_by_key or {}).get(key),
         )
         for key, pdf_bytes in items
@@ -1339,6 +1347,7 @@ def extract_pdfs(
                 retries=rows_retries,
                 include_pdf=rows_include_pdf,
                 pdf_max_bytes=rows_pdf_max_bytes,
+                _durable_replay=False,
             )
             return {
                 "rows": extracted.rows,
@@ -1886,6 +1895,7 @@ def extract_rows(
     retries: int = 1,
     include_pdf: bool = True,
     pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
+    _durable_replay: bool = True,
 ) -> ExtractedRows:
     """OCR the document, then structure the markdown with a cheap schema-bound LLM.
 
@@ -1939,6 +1949,49 @@ def extract_rows(
     if pdf_max_bytes < 1:
         raise ValueError("pdf_max_bytes must be positive")
 
+    configured = os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
+    structure_model = model or configured or DEFAULT_EXTRACT_ROWS_MODEL
+    request_key: str | None = None
+    batch_key: str | None = None
+    document_id = source_id or f"sha256:{hashlib.sha256(pdf_bytes).hexdigest()}"
+    if _durable_replay:
+        request_key = _document_request_key(
+            document_id,
+            pdf_bytes,
+            markdown=False,
+            max_pages=max_pages,
+            target_schema=None,
+            rows_schema=normalized_schema,
+            rows_model=structure_model,
+            rows_retries=retries,
+            rows_include_pdf=include_pdf,
+            rows_pdf_max_bytes=pdf_max_bytes,
+            rows_force_ocr=force_ocr,
+            rows_schema_name=schema_name,
+            extra_fields=None,
+        )
+        batch_key = _document_batch_key({document_id: request_key})
+        replay = _document_result_lookup(request_key)
+        if replay is not None:
+            replay_rows = replay.get("rows")
+            replay_markdown = replay.get("markdown")
+            replay_page_audit = replay.get("page_audit")
+            if (
+                not isinstance(replay_rows, list)
+                or not isinstance(replay_markdown, str)
+                or not isinstance(replay_page_audit, list)
+            ):
+                raise RuntimeError("document extraction replay payload is malformed")
+            return ExtractedRows(
+                rows=replay_rows,
+                markdown=replay_markdown,
+                source_id=source_id,
+                page_audit=replay_page_audit,
+                apparent_table_rows=int(replay.get("apparent_table_rows") or 0),
+                needs_review=replay.get("needs_review") is True,
+                pdf_attached=replay.get("pdf_attached") is True,
+            )
+
     markdown, page_audit = extract_pdf_markdown_with_audit(
         pdf_bytes, max_pages=max_pages, force_ocr=force_ocr
     )
@@ -1946,9 +1999,6 @@ def extract_rows(
         int(page.get("apparent_table_rows") or 0) for page in page_audit
     )
     needs_review = any(page.get("needs_review") is True for page in page_audit)
-    configured = os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
-    structure_model = model or configured or DEFAULT_EXTRACT_ROWS_MODEL
-
     user_prompt = markdown
     if source_id:
         user_prompt = f"source_id: {source_id}\n\n{markdown}"
@@ -2019,7 +2069,7 @@ def extract_rows(
             row.setdefault("_needs_review", True)
             row.setdefault("_reason", "ocr_page_requires_review")
 
-    return ExtractedRows(
+    extracted = ExtractedRows(
         rows=rows,
         markdown=markdown,
         source_id=source_id,
@@ -2028,3 +2078,21 @@ def extract_rows(
         needs_review=needs_review,
         pdf_attached=pdf_attached,
     )
+    if _durable_replay and request_key is not None and batch_key is not None:
+        _document_result_record(
+            batch_key=batch_key,
+            request_key=request_key,
+            document_id=document_id,
+            payload={
+                "rows": extracted.rows,
+                "markdown": extracted.markdown,
+                "page_audit": extracted.page_audit,
+                "apparent_table_rows": extracted.apparent_table_rows,
+                "needs_review": extracted.needs_review,
+                "pdf_attached": extracted.pdf_attached,
+                "error": None,
+            },
+            total=1,
+            track_progress=False,
+        )
+    return extracted
