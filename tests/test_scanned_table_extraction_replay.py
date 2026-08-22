@@ -1,9 +1,46 @@
 import importlib
+import threading
+import time
 import unittest
 from unittest import mock
 
 
 class ScannedTableExtractionReplayTests(unittest.TestCase):
+    def test_batch_default_bounds_paid_document_concurrency(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def extract(*args: object, **kwargs: object) -> list[dict[str, object]]:
+            nonlocal active, peak
+            del args, kwargs
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.02)
+            with lock:
+                active -= 1
+            return []
+
+        with (
+            mock.patch.dict(
+                "os.environ", {"NEXUSTRADE_DOCUMENT_MAX_WORKERS": "2"}
+            ),
+            mock.patch.object(scanned_table, "_gateway_json"),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(scanned_table, "extract_pdf", side_effect=extract),
+        ):
+            result = scanned_table.extract_pdfs(
+                {str(index): b"pdf" for index in range(6)},
+                max_attempts=1,
+            )
+
+        self.assertEqual(len(result), 6)
+        self.assertEqual(peak, 2)
+
     def test_serial_replay_key_covers_ocr_and_schema_name(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         common = {

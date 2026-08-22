@@ -1299,11 +1299,15 @@ def extract_pdfs(
     if not items:
         return results
 
-    # No artificial per-call throttle. Every independent document is eligible
-    # immediately unless the caller deliberately chooses a smaller public
-    # max_workers value. Provider backpressure remains explicit per document.
+    # Compute sessions route every schema-bound LLM call through a ledger-backed
+    # dollar gate. An unbounded default here used to turn a 100-document corpus
+    # into 100 simultaneous paid-call admission attempts. The host injects a
+    # small session default; standalone callers can still choose explicitly.
+    configured_workers = int(os.environ.get("NEXUSTRADE_DOCUMENT_MAX_WORKERS", "2"))
+    if configured_workers < 1:
+        raise ValueError("NEXUSTRADE_DOCUMENT_MAX_WORKERS must be positive")
     workers = (
-        len(items)
+        min(configured_workers, len(items))
         if max_workers is None
         else max(1, min(int(max_workers), len(items)))
     )
