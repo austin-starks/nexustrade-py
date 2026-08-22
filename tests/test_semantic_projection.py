@@ -848,7 +848,7 @@ class SemanticProjectionTest(unittest.TestCase):
             "Purchased listed contract",
         )
 
-    def test_isolates_evidence_owned_rows_and_retries_only_the_invalid_record(self) -> None:
+    def test_batches_evidence_owned_rows_and_retries_only_the_invalid_record(self) -> None:
         calls: list[dict[str, object]] = []
         attempts: dict[str, int] = {}
 
@@ -856,29 +856,32 @@ class SemanticProjectionTest(unittest.TestCase):
             payload = json.loads(str(kwargs["prompt"]))
             calls.append(payload)
             records = payload["records"]
-            self.assertEqual(len(records), 1)
-            description = records[0]["raw"]["description"]
-            attempts[description] = attempts.get(description, 0) + 1
-            path = (
-                "/missing"
-                if description.endswith("B") and attempts[description] == 1
-                else "/description"
-            )
+
+            def projected_record(record: dict[str, object]) -> dict[str, object]:
+                raw = record["raw"]
+                assert isinstance(raw, dict)
+                description = str(raw["description"])
+                attempts[description] = attempts.get(description, 0) + 1
+                path = (
+                    "/missing"
+                    if description.endswith("B") and attempts[description] == 1
+                    else "/description"
+                )
+                return {
+                    "input_index": record["input_index"],
+                    "derived": {
+                        "economic_event": "purchase",
+                        "eligible": True,
+                        "resolution_status": "resolved",
+                        "evidence": [],
+                        "evidence_refs": [
+                            {"predicate": "eligible", "path": path}
+                        ],
+                    },
+                }
+
             return {
-                "rows": [
-                    {
-                        "input_index": 0,
-                        "derived": {
-                            "economic_event": "purchase",
-                            "eligible": True,
-                            "resolution_status": "resolved",
-                            "evidence": [],
-                            "evidence_refs": [
-                                {"predicate": "eligible", "path": path}
-                            ],
-                        },
-                    }
-                ]
+                "rows": [projected_record(record) for record in records]
             }
 
         rows = [
@@ -895,12 +898,11 @@ class SemanticProjectionTest(unittest.TestCase):
                 max_workers=1,
             )
 
-        self.assertEqual([len(call["records"]) for call in calls], [1, 1, 1])
+        self.assertEqual([len(call["records"]) for call in calls], [2, 1])
         self.assertNotIn("validation_feedback", calls[0])
-        self.assertNotIn("validation_feedback", calls[1])
-        self.assertIn("valid non-empty scalar paths", calls[2]["validation_feedback"])
+        self.assertIn("valid non-empty scalar paths", calls[1]["validation_feedback"])
         self.assertEqual(
-            calls[2]["records"][0]["raw"],
+            calls[1]["records"][0]["raw"],
             {"description": "Purchased listed contract B"},
         )
         self.assertEqual([row["raw"] for row in result], rows)
@@ -908,6 +910,45 @@ class SemanticProjectionTest(unittest.TestCase):
             [row["derived"]["evidence_refs"][0]["value"] for row in result],
             ["Purchased listed contract A", "Purchased listed contract B"],
         )
+
+    def test_caps_evidence_owned_batches_at_eight_records(self) -> None:
+        batch_sizes: list[int] = []
+
+        def fake_gateway_chat_json(**kwargs: object) -> object:
+            payload = json.loads(str(kwargs["prompt"]))
+            records = payload["records"]
+            batch_sizes.append(len(records))
+            return {
+                "rows": [
+                    {
+                        "input_index": record["input_index"],
+                        "derived": {
+                            "economic_event": "purchase",
+                            "eligible": True,
+                            "resolution_status": "resolved",
+                            "evidence": [],
+                            "evidence_refs": [
+                                {"predicate": "eligible", "path": "/description"}
+                            ],
+                        },
+                    }
+                    for record in records
+                ]
+            }
+
+        rows = [{"description": f"Purchased contract {index}"} for index in range(9)]
+        with patch("nexustrade.host.gateway_chat_json", fake_gateway_chat_json):
+            result = derive_rows(
+                rows,
+                instruction="Select the requested event.",
+                derived_schema=DERIVED_SCHEMA,
+                evidence_requirements={"eligible": "truthy"},
+                batch_size=40,
+                max_workers=1,
+            )
+
+        self.assertEqual(batch_sizes, [8, 1])
+        self.assertEqual([row["raw"] for row in result], rows)
 
     def test_retry_feedback_lists_valid_same_row_scalar_paths(self) -> None:
         response = {

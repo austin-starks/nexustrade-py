@@ -10,10 +10,11 @@ from typing import Any, Literal
 
 
 DEFAULT_BATCH_SIZE = 40
-# Evidence-owned projections deliberately use one request per source record.
-# Twenty-four concurrent network-bound requests keeps large corpora moving while
-# the gateway owns transport retries and this module retains all-or-nothing
-# result assembly.
+# Evidence-owned records remain independently indexed and machine-validated, but
+# small shared requests avoid turning a corpus into one paid call per record.
+# Keeping this below the general batch size limits cross-record context while the
+# host still resolves every cited pointer against only its own immutable raw row.
+DEFAULT_EVIDENCE_BATCH_SIZE = 8
 DEFAULT_MAX_WORKERS = 24
 DEFAULT_MAX_SPLIT_DEPTH = 2
 DEFAULT_MAX_VALIDATION_RETRIES = 2
@@ -530,11 +531,12 @@ def derive_rows(
     accepts either prose or a structured mapping. The model may return only that index and
     fields allowed by ``derived_schema``. Optional ``evidence_requirements`` names predicates
     whose load-bearing values need a same-row JSON Pointer; the host validates each pointer
-    and attaches its immutable source value. Evidence-owned projections isolate records into
-    separate model requests so a neighboring record cannot contaminate a load-bearing
-    interpretation. Independent requests still run with bounded parallelism. Projections
-    without evidence requirements retain bounded multi-record batching. Malformed structured
-    responses are split and terminal validation batches are retried a bounded number of times.
+    and attaches its immutable source value. Evidence-owned projections use small bounded
+    batches; each result remains independently indexed, and a cited path is resolved only
+    against that result's raw row. Invalid rows are retried separately while valid rows from
+    the same batch are retained. Projections without evidence requirements retain the caller's
+    bounded multi-record batching. Malformed structured responses are split and terminal
+    validation batches are retried a bounded number of times.
     Transport failures remain owned by the gateway retry policy. The result contains one
     ``{"raw": ..., "derived": ...}`` object per input row in original order, and no
     partial batch is returned.
@@ -718,7 +720,11 @@ def derive_rows(
                 latest_error = retry_error
         raise latest_error
 
-    request_batch_size = 1 if normalized_evidence_requirements else batch_size
+    request_batch_size = (
+        min(batch_size, DEFAULT_EVIDENCE_BATCH_SIZE)
+        if normalized_evidence_requirements
+        else batch_size
+    )
     batches = [
         (start, raw_rows[start : start + request_batch_size])
         for start in range(0, len(raw_rows), request_batch_size)
