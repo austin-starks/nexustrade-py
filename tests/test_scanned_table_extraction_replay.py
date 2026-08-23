@@ -6,6 +6,26 @@ from unittest import mock
 
 
 class ScannedTableExtractionReplayTests(unittest.TestCase):
+    def test_group_prompt_forbids_cross_document_field_copying(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+
+        self.assertIn(
+            "Treat each attachment as an isolated source",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "verify every non-null row field against that same attachment",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "keep those roles distinct",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "never place one column's text into a different semantic field",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+
     def test_extracted_rows_preserves_legacy_positional_construction(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
 
