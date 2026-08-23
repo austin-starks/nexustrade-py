@@ -63,7 +63,8 @@ class ExtractRowsContinuationWordingTests(unittest.TestCase):
         prompt = scanned_table._EXTRACT_ROWS_SYSTEM
         self.assertIn("page-boundary continuations", prompt)
         self.assertIn("never emit a continuation as another row", prompt)
-        self.assertIn("not a semantic classification task", prompt)
+        self.assertIn("Apply caller task instructions", prompt)
+        self.assertIn("never fill a field from world knowledge", prompt)
         self.assertIn("return null", prompt)
         self.assertNotIn("AllianceBernstein", prompt)
 

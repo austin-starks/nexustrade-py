@@ -45,6 +45,7 @@ extracted = nt.extract_pdfs(
     documents,
     document_schema={"report_date": "string", "filing_type": "string"},
     rows_schema={"asset": "string", "transaction_date": "string"},
+    instructions="Return the rows requested by the task, preserving repeated rows.",
 )
 
 for source_id, result in extracted.items():
@@ -52,8 +53,9 @@ for source_id, result in extracted.items():
     rows = result["rows"]          # each includes source_id + _source_row_index
 ```
 
-Run this schema-bound batch before any visual sampling. Use
-`inspect_document` later only for exact pages identified by batch diagnostics.
+The helper sends a small group of PDFs per schema-bound request by default;
+set `documents_per_request=1` for the legacy one-document OCR path. Use
+`inspect_document` only when a concrete ambiguity actually needs visual review.
 `derive_rows` then adds a schema-bound `derived` object while retaining every
 raw record unchanged:
 

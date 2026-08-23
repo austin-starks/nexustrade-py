@@ -1058,7 +1058,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v5"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v6"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -1115,6 +1115,8 @@ def _document_request_key(
     rows_pdf_max_bytes: int,
     rows_force_ocr: bool = True,
     rows_schema_name: str = "extract_rows",
+    instructions: str | None = None,
+    documents_per_request: int = 1,
     extra_fields: dict[str, Any] | None = None,
 ) -> str:
     descriptor = {
@@ -1134,6 +1136,12 @@ def _document_request_key(
             if rows_schema is not None or document_schema is not None
             else None
         ),
+        "group_system_sha256": (
+            hashlib.sha256(_EXTRACT_PDF_GROUP_SYSTEM.encode("utf-8")).hexdigest()
+            if documents_per_request > 1
+            and (rows_schema is not None or document_schema is not None)
+            else None
+        ),
         "rows_model": rows_model or os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
         or DEFAULT_EXTRACT_ROWS_MODEL,
         "rows_retries": rows_retries,
@@ -1141,6 +1149,12 @@ def _document_request_key(
         "rows_pdf_max_bytes": rows_pdf_max_bytes,
         "rows_force_ocr": rows_force_ocr,
         "rows_schema_name": rows_schema_name,
+        "instructions_sha256": (
+            hashlib.sha256(instructions.encode("utf-8")).hexdigest()
+            if instructions
+            else None
+        ),
+        "documents_per_request": documents_per_request,
         "extra_fields": extra_fields,
     }
     encoded = json.dumps(
@@ -1234,6 +1248,241 @@ def _document_batch_progress(
         print(f"document extraction progress update failed: {exc}")
 
 
+_EXTRACT_PDF_GROUP_SYSTEM = (
+    "Complete the caller's schema-bound extraction task from every attached PDF. "
+    "The caller instructions define the requested rows and any inclusion or "
+    "exclusion semantics. Use the PDF bytes as the authoritative visual source. "
+    "Return exactly one document result for every supplied source_id and no other "
+    "source_id. Preserve source row order and repeated complete rows. Join wrapped "
+    "lines or page-boundary continuations to their logical row, but never merge two "
+    "separately printed rows. Copy source facts faithfully, represent absent values "
+    "as null, and never invent facts from world knowledge. Return only the strict "
+    "structured response."
+)
+
+
+def _group_response_schema(
+    normalized_schema: dict[str, Any], source_ids: list[str]
+) -> dict[str, Any]:
+    item_properties: dict[str, Any] = {
+        "source_id": {"type": "string", "enum": source_ids}
+    }
+    normalized_properties = normalized_schema.get("properties")
+    if not isinstance(normalized_properties, Mapping):
+        raise RowsSchemaError("normalized extraction schema has no properties")
+    item_properties.update(dict(normalized_properties))
+    return _strict_object_schema(
+        {
+            "documents": {
+                "type": "array",
+                "minItems": len(source_ids),
+                "maxItems": len(source_ids),
+                "items": _strict_object_schema(item_properties),
+            }
+        }
+    )
+
+
+def _extract_pdf_document_group(
+    group: list[tuple[str, bytes]],
+    *,
+    normalized_schema: dict[str, Any],
+    rows_model: str | None,
+    rows_retries: int,
+    rows_pdf_max_bytes: int,
+    instructions: str | None,
+    extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
+) -> dict[str, dict[str, Any]]:
+    from nexustrade.host import (
+        GatewayChatError,
+        gateway_chat_json,
+        gateway_file_part,
+        gateway_multimodal_messages,
+    )
+
+    oversized = [key for key, data in group if len(data) > rows_pdf_max_bytes]
+    if oversized:
+        raise ValueError(
+            "multi-document extraction requires each PDF to fit rows_pdf_max_bytes; "
+            f"oversized source_ids: {', '.join(oversized)}"
+        )
+    source_ids = [key for key, _ in group]
+    mapping = [
+        {"attachment": f"source-{index + 1}.pdf", "source_id": key}
+        for index, (key, _) in enumerate(group)
+    ]
+    prompt_parts = [
+        "# Source mapping",
+        json.dumps(mapping, ensure_ascii=False),
+    ]
+    if instructions:
+        prompt_parts.extend(["# Task instructions", instructions.strip()])
+    else:
+        prompt_parts.extend(
+            ["# Task instructions", "Return every logical source-table row."]
+        )
+    attachments = [
+        gateway_file_part(
+            data,
+            filename=f"source-{index + 1}.pdf",
+            mime_type="application/pdf",
+        )
+        for index, (_, data) in enumerate(group)
+    ]
+    attempts = max(1, rows_retries + 1)
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            response = gateway_chat_json(
+                gateway_multimodal_messages("\n\n".join(prompt_parts), attachments),
+                system=_EXTRACT_PDF_GROUP_SYSTEM,
+                model=rows_model or os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
+                or DEFAULT_EXTRACT_ROWS_MODEL,
+                json_schema=_group_response_schema(normalized_schema, source_ids),
+                schema_name="extract_pdf_documents",
+                temperature=0,
+                timeout_sec=300,
+            )
+            if not isinstance(response, dict) or not isinstance(
+                response.get("documents"), list
+            ):
+                raise RuntimeError("multi-document extraction omitted documents")
+            grouped: dict[str, dict[str, Any]] = {}
+            for raw in response["documents"]:
+                if not isinstance(raw, dict):
+                    raise RuntimeError("multi-document result is not an object")
+                source_id = raw.get("source_id")
+                if not isinstance(source_id, str) or source_id not in source_ids:
+                    raise RuntimeError(
+                        f"multi-document extraction returned unknown source_id {source_id!r}"
+                    )
+                if source_id in grouped:
+                    raise RuntimeError(
+                        f"multi-document extraction duplicated source_id {source_id!r}"
+                    )
+                rows = _rows_from_structured_result(raw)
+                extra = (extra_fields_by_key or {}).get(source_id, {})
+                for row_index, row in enumerate(rows):
+                    row.update(extra)
+                    row["source_id"] = source_id
+                    row["_source_row_index"] = row_index
+                document = _document_from_structured_result(raw)
+                document.update(extra)
+                document["source_id"] = source_id
+                grouped[source_id] = {
+                    "document": document,
+                    "rows": rows,
+                    "markdown": "",
+                    "page_audit": [],
+                    "apparent_table_rows": 0,
+                    "needs_review": False,
+                    "pdf_attached": True,
+                    "error": None,
+                }
+            missing = [source_id for source_id in source_ids if source_id not in grouped]
+            if missing:
+                raise RuntimeError(
+                    "multi-document extraction omitted source_id(s): "
+                    + ", ".join(missing)
+                )
+            return grouped
+        except GatewayChatError:
+            raise
+        except Exception as exc:  # schema/content retry only
+            last_error = exc
+            if attempt + 1 == attempts:
+                break
+    raise _RowsStructuringError(
+        f"multi-document extraction failed after {attempts} attempt(s): {last_error}"
+    ) from last_error
+
+
+def _extract_pdf_document_groups(
+    items: list[tuple[str, bytes]],
+    *,
+    request_keys: dict[str, str],
+    batch_key: str,
+    normalized_schema: dict[str, Any],
+    rows_model: str | None,
+    rows_retries: int,
+    rows_pdf_max_bytes: int,
+    instructions: str | None,
+    documents_per_request: int,
+    max_workers: int,
+    extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
+) -> dict[str, dict[str, Any]]:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: dict[str, dict[str, Any]] = {}
+    remaining: list[tuple[str, bytes]] = []
+    cache_hits = 0
+    for key, data in items:
+        replay = _document_result_lookup(request_keys[key])
+        if replay is None:
+            remaining.append((key, data))
+        else:
+            results[key] = replay
+            cache_hits += 1
+
+    groups = [
+        remaining[index : index + documents_per_request]
+        for index in range(0, len(remaining), documents_per_request)
+    ]
+    completed = len(results)
+    failed = 0
+
+    def run_group(group: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
+        extracted = _extract_pdf_document_group(
+            group,
+            normalized_schema=normalized_schema,
+            rows_model=rows_model,
+            rows_retries=rows_retries,
+            rows_pdf_max_bytes=rows_pdf_max_bytes,
+            instructions=instructions,
+            extra_fields_by_key=extra_fields_by_key,
+        )
+        for key, payload in extracted.items():
+            _document_result_record(
+                batch_key=batch_key,
+                request_key=request_keys[key],
+                document_id=key,
+                payload=payload,
+                total=len(items),
+                track_progress=False,
+            )
+        return extracted
+
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(groups) or 1))) as pool:
+        futures = {pool.submit(run_group, group): group for group in groups}
+        for future in as_completed(futures):
+            group = futures[future]
+            try:
+                extracted = future.result()
+                results.update(extracted)
+                completed += len(group)
+            except Exception as exc:  # one failed request stays explicit per source
+                for key, _ in group:
+                    results[key] = {"document": {}, "rows": [], "error": str(exc)}
+                    failed += 1
+            _document_batch_progress(
+                batch_key=batch_key,
+                total=len(items),
+                completed=completed,
+                failed=failed,
+                cache_hits=cache_hits,
+                done=False,
+            )
+    _document_batch_progress(
+        batch_key=batch_key,
+        total=len(items),
+        completed=completed,
+        failed=failed,
+        cache_hits=cache_hits,
+        done=True,
+    )
+    return {key: results[key] for key, _ in items}
+
+
 def extract_pdfs(
     documents: "Mapping[str, bytes] | Sequence[tuple[str, bytes]]",
     *,
@@ -1250,20 +1499,25 @@ def extract_pdfs(
     rows_retries: int = 1,
     rows_include_pdf: bool = True,
     rows_pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
+    instructions: str | None = None,
+    documents_per_request: int = 3,
 ) -> dict[str, dict[str, Any]]:
-    """OCR many PDFs concurrently. One gateway call per DOCUMENT, fanned out.
+    """Extract many PDFs with small schema-bound multi-document requests.
 
-    Each document is already a single gateway round trip (every page rides in one
-    request), but documents were processed in a serial for-loop, so a 65-filing
-    corpus paid 65 sequential network waits. The calls are independent and
-    network-bound, so they are all eligible concurrently by default.
+    When `rows_schema` is supplied, up to `documents_per_request` PDFs share one
+    Luna request (default 3). This preserves the simple caller contract while
+    avoiding one paid semantic round trip per document. Pass 1 to use the legacy
+    OCR-plus-one-document path. `instructions` supplies concise task semantics,
+    including requested inclusion/exclusion rules; the helper remains agnostic to
+    the source domain.
 
     Returns {key: {"rows"|"markdown": ..., "error": str | None}} — one entry per
     input, ALWAYS. A document that fails is reported rather than dropped, so a
     partial batch is visible instead of looking like a smaller-but-clean result.
 
-    Transient failures are retried per document (max_attempts, exponential
-    backoff) so a single network blip does not silently cost a whole file.
+    The legacy path retries transient failures per document (max_attempts,
+    exponential backoff). The grouped path uses the gateway's bounded transport
+    retry and reports a failed group explicitly on every affected source.
 
     Budget exhaustion (HTTP 429) is backpressure, not a crash and never retried:
     scheduling stops, already-running work finishes, and every unstarted document
@@ -1308,8 +1562,14 @@ def extract_pdfs(
         rows_schema = (
             normalize_rows_schema(rows_schema) if rows_schema is not None else None
         )
+        if documents_per_request < 1 or documents_per_request > 10:
+            raise ValueError("documents_per_request must be between 1 and 10")
+        if instructions is not None and not instructions.strip():
+            raise ValueError("instructions must be non-empty when supplied")
     else:
         normalized_schema = None
+        if instructions is not None:
+            raise ValueError("instructions requires rows_schema or document_schema")
 
     items: list[tuple[str, bytes]] = (
         list(documents.items()) if hasattr(documents, "items") else list(documents)
@@ -1317,6 +1577,17 @@ def extract_pdfs(
     results: dict[str, dict[str, Any]] = {}
     if not items:
         return results
+
+    use_group_extraction = (
+        normalized_schema is not None
+        and rows_schema is not None
+        and len(items) > 1
+        and documents_per_request > 1
+        and max_pages is None
+        and rows_include_pdf
+        and all(len(pdf_bytes) <= rows_pdf_max_bytes for _, pdf_bytes in items)
+    )
+    replay_documents_per_request = documents_per_request if use_group_extraction else 1
 
     # Compute sessions route every schema-bound LLM call through a ledger-backed
     # dollar gate. An unbounded default here used to turn a 100-document corpus
@@ -1347,6 +1618,8 @@ def extract_pdfs(
             rows_pdf_max_bytes=rows_pdf_max_bytes,
             rows_force_ocr=True,
             rows_schema_name="extract_rows",
+            instructions=instructions,
+            documents_per_request=replay_documents_per_request,
             extra_fields=(extra_fields_by_key or {}).get(key),
         )
         for key, pdf_bytes in items
@@ -1360,6 +1633,21 @@ def extract_pdfs(
     except Exception as exc:  # noqa: BLE001 - record calls remain authoritative
         print(f"document extraction batch registration failed: {exc}")
 
+    if use_group_extraction:
+        return _extract_pdf_document_groups(
+            items,
+            request_keys=request_keys,
+            batch_key=batch_key,
+            normalized_schema=normalized_schema,
+            rows_model=rows_model,
+            rows_retries=rows_retries,
+            rows_pdf_max_bytes=rows_pdf_max_bytes,
+            instructions=instructions,
+            documents_per_request=documents_per_request,
+            max_workers=workers,
+            extra_fields_by_key=extra_fields_by_key,
+        )
+
     def run_once(key: str, pdf_bytes: bytes) -> dict[str, Any]:
         if normalized_schema is not None:
             extracted = extract_rows(
@@ -1372,6 +1660,7 @@ def extract_pdfs(
                 retries=rows_retries,
                 include_pdf=rows_include_pdf,
                 pdf_max_bytes=rows_pdf_max_bytes,
+                instructions=instructions,
                 _durable_replay=False,
             )
             return {
@@ -1576,21 +1865,24 @@ def extract_pdf_markdown(
 DEFAULT_EXTRACT_ROWS_MODEL = "openai/gpt-5.6-luna"
 
 _EXTRACT_ROWS_SYSTEM = (
-    "Recover source document observations and logical source-table rows as JSON "
-    "matching the provided schema. When the schema contains `document`, populate "
+    "Complete the caller's schema-bound task from the source document as JSON "
+    "matching the provided schema. Apply caller task instructions, including "
+    "requested inclusion and exclusion semantics, when present; otherwise recover "
+    "every logical source-table row. When the schema contains `document`, populate "
     "it once from document-level headers, labels, legends, and metadata; do not "
     "repeat or infer those facts per row. When the schema contains `rows`, recover "
     "the logical source-table rows. "
     "Use the attached PDF as the primary visual source when present and the OCR "
-    "markdown as a structured second view. This is a source transcription task, "
-    "not a semantic "
-    "classification task. Copy only observations visible in the row, its table "
+    "markdown as a structured second view. Ground every answer in observations "
+    "visible in the row, its table "
     "headers, an inspected source legend, or document metadata included in the "
-    "input. Use schema field names and descriptions to locate those observations; "
+    "input. Use schema field names, descriptions, and caller instructions to locate "
+    "and interpret those observations; "
     "a requested observation may be embedded inside another table cell rather "
-    "than have a standalone column. Never normalize, calculate, filter, resolve "
-    "identity, decide "
-    "eligibility, or fill a field from world knowledge. When the requested source "
+    "than have a standalone column. Apply only the task-specific selection and "
+    "interpretation the caller requests. Copy stable printed facts rather than "
+    "regenerating them, and never fill a field from world knowledge. When the "
+    "requested source "
     "observation is absent or ambiguous, return null.\n\n"
     "Emit exactly one object per logical source row and preserve source order. "
     "Two complete rows that look identical are two separate rows and must both "
@@ -1598,8 +1890,8 @@ _EXTRACT_ROWS_SYSTEM = (
     "row: combine the fragments into that one object and never emit a continuation "
     "as another row. Preserve separate columns, codes, descriptions, and bracketed "
     "values in their matching schema fields; a plausible value in one field never "
-    "authorizes copying or interpreting it as another field. Return every source "
-    "row even when its fields conflict."
+    "authorizes copying or interpreting it as another field. Preserve conflicts "
+    "unless the caller's task and complete source evidence resolve them."
 )
 
 
@@ -2001,6 +2293,7 @@ def extract_rows(
     retries: int = 1,
     include_pdf: bool = True,
     pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
+    instructions: str | None = None,
     _durable_replay: bool = True,
 ) -> ExtractedRows:
     """OCR the document, then structure the markdown with a cheap schema-bound LLM.
@@ -2022,8 +2315,9 @@ def extract_rows(
 
     Schema keys are always present but source observations are nullable:
     extraction never invents a value merely to satisfy strict structured output.
-    Derive classifications, normalized meanings, calculations, and eligibility
-    in a separate computation over these retained source rows.
+    `instructions` may define task-specific inclusion, exclusion, and
+    interpretation semantics for the complete source record. Mechanical
+    calculations and downstream composition can remain ordinary code.
 
     By default the structuring model receives both the original PDF and cached
     OCR markdown. The PDF resolves visual page boundaries and embedded cells;
@@ -2068,6 +2362,8 @@ def extract_rows(
 
     if pdf_max_bytes < 1:
         raise ValueError("pdf_max_bytes must be positive")
+    if instructions is not None and not instructions.strip():
+        raise ValueError("instructions must be non-empty when supplied")
 
     configured = os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
     structure_model = model or configured or DEFAULT_EXTRACT_ROWS_MODEL
@@ -2089,6 +2385,7 @@ def extract_rows(
             rows_pdf_max_bytes=pdf_max_bytes,
             rows_force_ocr=force_ocr,
             rows_schema_name=schema_name,
+            instructions=instructions,
             extra_fields=None,
         )
         batch_key = _document_batch_key({document_id: request_key})
@@ -2126,6 +2423,11 @@ def extract_rows(
     user_prompt = markdown
     if source_id:
         user_prompt = f"source_id: {source_id}\n\n{markdown}"
+    if instructions:
+        user_prompt = (
+            f"# Task instructions\n{instructions.strip()}\n\n"
+            f"# Source document\n{user_prompt}"
+        )
     pdf_attached = include_pdf and len(pdf_bytes) <= pdf_max_bytes
     chat_input: dict[str, Any]
     if pdf_attached:
