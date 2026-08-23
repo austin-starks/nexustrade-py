@@ -50,6 +50,33 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         self.assertEqual(len(result), 6)
         self.assertEqual(peak, 2)
 
+    def test_batch_does_not_multiply_exhausted_schema_retry_budget(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+
+        with (
+            mock.patch.object(scanned_table, "_gateway_json"),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "extract_rows",
+                side_effect=scanned_table._RowsStructuringError(
+                    "schema retries exhausted"
+                ),
+            ) as extract_rows,
+        ):
+            result = scanned_table.extract_pdfs(
+                {"filing": b"pdf"},
+                rows_schema={"asset": "string"},
+                max_workers=1,
+                max_attempts=3,
+                rows_retries=1,
+            )
+
+        self.assertEqual(extract_rows.call_count, 1)
+        self.assertEqual(result["filing"]["rows"], [])
+        self.assertIn("schema retries exhausted", result["filing"]["error"])
+
     def test_serial_replay_key_covers_ocr_and_schema_name(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         common = {

@@ -1426,6 +1426,11 @@ def extract_pdfs(
                 # handling. Repeating it here would multiply the same failure by
                 # both document and schema retry budgets.
                 raise
+            except _RowsStructuringError:
+                # extract_rows already spent its caller-owned schema retry. A
+                # second document-level wave repeats the same paid semantic
+                # request without changing the OCR, schema, or source bytes.
+                raise
             except Exception as exc:
                 last = exc
                 if attempt + 1 < max_attempts:
