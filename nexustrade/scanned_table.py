@@ -1058,7 +1058,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v4"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v5"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -1107,6 +1107,7 @@ def _document_request_key(
     markdown: bool,
     max_pages: int | None,
     target_schema: Any,
+    document_schema: dict[str, Any] | None = None,
     rows_schema: dict[str, Any] | None,
     rows_model: str | None,
     rows_retries: int,
@@ -1126,10 +1127,11 @@ def _document_request_key(
         "markdown": markdown,
         "max_pages": max_pages,
         "target_schema": normalize_target_schema(target_schema),
+        "document_schema": document_schema,
         "rows_schema": rows_schema,
         "rows_system_sha256": (
             hashlib.sha256(_EXTRACT_ROWS_SYSTEM.encode("utf-8")).hexdigest()
-            if rows_schema is not None
+            if rows_schema is not None or document_schema is not None
             else None
         ),
         "rows_model": rows_model or os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
@@ -1242,6 +1244,7 @@ def extract_pdfs(
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None" = None,
     max_pages: int | None = None,
     target_schema: Any = None,
+    document_schema: dict[str, Any] | None = None,
     rows_schema: dict[str, Any] | None = None,
     rows_model: str | None = None,
     rows_retries: int = 1,
@@ -1276,6 +1279,12 @@ def extract_pdfs(
     `source_id` = the document key, which is what the host reconciles against.
     Do NOT confuse this with `target_schema`, which is Mistral's own column
     mapping and misaligns headers on real documents.
+
+    Pass `document_schema` alongside `rows_schema` when header-level facts such
+    as a report date, filing type, or amendment status must be recovered once per
+    document. Both shapes are returned by the same schema-bound call as
+    `{"document": {...}, "rows": [...]}`; this avoids a second corpus pass and
+    prevents document metadata from being duplicated or guessed on every row.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from nexustrade.host import GatewayChatError
@@ -1284,13 +1293,23 @@ def extract_pdfs(
     # a programming error in the caller's schema, not a per-document outcome, so
     # it raises instead of returning 62 identical `error` entries after paying
     # for 62 OCRs.
-    if rows_schema is not None:
-        from nexustrade.document_inspect_receipt import require_prior_inspect_receipt
-
-        require_prior_inspect_receipt()
+    if rows_schema is not None or document_schema is not None:
         if rows_pdf_max_bytes < 1:
             raise ValueError("rows_pdf_max_bytes must be positive")
-        rows_schema = normalize_rows_schema(rows_schema)
+        normalized_schema = normalize_extraction_schema(
+            rows_schema=rows_schema,
+            document_schema=document_schema,
+        )
+        document_schema = (
+            normalize_document_schema(document_schema)
+            if document_schema is not None
+            else None
+        )
+        rows_schema = (
+            normalize_rows_schema(rows_schema) if rows_schema is not None else None
+        )
+    else:
+        normalized_schema = None
 
     items: list[tuple[str, bytes]] = (
         list(documents.items()) if hasattr(documents, "items") else list(documents)
@@ -1320,6 +1339,7 @@ def extract_pdfs(
             markdown=markdown,
             max_pages=max_pages,
             target_schema=target_schema,
+            document_schema=document_schema,
             rows_schema=rows_schema,
             rows_model=rows_model,
             rows_retries=rows_retries,
@@ -1341,10 +1361,11 @@ def extract_pdfs(
         print(f"document extraction batch registration failed: {exc}")
 
     def run_once(key: str, pdf_bytes: bytes) -> dict[str, Any]:
-        if rows_schema:
+        if normalized_schema is not None:
             extracted = extract_rows(
                 pdf_bytes,
                 schema=rows_schema,
+                document_schema=document_schema,
                 model=rows_model,
                 max_pages=max_pages,
                 source_id=key,
@@ -1354,6 +1375,7 @@ def extract_pdfs(
                 _durable_replay=False,
             )
             return {
+                "document": extracted.document,
                 "rows": extracted.rows,
                 "markdown": extracted.markdown,
                 "page_audit": extracted.page_audit,
@@ -1425,9 +1447,10 @@ def extract_pdfs(
         return result, False
 
     empty = "markdown" if markdown else "rows"
-    blank = "" if markdown else []
 
     def unstarted(reason: str) -> dict[str, Any]:
+        if normalized_schema is not None:
+            return {"document": {}, "rows": [], "error": reason}
         return {empty: "" if markdown else [], "error": reason}
 
     # Submit incrementally, keeping at most `workers` in flight. Submitting the
@@ -1548,7 +1571,11 @@ def extract_pdf_markdown(
 DEFAULT_EXTRACT_ROWS_MODEL = "openai/gpt-5.6-luna"
 
 _EXTRACT_ROWS_SYSTEM = (
-    "Recover the logical source-table rows as JSON matching the provided schema. "
+    "Recover source document observations and logical source-table rows as JSON "
+    "matching the provided schema. When the schema contains `document`, populate "
+    "it once from document-level headers, labels, legends, and metadata; do not "
+    "repeat or infer those facts per row. When the schema contains `rows`, recover "
+    "the logical source-table rows. "
     "Use the attached PDF as the primary visual source when present and the OCR "
     "markdown as a structured second view. This is a source transcription task, "
     "not a semantic "
@@ -1590,6 +1617,8 @@ class ExtractedRows:
     apparent_table_rows: int = 0
     needs_review: bool = False
     pdf_attached: bool = False
+    # Append new fields so legacy positional construction keeps its meaning.
+    document: dict[str, Any] = field(default_factory=dict)
 
     def __iter__(self):
         return iter(self.rows)
@@ -1608,6 +1637,13 @@ def _rows_from_structured_result(result: Any) -> list[dict[str, Any]]:
     raise RuntimeError(
         f"extract_rows: structured output missing rows array: {result!r}"
     )
+
+
+def _document_from_structured_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    document = result.get("document")
+    return dict(document) if isinstance(document, dict) else {}
 
 
 class RowsSchemaError(ValueError):
@@ -1887,10 +1923,71 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
     return _rows_envelope(_strict_json_schema(_strict_object_schema(row_properties)))
 
 
+def normalize_document_schema(document_schema: Any) -> dict[str, Any]:
+    """Canonicalize one document/header object for strict structured output."""
+    if not isinstance(document_schema, Mapping) or not document_schema:
+        raise RowsSchemaError(
+            "document_schema must be a non-empty dict describing one document object"
+        )
+    looks_like_json_schema = any(
+        key in document_schema for key in _JSON_SCHEMA_MARKERS
+    )
+    if looks_like_json_schema:
+        normalized = _strict_json_schema(document_schema)
+        if not _schema_has_type(normalized, "object"):
+            raise RowsSchemaError("document_schema must describe one object")
+        return normalized
+
+    properties: dict[str, Any] = {}
+    for field_name, spec in document_schema.items():
+        name = str(field_name)
+        if isinstance(spec, Mapping):
+            properties[name] = _strict_json_schema(spec)
+            continue
+        if spec is None:
+            properties[name] = {"type": "string"}
+            continue
+        if isinstance(spec, str):
+            json_type = _ROWS_SCHEMA_SCALAR_TYPES.get(spec.strip().lower())
+            if json_type is None:
+                raise RowsSchemaError(
+                    f"document_schema field {name!r} names an unknown type {spec!r}; "
+                    f"use one of {sorted(set(_ROWS_SCHEMA_SCALAR_TYPES))}"
+                )
+            properties[name] = {"type": json_type}
+            continue
+        raise RowsSchemaError(
+            f"document_schema field {name!r} must map to a type name or a property "
+            f"schema, got {type(spec).__name__}"
+        )
+    return _strict_json_schema(_strict_object_schema(properties))
+
+
+def normalize_extraction_schema(
+    *,
+    rows_schema: Any = None,
+    document_schema: Any = None,
+) -> dict[str, Any]:
+    """Build the strict one-call document plus logical rows response schema."""
+    if rows_schema is None and document_schema is None:
+        raise RowsSchemaError(
+            "extract_rows requires rows_schema, document_schema, or both"
+        )
+    properties: dict[str, Any] = {}
+    if document_schema is not None:
+        properties["document"] = normalize_document_schema(document_schema)
+    if rows_schema is not None:
+        normalized_rows = normalize_rows_schema(rows_schema)
+        rows_property = normalized_rows["properties"]["rows"]
+        properties["rows"] = rows_property
+    return _strict_object_schema(properties)
+
+
 def extract_rows(
     pdf_bytes: bytes,
     *,
-    schema: dict[str, Any],
+    schema: dict[str, Any] | None = None,
+    document_schema: dict[str, Any] | None = None,
     model: str | None = None,
     max_pages: int | None = None,
     force_ocr: bool = True,
@@ -1934,13 +2031,27 @@ def extract_rows(
     `source_id`; the row index keeps every extracted source row distinct when
     callers build a transaction ledger or combine batch and serial fallback
     results.
-    """
-    from nexustrade.document_inspect_receipt import require_prior_inspect_receipt
 
-    require_prior_inspect_receipt()
+    `document_schema` describes observations that occur once per source document
+    rather than once per logical row. When supplied, document facts and rows are
+    recovered in the same structured call and returned on `ExtractedRows.document`.
+    `inspect_document` is an optional targeted diagnostic after this batch, not a
+    prerequisite for binding the initial extraction schema.
+    """
     # Before the OCR hop, not after: a schema the provider will reject costs
     # nothing to catch here and a full document's OCR to catch downstream.
-    normalized_schema = normalize_rows_schema(schema)
+    normalized_schema = normalize_extraction_schema(
+        rows_schema=schema,
+        document_schema=document_schema,
+    )
+    normalized_rows_schema = (
+        normalize_rows_schema(schema) if schema is not None else None
+    )
+    normalized_document_schema = (
+        normalize_document_schema(document_schema)
+        if document_schema is not None
+        else None
+    )
 
     from nexustrade.host import (
         GatewayChatError,
@@ -1965,7 +2076,8 @@ def extract_rows(
             markdown=False,
             max_pages=max_pages,
             target_schema=None,
-            rows_schema=normalized_schema,
+            document_schema=normalized_document_schema,
+            rows_schema=normalized_rows_schema,
             rows_model=structure_model,
             rows_retries=retries,
             rows_include_pdf=include_pdf,
@@ -1978,15 +2090,18 @@ def extract_rows(
         replay = _document_result_lookup(request_key)
         if replay is not None:
             replay_rows = replay.get("rows")
+            replay_document = replay.get("document", {})
             replay_markdown = replay.get("markdown")
             replay_page_audit = replay.get("page_audit")
             if (
                 not isinstance(replay_rows, list)
+                or not isinstance(replay_document, dict)
                 or not isinstance(replay_markdown, str)
                 or not isinstance(replay_page_audit, list)
             ):
                 raise RuntimeError("document extraction replay payload is malformed")
             return ExtractedRows(
+                document=replay_document,
                 rows=replay_rows,
                 markdown=replay_markdown,
                 source_id=source_id,
@@ -2025,6 +2140,7 @@ def extract_rows(
         chat_input = {"prompt": user_prompt}
 
     attempts = max(1, retries + 1)
+    document: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
     for attempt in range(attempts):
         try:
@@ -2036,8 +2152,11 @@ def extract_rows(
                 schema_name=schema_name,
                 temperature=0,
             )
-            rows = _rows_from_structured_result(result)
-            if not rows and apparent_table_rows > 0:
+            document = _document_from_structured_result(result)
+            rows = (
+                _rows_from_structured_result(result) if schema is not None else []
+            )
+            if schema is not None and not rows and apparent_table_rows > 0:
                 raise RuntimeError(
                     "structured output returned zero rows despite "
                     f"{apparent_table_rows} apparent OCR table row(s)"
@@ -2065,6 +2184,7 @@ def extract_rows(
                 ) from exc
 
     if source_id:
+        document["source_id"] = source_id
         for row_index, row in enumerate(rows):
             row["source_id"] = source_id
             row["_source_row_index"] = row_index
@@ -2074,6 +2194,7 @@ def extract_rows(
             row.setdefault("_reason", "ocr_page_requires_review")
 
     extracted = ExtractedRows(
+        document=document,
         rows=rows,
         markdown=markdown,
         source_id=source_id,
@@ -2088,6 +2209,7 @@ def extract_rows(
             request_key=request_key,
             document_id=document_id,
             payload={
+                "document": extracted.document,
                 "rows": extracted.rows,
                 "markdown": extracted.markdown,
                 "page_audit": extracted.page_audit,

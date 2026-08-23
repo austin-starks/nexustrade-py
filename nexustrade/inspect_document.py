@@ -3,9 +3,10 @@
 The same public module runs locally and inside the compute sandbox. Gateway
 credentials and PDF dependencies are supplied by the caller's environment.
 
-Use on 2–3 representative documents before batch ``extract_pdfs`` to ground a
-``rows_schema``, or on specific filings flagged by the grader. Reports observed
-layout and evidence only — it does not choose an extraction API or parser.
+Use after batch ``extract_pdfs`` diagnostics identify an exact document or page
+that needs visual interpretation. The initial schema comes from the request and
+documented source fields; inspection is not an extraction prerequisite. Reports
+observed layout and evidence only — it does not choose an extraction mechanism.
 """
 
 from __future__ import annotations

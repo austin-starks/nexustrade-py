@@ -1,13 +1,11 @@
-"""Inspect-before-schema receipts for extract_rows / extract_pdfs.
+"""Optional receipts for targeted ``inspect_document`` diagnostics.
 
-``inspect_document`` and schema-bound extract must not share one
-``sandbox_run``. The observation has to be available to the next reasoning
-turn before a schema is bound.
+Schema-bound extraction no longer consumes these receipts. They remain useful
+as ordinary operator-owned evidence when a batch diagnostic leads to targeted
+visual inspection.
 
 Receipts are ordinary files under ``{work}/.nexustrade/inspect_receipts`` —
-operator-writable, not a host attestation. Extract refuses unless at least
-one receipt's mtime is older than this process. Local SDK tests without a
-work tree, and ``NEXUSTRADE_REQUIRE_INSPECT_BEFORE_EXTRACT=0``, skip the gate.
+operator-writable diagnostic notes, not host attestations or extraction gates.
 """
 
 from __future__ import annotations
@@ -18,13 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-_PROCESS_START_NS = time.time_ns()
-
 _RECEIPT_RELATIVE = Path(".nexustrade") / "inspect_receipts"
-
-
-class InspectBeforeExtractError(RuntimeError):
-    """Schema-bound extract ran before a prior-turn inspect_document receipt."""
 
 
 def work_dir() -> Path:
@@ -53,34 +45,3 @@ def persist_inspect_receipt(result: dict[str, Any]) -> Path | None:
     path = dest / f"{payload['persisted_at_ns']}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
-
-
-def require_prior_inspect_receipt() -> None:
-    """Refuse schema-bound extract unless inspect completed in a prior process.
-
-    Skipped when the work directory does not exist (local SDK, unit tests) or
-    when ``NEXUSTRADE_REQUIRE_INSPECT_BEFORE_EXTRACT`` is ``0``/``false``.
-    """
-    flag = os.environ.get("NEXUSTRADE_REQUIRE_INSPECT_BEFORE_EXTRACT", "1")
-    if flag.strip().lower() in {"0", "false", "no"}:
-        return
-    root = work_dir()
-    if not root.is_dir():
-        return
-    dest = receipt_dir()
-    prior: list[Path] = []
-    if dest.is_dir():
-        for path in dest.glob("*.json"):
-            try:
-                if path.stat().st_mtime_ns < _PROCESS_START_NS:
-                    prior.append(path)
-            except OSError:
-                continue
-    if prior:
-        return
-    raise InspectBeforeExtractError(
-        "schema-bound extract_rows/extract_pdfs requires inspect_document to "
-        "complete in a prior sandbox_run so the observation is available "
-        "before the schema is bound. End this run after inspect_document; "
-        "bind the schema and extract on the next turn."
-    )

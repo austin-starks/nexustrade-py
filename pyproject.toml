@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nexustrade"
-version = "1.6.1"
+version = "1.7.0"
 description = "Typed Python SDK for NexusTrade portfolio authoring, backtesting, and optimization"
 readme = "README.md"
 license = { file = "LICENSE" }

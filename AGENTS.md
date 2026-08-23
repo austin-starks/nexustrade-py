@@ -100,8 +100,9 @@ OCR, and schema-bound extraction need `[documents]`. Missing extras raise an
 `AttributeError` that names the extra to install — read it rather than guessing.
 
 The same public modules are installed in NexusTrade compute. Use
-`nt.inspect_document` on representative pages, then `nt.extract_pdfs` or
-`nt.extract_rows` with an explicit schema. Inspect the structured rows and repeat
+`nt.extract_pdfs` or `nt.extract_rows` first with an explicit schema grounded in
+the request and documented source fields. Use `nt.inspect_document` afterward
+only for exact pages or documents flagged by batch diagnostics, then repeat
 extraction with a corrected schema when evidence is missing or ambiguous. Regex
 is not a substitute for OCR plus schema-bound extraction and must not classify
 model-produced asset identities.

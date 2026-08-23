@@ -37,8 +37,25 @@ sandboxes. Agent-facing helpers such as `nexustrade.host`,
 operations still require the short-lived environment supplied by a compute run.
 
 For document-derived computation, keep extraction and interpretation separate.
-`extract_rows`/`extract_pdfs` preserve source observations; `derive_rows` adds a
-schema-bound `derived` object while retaining every raw record unchanged:
+`extract_rows`/`extract_pdfs` preserve source observations. A corpus can recover
+document-level facts and logical rows in one schema-bound pass:
+
+```python
+extracted = nt.extract_pdfs(
+    documents,
+    document_schema={"report_date": "string", "filing_type": "string"},
+    rows_schema={"asset": "string", "transaction_date": "string"},
+)
+
+for source_id, result in extracted.items():
+    document = result["document"]  # includes source_id
+    rows = result["rows"]          # each includes source_id + _source_row_index
+```
+
+Run this schema-bound batch before any visual sampling. Use
+`inspect_document` later only for exact pages identified by batch diagnostics.
+`derive_rows` then adds a schema-bound `derived` object while retaining every
+raw record unchanged:
 
 ```python
 projected = nt.derive_rows(
