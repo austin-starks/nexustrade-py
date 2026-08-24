@@ -107,6 +107,13 @@ extraction with a corrected schema when evidence is missing or ambiguous. Regex
 is not a substitute for OCR plus schema-bound extraction and must not classify
 model-produced asset identities.
 
+For fetched HTML, pass the successful `host.read_results()` rows directly to
+`nt.extract_web_pages(..., instructions=..., schema=...)`. It reads the staged
+bodies without copying raw HTML into agent context, removes page chrome, uses
+strict Luna extraction, and returns one result or explicit error per source id.
+The schema describes one page result; do not include the host-owned `source_id`
+field.
+
 For a material semantic decision that already has a positive condition,
 proposed outcome, reason, and record-local RFC 6901 citations, use
 `nt.verify_semantic_citations(...)` before trusting the proposal. The host

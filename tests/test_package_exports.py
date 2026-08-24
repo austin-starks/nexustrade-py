@@ -180,6 +180,7 @@ class PackageExportTests(unittest.TestCase):
         self.assertTrue(callable(nt.audit_inclusions))
         self.assertTrue(callable(nt.verify_semantic_citations))
         self.assertTrue(callable(nt.extract_pdfs))
+        self.assertTrue(callable(nt.extract_web_pages))
         self.assertTrue(callable(nt.write_rows))
         with self.assertRaises(AttributeError) as unknown:
             nt.definitely_not_a_real_export

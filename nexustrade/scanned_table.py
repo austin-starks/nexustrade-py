@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Any
 
 from .host import _touch_host_activity
@@ -24,6 +25,86 @@ _MISTRAL_FAIR_CONFIDENCE = 0.85
 
 _LOW_CONFIDENCE_GRADES = frozenset({"POOR", "FAIR"})
 
+
+class _WebTextParser(HTMLParser):
+    """Extract visible article/main/body text and small publisher metadata."""
+
+    _HIDDEN = frozenset(
+        {"script", "style", "noscript", "svg", "template", "footer", "nav"}
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.depth = {
+            "hidden": 0,
+            "body": 0,
+            "main": 0,
+            "article": 0,
+            "header": 0,
+            "title": 0,
+        }
+        self.parts: dict[str, list[str]] = {
+            "body": [],
+            "main": [],
+            "article": [],
+            "title": [],
+        }
+        self.meta: dict[str, str] = {}
+        self.time_hint: str | None = None
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        tag = tag.lower()
+        attributes = {
+            name.lower(): value.strip()
+            for name, value in attrs
+            if value is not None and value.strip()
+        }
+        if tag == "meta":
+            key = (attributes.get("property") or attributes.get("name") or "").lower()
+            if key and attributes.get("content") and key not in self.meta:
+                self.meta[key] = attributes["content"]
+        elif tag == "time" and self.time_hint is None:
+            self.time_hint = attributes.get("datetime")
+        if tag in self._HIDDEN:
+            self.depth["hidden"] += 1
+        if tag in self.depth:
+            self.depth[tag] += 1
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in self._HIDDEN and self.depth["hidden"] > 0:
+            self.depth["hidden"] -= 1
+        if tag in self.depth and self.depth[tag] > 0:
+            self.depth[tag] -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self.depth["hidden"] > 0:
+            return
+        if (
+            self.depth["header"] > 0
+            and self.depth["main"] == 0
+            and self.depth["article"] == 0
+        ):
+            return
+        if self.depth["title"] > 0:
+            self.parts["title"].append(data)
+        if self.depth["body"] == 0:
+            return
+        self.parts["body"].append(data)
+        for scope in ("main", "article"):
+            if self.depth[scope] > 0:
+                self.parts[scope].append(data)
+
+    def text(self, scope: str) -> str:
+        return " ".join(" ".join(self.parts[scope]).split())
 
 class OcrBudgetExhausted(RuntimeError):
     """Raised when the sandbox OCR gateway reports the job page budget is spent (HTTP 429)."""
@@ -2051,7 +2132,10 @@ def _schema_has_type(schema: Mapping[str, Any], expected: str) -> bool:
 
 
 def _strict_json_schema(
-    schema: Mapping[str, Any], *, force_required: frozenset[str] = frozenset()
+    schema: Mapping[str, Any],
+    *,
+    force_required: frozenset[str] = frozenset(),
+    preserve_declared_required: bool = False,
 ) -> dict[str, Any]:
     """Recursively adapt JSON Schema to strict structured-output semantics.
 
@@ -2068,7 +2152,12 @@ def _strict_json_schema(
         branches = out.get(union_key)
         if isinstance(branches, list):
             out[union_key] = [
-                _strict_json_schema(branch) if isinstance(branch, Mapping) else branch
+                _strict_json_schema(
+                    branch,
+                    preserve_declared_required=preserve_declared_required,
+                )
+                if isinstance(branch, Mapping)
+                else branch
                 for branch in branches
             ]
 
@@ -2103,8 +2192,13 @@ def _strict_json_schema(
                 raise RowsSchemaError(
                     "rows_schema object properties must map field names to schemas"
                 )
-            normalized = _strict_json_schema(property_schema)
-            if field_name not in force_required:
+            normalized = _strict_json_schema(
+                property_schema,
+                preserve_declared_required=preserve_declared_required,
+            )
+            if field_name not in force_required and not (
+                preserve_declared_required and field_name in declared_required
+            ):
                 normalized = _nullable_schema(normalized)
             normalized_properties[field_name] = normalized
 
@@ -2119,7 +2213,10 @@ def _strict_json_schema(
             raise RowsSchemaError(
                 "rows_schema array `items` must contain a JSON Schema object"
             )
-        out["items"] = _strict_json_schema(items)
+        out["items"] = _strict_json_schema(
+            items,
+            preserve_declared_required=preserve_declared_required,
+        )
 
     return _nullable_schema(out) if explicitly_nullable else out
 
@@ -2228,8 +2325,15 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
     return _rows_envelope(_strict_json_schema(_strict_object_schema(row_properties)))
 
 
-def normalize_document_schema(document_schema: Any) -> dict[str, Any]:
-    """Canonicalize one document/header object for strict structured output."""
+def normalize_document_schema(
+    document_schema: Any, *, preserve_declared_required: bool = False
+) -> dict[str, Any]:
+    """Canonicalize one document/header object for strict structured output.
+
+    PDF source fields remain required-but-nullable by default. Generic web
+    extraction sets ``preserve_declared_required`` so an explicit caller schema
+    keeps its ordinary non-null guarantees instead of silently accepting null.
+    """
     if not isinstance(document_schema, Mapping) or not document_schema:
         raise RowsSchemaError(
             "document_schema must be a non-empty dict describing one document object"
@@ -2238,7 +2342,10 @@ def normalize_document_schema(document_schema: Any) -> dict[str, Any]:
         key in document_schema for key in _JSON_SCHEMA_MARKERS
     )
     if looks_like_json_schema:
-        normalized = _strict_json_schema(document_schema)
+        normalized = _strict_json_schema(
+            document_schema,
+            preserve_declared_required=preserve_declared_required,
+        )
         if not _schema_has_type(normalized, "object"):
             raise RowsSchemaError("document_schema must describe one object")
         return normalized
@@ -2537,3 +2644,461 @@ def extract_rows(
             track_progress=False,
         )
     return extracted
+
+
+_EXTRACT_WEB_SYSTEM = """# Task
+Complete the caller's schema-bound extraction task from every supplied web page. Follow the
+caller's requested scope exactly; do not omit requested information because it resembles another
+observation.
+
+# Source boundary
+- Return exactly one document result for every supplied source_id and no other source_id.
+- Treat each page as isolated. Use only its title, description, publication hint, and visible text.
+- Never infer facts from the URL, another page, or general knowledge.
+- Publisher metadata supports only the exact statement it contains.
+- A generic application shell or landing page with no task-relevant content is not evidence.
+
+# Output check
+- Preserve conflicts and missing information in the caller-provided schema.
+- If the schema asks for an evidence excerpt, copy one contiguous exact source substring.
+- Before returning, verify every such excerpt after whitespace normalization. Never join passages,
+  insert ellipses, or keep an observation whose excerpt cannot be verified.
+- Return only the strict structured response."""
+
+
+def _bounded_web_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    # News/report substance normally starts near the beginning, while update
+    # notes and methodology often sit at the end. Preserve both as exact source
+    # substrings instead of injecting a synthetic truncation marker that a model
+    # could accidentally quote as evidence.
+    head_chars = (max_chars * 3) // 4
+    return value[:head_chars].rstrip() + "\n\n" + value[-(max_chars - head_chars) :].lstrip()
+
+
+def _decode_web_bytes(data: bytes) -> str:
+    # HTML's in-band charset declaration is not authoritative enough to justify
+    # a dependency or a second parsing pass here. UTF-8 covers the fetched
+    # corpus; replacement keeps a damaged page explicit rather than crashing an
+    # otherwise valid batch.
+    return data.decode("utf-8", errors="replace")
+
+
+def _prepare_web_page(
+    source_id: str,
+    value: str | bytes | Mapping[str, Any],
+    *,
+    max_chars: int,
+) -> tuple[dict[str, Any] | None, str | None, bytes | None]:
+    url: str | None = None
+    content_type = "text/html"
+    raw: bytes | None = None
+
+    if isinstance(value, str):
+        raw = value.encode("utf-8")
+    elif isinstance(value, bytes):
+        raw = value
+    elif isinstance(value, Mapping):
+        inline_html = value.get("html")
+        if isinstance(inline_html, str):
+            raw = inline_html.encode("utf-8")
+        elif isinstance(inline_html, bytes):
+            raw = inline_html
+        if raw is not None:
+            inline_url = value.get("url")
+            url = inline_url if isinstance(inline_url, str) else None
+            inline_type = value.get("content_type")
+            if isinstance(inline_type, str):
+                content_type = inline_type
+        else:
+            if value.get("ok") is not True:
+                return None, "fetch result is not successful", None
+            result_data = value.get("data")
+            if not isinstance(result_data, Mapping):
+                return None, "fetch result has no data object", None
+            result_type = result_data.get("contentType")
+            if isinstance(result_type, str):
+                content_type = result_type
+            for key in ("finalUrl", "resolvedUrl", "url"):
+                candidate = result_data.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    url = candidate
+                    break
+            if "html" not in content_type.lower():
+                return None, f"fetch result is not HTML ({content_type})", None
+            from nexustrade.tigris import read_fetch_result
+
+            raw = read_fetch_result(dict(value))
+            if raw is None:
+                return None, "fetch result body is unavailable", None
+    else:
+        return None, f"unsupported page input {type(value).__name__}", None
+
+    if "html" not in content_type.lower():
+        return None, f"page is not HTML ({content_type})", None
+    try:
+        parser = _WebTextParser()
+        parser.feed(_decode_web_bytes(raw))
+        parser.close()
+        title = parser.meta.get("og:title") or parser.text("title") or None
+        description = parser.meta.get("og:description") or parser.meta.get(
+            "description"
+        )
+        published_at_hint = (
+            parser.meta.get("article:published_time") or parser.time_hint
+        )
+        scoped_text = [
+            text
+            for text in (parser.text("article"), parser.text("main"))
+            if text
+        ]
+        visible_text = max(scoped_text, key=len) if scoped_text else parser.text("body")
+    except Exception as exc:  # keep malformed HTML source-local
+        return None, f"HTML parsing failed: {exc}", None
+    prepared: dict[str, Any] = {
+        "source_id": source_id,
+        "url": url,
+        "title": title,
+        "description": description,
+        "published_at_hint": published_at_hint,
+        "visible_text": _bounded_web_text(visible_text, max_chars),
+    }
+    return prepared, None, raw
+
+
+def _web_response_schema(
+    document_schema: dict[str, Any], source_ids: list[str]
+) -> dict[str, Any]:
+    properties = document_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        raise RowsSchemaError("web page schema has no properties")
+    if "source_id" in properties:
+        raise RowsSchemaError("source_id is host-owned; remove it from schema")
+    item_properties: dict[str, Any] = {
+        "source_id": {"type": "string", "enum": source_ids},
+        **dict(properties),
+    }
+    return _strict_object_schema(
+        {
+            "documents": {
+                "type": "array",
+                "minItems": len(source_ids),
+                "maxItems": len(source_ids),
+                "items": _strict_object_schema(item_properties),
+            }
+        }
+    )
+
+
+def _web_request_key(
+    source_id: str,
+    raw: bytes,
+    prepared: Mapping[str, Any],
+    *,
+    document_schema: dict[str, Any],
+    instructions: str,
+    model: str,
+    max_chars: int,
+    documents_per_request: int,
+) -> str:
+    descriptor = {
+        "protocol": "web-page-extractions/v1",
+        "source_id": source_id,
+        "content_sha256": hashlib.sha256(raw).hexdigest(),
+        "prepared_sha256": hashlib.sha256(
+            json.dumps(
+                dict(prepared),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest(),
+        "schema": document_schema,
+        "instructions_sha256": hashlib.sha256(instructions.encode("utf-8")).hexdigest(),
+        "system_sha256": hashlib.sha256(_EXTRACT_WEB_SYSTEM.encode("utf-8")).hexdigest(),
+        "model": model,
+        "max_chars": max_chars,
+        "documents_per_request": documents_per_request,
+    }
+    encoded = json.dumps(
+        descriptor, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _web_exact_excerpt_errors(
+    value: Any, source: Mapping[str, Any], path: str = "$"
+) -> list[str]:
+    """Validate the evidence-excerpt convention only when a schema uses it."""
+    source_texts = [
+        "".join(str(source.get(field) or "").split())
+        for field in ("visible_text", "title", "description")
+    ]
+    errors: list[str] = []
+
+    def walk(child: Any, child_path: str) -> None:
+        if isinstance(child, Mapping):
+            for key, nested in child.items():
+                nested_path = f"{child_path}.{key}"
+                if key == "evidence_excerpt" and isinstance(nested, str):
+                    normalized = "".join(nested.split())
+                    if not normalized or not any(
+                        normalized in source_text for source_text in source_texts
+                    ):
+                        errors.append(
+                            f"{nested_path} is not an exact source substring"
+                        )
+                else:
+                    walk(nested, nested_path)
+        elif isinstance(child, list):
+            for index, nested in enumerate(child):
+                walk(nested, f"{child_path}[{index}]")
+
+    walk(value, path)
+    return errors
+
+
+def _extract_web_group(
+    group: list[dict[str, Any]],
+    *,
+    document_schema: dict[str, Any],
+    instructions: str,
+    model: str,
+    retries: int,
+) -> dict[str, dict[str, Any]]:
+    from nexustrade.host import GatewayChatError, gateway_chat_json
+
+    source_ids = [str(page["source_id"]) for page in group]
+    attempts = max(1, retries + 1)
+    last_error: Exception | None = None
+    validation_feedback: list[str] = []
+    for attempt in range(attempts):
+        try:
+            request_payload: dict[str, Any] = {
+                "task": instructions,
+                "documents": group,
+            }
+            if validation_feedback:
+                request_payload["validation_feedback"] = validation_feedback
+            response = gateway_chat_json(
+                prompt=json.dumps(
+                    request_payload,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ),
+                system=_EXTRACT_WEB_SYSTEM,
+                model=model,
+                temperature=0,
+                json_schema=_web_response_schema(document_schema, source_ids),
+                schema_name="extract_web_pages",
+                timeout_sec=300,
+            )
+            documents = response.get("documents") if isinstance(response, Mapping) else None
+            if not isinstance(documents, list):
+                raise RuntimeError("web extraction omitted documents")
+            by_id: dict[str, dict[str, Any]] = {}
+            for document in documents:
+                if not isinstance(document, Mapping):
+                    raise RuntimeError("web extraction document is not an object")
+                source_id = document.get("source_id")
+                if not isinstance(source_id, str) or source_id not in source_ids:
+                    raise RuntimeError(
+                        f"web extraction returned unknown source_id {source_id!r}"
+                    )
+                if source_id in by_id:
+                    raise RuntimeError(
+                        f"web extraction duplicated source_id {source_id!r}"
+                    )
+                by_id[source_id] = {
+                    "document": dict(document),
+                    "error": None,
+                }
+            missing = [source_id for source_id in source_ids if source_id not in by_id]
+            if missing:
+                raise RuntimeError(
+                    "web extraction omitted source_id(s): " + ", ".join(missing)
+                )
+            source_by_id = {str(page["source_id"]): page for page in group}
+            validation_feedback = [
+                f"{source_id}: {message}"
+                for source_id, result in by_id.items()
+                for message in _web_exact_excerpt_errors(
+                    result["document"], source_by_id[source_id]
+                )
+            ]
+            if validation_feedback:
+                raise RuntimeError("; ".join(validation_feedback[:8]))
+            return by_id
+        except GatewayChatError:
+            raise
+        except Exception as exc:  # schema/content repair only
+            last_error = exc
+            if attempt + 1 == attempts:
+                break
+    raise _RowsStructuringError(
+        f"web extraction failed after {attempts} attempt(s): {last_error}"
+    ) from last_error
+
+
+def extract_web_pages(
+    pages: Mapping[str, str | bytes | Mapping[str, Any]],
+    *,
+    instructions: str,
+    schema: Mapping[str, Any],
+    model: str | None = None,
+    documents_per_request: int = 1,
+    max_chars_per_document: int = 80_000,
+    max_chars_per_request: int = 200_000,
+    max_workers: int = 2,
+    retries: int = 1,
+) -> dict[str, dict[str, Any]]:
+    """Turn fetched HTML pages into one strict typed object per source.
+
+    ``pages`` may contain HTML strings/bytes, ``{"html": ..., "url": ...}``
+    objects, or complete result rows returned by ``host.read_results()`` after
+    ``host.fetch``. Fetch bodies remain in Tigris and enter this bounded helper,
+    not the OpenCode transcript. ``schema`` describes ONE per-page object;
+    ``source_id`` is added and checked by the host.
+
+    Each page gets an isolated GPT-5.6 Luna request by default so one dense page
+    cannot consume another page's output attention. Increase
+    ``documents_per_request`` when measured accuracy permits batching.
+    Successful byte-identical results are durably replayed, and every input key
+    always has either ``{"document": ..., "error": None}`` or an explicit error.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not isinstance(pages, Mapping):
+        raise TypeError("pages must be a mapping from source_id to page input")
+    if not instructions.strip():
+        raise ValueError("instructions must be non-empty")
+    if documents_per_request < 1 or documents_per_request > 20:
+        raise ValueError("documents_per_request must be between 1 and 20")
+    if max_chars_per_document < 1 or max_chars_per_request < 1:
+        raise ValueError("character limits must be positive")
+    if max_chars_per_document > max_chars_per_request:
+        raise ValueError("max_chars_per_document cannot exceed max_chars_per_request")
+    if max_workers < 1:
+        raise ValueError("max_workers must be positive")
+    if retries < 0:
+        raise ValueError("retries must be non-negative")
+
+    normalized_schema = normalize_document_schema(
+        schema, preserve_declared_required=True
+    )
+    properties = normalized_schema.get("properties")
+    if isinstance(properties, Mapping) and "source_id" in properties:
+        raise RowsSchemaError("source_id is host-owned; remove it from schema")
+    configured = os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
+    structure_model = model or configured or DEFAULT_EXTRACT_ROWS_MODEL
+
+    ordered_ids = [str(source_id) for source_id in pages]
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise ValueError("page source ids must remain unique after string conversion")
+    results: dict[str, dict[str, Any]] = {}
+    prepared_by_id: dict[str, dict[str, Any]] = {}
+    request_keys: dict[str, str] = {}
+    for raw_source_id, value in pages.items():
+        source_id = str(raw_source_id)
+        prepared, error, raw = _prepare_web_page(
+            source_id, value, max_chars=max_chars_per_document
+        )
+        if error or prepared is None or raw is None:
+            results[source_id] = {"document": {}, "error": error or "unreadable page"}
+            continue
+        prepared_by_id[source_id] = prepared
+        request_keys[source_id] = _web_request_key(
+            source_id,
+            raw,
+            prepared,
+            document_schema=normalized_schema,
+            instructions=instructions,
+            model=structure_model,
+            max_chars=max_chars_per_document,
+            documents_per_request=documents_per_request,
+        )
+
+    batch_key = _document_batch_key(request_keys)
+    remaining: list[dict[str, Any]] = []
+    cache_hits = 0
+    for source_id in ordered_ids:
+        if source_id not in prepared_by_id:
+            continue
+        replay = _document_result_lookup(request_keys[source_id])
+        if replay is None:
+            remaining.append(prepared_by_id[source_id])
+        else:
+            results[source_id] = replay
+            cache_hits += 1
+
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_chars = 0
+    for page in remaining:
+        visible = page.get("visible_text")
+        page_chars = len(visible) if isinstance(visible, str) else 0
+        if current and (
+            len(current) >= documents_per_request
+            or current_chars + page_chars > max_chars_per_request
+        ):
+            groups.append(current)
+            current = []
+            current_chars = 0
+        current.append(page)
+        current_chars += page_chars
+    if current:
+        groups.append(current)
+
+    completed = cache_hits
+    failed = len(results) - cache_hits
+
+    def run_group(group: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        extracted = _extract_web_group(
+            group,
+            document_schema=normalized_schema,
+            instructions=instructions,
+            model=structure_model,
+            retries=retries,
+        )
+        for source_id, payload in extracted.items():
+            _document_result_record(
+                batch_key=batch_key,
+                request_key=request_keys[source_id],
+                document_id=source_id,
+                payload=payload,
+                total=len(pages),
+                track_progress=False,
+            )
+        return extracted
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(groups) or 1)) as pool:
+        futures = {pool.submit(run_group, group): group for group in groups}
+        for future in as_completed(futures):
+            group = futures[future]
+            try:
+                extracted = future.result()
+                results.update(extracted)
+                completed += len(group)
+            except Exception as exc:  # one failed request stays explicit per source
+                for page in group:
+                    source_id = str(page["source_id"])
+                    results[source_id] = {"document": {}, "error": str(exc)}
+                    failed += 1
+            _document_batch_progress(
+                batch_key=batch_key,
+                total=len(pages),
+                completed=completed,
+                failed=failed,
+                cache_hits=cache_hits,
+                done=False,
+            )
+    _document_batch_progress(
+        batch_key=batch_key,
+        total=len(pages),
+        completed=completed,
+        failed=failed,
+        cache_hits=cache_hits,
+        done=True,
+    )
+    return {source_id: results[source_id] for source_id in ordered_ids}
