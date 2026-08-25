@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -172,7 +173,13 @@ class LakePackagingTests(unittest.TestCase):
             _client=object(),  # type: ignore[arg-type]
         )
         relation = mock.Mock()
-        relation.df.return_value = "frame"
+        frame = mock.Mock()
+        frame.attrs = {}
+        relation.df.return_value = frame
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        duckdb_module = mock.Mock()
+        duckdb_module.connect.return_value = connection
         directory = Path("/tmp/lake-query-test")
 
         with (
@@ -185,15 +192,63 @@ class LakePackagingTests(unittest.TestCase):
             mock.patch.dict(
                 "sys.modules",
                 {
+                    "duckdb": duckdb_module,
                     "pyarrow": mock.Mock(),
                     "pyarrow.parquet": mock.Mock(),
                 },
             ),
         ):
-            self.assertEqual(result.to_pandas(max_bytes=100), "frame")
+            self.assertIs(result.to_pandas(max_bytes=100), frame)
 
         download.assert_called_once_with()
-        build_relation.assert_called_once_with(directory)
+        duckdb_module.connect.assert_called_once_with()
+        build_relation.assert_called_once_with(directory, connection)
+        connection.__exit__.assert_called_once()
+        self.assertEqual(frame.attrs["nexustrade_source_id"], "lake-query:lq_test")
+
+    def test_result_exposes_durable_query_receipt_source_id(self) -> None:
+        result = nt.lake.LakeQueryResult(
+            id="lq_receipt",
+            status="completed",
+            result={"rowCount": 0, "byteSize": 0, "parts": [], "schema": []},
+            _client=object(),  # type: ignore[arg-type]
+        )
+        self.assertEqual(result.source_id, "lake-query:lq_receipt")
+
+    def test_to_pandas_materializes_a_real_parquet_result(self) -> None:
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ModuleNotFoundError:
+            self.skipTest("real Parquet smoke requires the compute image dependencies")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            part = directory / "part-00000.parquet"
+            pq.write_table(
+                pa.table({"ticker": ["SPY", "QQQ"], "close": [500.0, 450.0]}),
+                part,
+            )
+            result = nt.lake.LakeQueryResult(
+                id="lq_real_parquet",
+                status="completed",
+                result={
+                    "rowCount": 2,
+                    "byteSize": part.stat().st_size,
+                    "parts": [],
+                    "schema": [],
+                },
+                _client=object(),  # type: ignore[arg-type]
+            )
+
+            with mock.patch.object(result, "download", return_value=directory):
+                frame = result.to_pandas(max_bytes=1024 * 1024)
+
+        self.assertEqual(frame["ticker"].tolist(), ["SPY", "QQQ"])
+        self.assertEqual(
+            frame.attrs["nexustrade_source_id"],
+            "lake-query:lq_real_parquet",
+        )
 
     def test_client_exposes_http_lake_surface_not_analysis_helpers(self) -> None:
         for name in (

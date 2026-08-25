@@ -972,19 +972,24 @@ def inspect_table(
     if not isinstance(sample_rows, int) or not 0 <= sample_rows <= 20:
         raise ValueError("sample_rows must be an integer from 0 through 20")
 
-    bucket = _lake_bucket()
+    sdk_lake = _sdk_lake_enabled() and con is None
+    bucket = "" if sdk_lake else _lake_bucket()
     if dataset.grain == "year":
         if year is None:
             raise ValueError(
                 f"inspect_table({prefix!r}) requires year=... for a year-grain table"
             )
-        url = year_shard_url(bucket, dataset.prefix, int(year), con=con)
+        url = (
+            None
+            if sdk_lake
+            else year_shard_url(bucket, dataset.prefix, int(year), con=con)
+        )
     elif dataset.grain == "snapshot":
         if year is not None:
             raise ValueError(
                 f"inspect_table({prefix!r}) is a snapshot; do not pass year"
             )
-        url = snapshot_url(bucket, dataset.prefix)
+        url = None if sdk_lake else snapshot_url(bucket, dataset.prefix)
     else:
         raise ValueError(
             f"inspect_table({prefix!r}) does not guess {dataset.grain} partitions; "
@@ -1012,7 +1017,7 @@ def inspect_table(
         "sample": None,
     }
 
-    if _sdk_lake_enabled() and con is None:
+    if sdk_lake:
         from nexustrade import lake as nt_lake
 
         try:
@@ -1027,8 +1032,10 @@ def inspect_table(
                     sql += " WHERE EXTRACT(YEAR FROM CAST(date AS DATE)) = ?"
                     params.append(int(year))
                 sql += f" LIMIT {int(sample_rows)}"
-                frame = nt_lake.sql(sql, params).duckdb_relation().df()
+                query_result = nt_lake.sql(sql, params)
+                frame = query_result.to_pandas()
                 result["sample"] = frame
+                result["source_id"] = query_result.source_id
                 result["readable"] = bool(len(frame))
             result["readable"] = True
         except Exception as exc:
@@ -1116,7 +1123,7 @@ def read_ohlc(
         # attributes or merges. A compatibility wrapper's whole job is to keep
         # its contract; laziness is available, but on the new API
         # (`nt.lake.sql(...).duckdb_relation()`), not by mutating this one.
-        return result.duckdb_relation().df()
+        return result.to_pandas()
 
     where_parts = [f"ticker IN ({', '.join('?' for _ in ticker_list)})"]
     params = list(ticker_list)
@@ -1160,7 +1167,7 @@ def _lake_sql_df(
     # cap so a wide options window still fails loudly instead of OOMing.
     if row_cap:
         sql += f" LIMIT {int(row_cap) + 1}"
-    frame = nt_lake.sql(sql, params).duckdb_relation().df()
+    frame = nt_lake.sql(sql, params).to_pandas()
     if row_cap and len(frame) > row_cap:
         raise RuntimeError(
             f"lake read returned more than {row_cap} rows; narrow the request "

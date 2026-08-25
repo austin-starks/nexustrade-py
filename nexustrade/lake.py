@@ -410,6 +410,11 @@ class LakeQueryResult:
     _client: NexusTradeClient
 
     @property
+    def source_id(self) -> str:
+        """Durable row provenance identity for this host-owned query receipt."""
+        return f"lake-query:{self.id}"
+
+    @property
     def row_count(self) -> int:
         return int(self.result.get("rowCount") or 0)
 
@@ -628,8 +633,18 @@ class LakeQueryResult:
         # Reuse the directory already downloaded and checksum-validated above.
         # Calling duckdb_relation() here would call download() a second time and
         # rehash every part before materializing the frame.
-        relation = self._duckdb_relation_from_directory(directory)
-        return relation.df()
+        import duckdb
+
+        # DuckDB relations are lazy and do not retain a strong reference to the
+        # Python connection in every supported version. Materialize while the
+        # connection is explicitly alive; otherwise a temporary relation can
+        # fail with "Connection has already been closed" before df() executes.
+        with duckdb.connect() as connection:
+            relation = self._duckdb_relation_from_directory(directory, connection)
+            frame = relation.df()
+        if hasattr(frame, "attrs"):
+            frame.attrs["nexustrade_source_id"] = self.source_id
+        return frame
 
 
 def submit(
