@@ -139,6 +139,45 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         self.assertEqual(result["filing-2"]["rows"][0]["source_id"], "filing-2")
         self.assertEqual(result["filing-2"]["rows"][0]["_source_row_index"], 0)
 
+    def test_schema_batch_carries_official_inventory_metadata_mechanically(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        with (
+            mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "extract_pdf_markdown_with_audit",
+                return_value=("| Event date |\n|---|\n| 2025-01-02 |", []),
+            ),
+            mock.patch.object(
+                host,
+                "gateway_chat_json",
+                return_value={"rows": [{"event_date": "2025-01-02"}]},
+            ),
+        ):
+            result = scanned_table.extract_pdfs(
+                {"notice-a": b"pdf"},
+                rows_schema={"event_date": "string"},
+                documents_per_request=2,
+                max_workers=1,
+                extra_fields_by_key={
+                    "notice-a": {"publisher_filing_date": "2025-01-05"}
+                },
+            )
+
+        self.assertEqual(
+            result["notice-a"]["document"]["publisher_filing_date"],
+            "2025-01-05",
+        )
+        self.assertEqual(
+            result["notice-a"]["rows"][0]["publisher_filing_date"],
+            "2025-01-05",
+        )
+
     def test_schema_batch_rejects_duplicate_or_missing_document_groups(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
@@ -169,6 +208,197 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
 
         self.assertIn("duplicated source_id", result["a"]["error"])
         self.assertEqual(result["b"]["rows"], [])
+
+    def test_failed_document_group_is_bisected_until_each_source_succeeds(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+        calls: list[list[str]] = []
+
+        def extract_group(
+            group: list[tuple[str, bytes]],
+            **kwargs: object,
+        ) -> dict[str, dict[str, object]]:
+            del kwargs
+            source_ids = [key for key, _data in group]
+            calls.append(source_ids)
+            if len(group) > 1:
+                raise host.GatewayChatTransportError(
+                    "group request exceeded its deadline"
+                )
+            source_id = source_ids[0]
+            return {
+                source_id: {
+                    "document": {"source_id": source_id},
+                    "rows": [{"source_id": source_id}],
+                    "error": None,
+                }
+            }
+
+        with (
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record") as record,
+            mock.patch.object(scanned_table, "_document_batch_progress") as progress,
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                side_effect=extract_group,
+            ),
+        ):
+            result = scanned_table._extract_pdf_document_groups(
+                [("a", b"a"), ("b", b"b"), ("c", b"c")],
+                request_keys={"a": "key-a", "b": "key-b", "c": "key-c"},
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=3,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        self.assertEqual(
+            calls,
+            [["a", "b", "c"], ["a"], ["b", "c"], ["b"], ["c"]],
+        )
+        self.assertEqual(record.call_count, 3)
+        self.assertTrue(all(result[key]["error"] is None for key in ("a", "b", "c")))
+        self.assertEqual(progress.call_args.kwargs["completed"], 3)
+        self.assertEqual(progress.call_args.kwargs["failed"], 0)
+        self.assertTrue(progress.call_args.kwargs["done"])
+
+    def test_failed_document_group_isolates_only_a_bad_singleton(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        def extract_group(
+            group: list[tuple[str, bytes]],
+            **kwargs: object,
+        ) -> dict[str, dict[str, object]]:
+            del kwargs
+            if len(group) > 1:
+                raise host.GatewayChatTransportError(
+                    "group request exceeded its deadline"
+                )
+            source_id = group[0][0]
+            if source_id == "bad":
+                raise RuntimeError("source cannot be decoded")
+            return {
+                source_id: {
+                    "document": {"source_id": source_id},
+                    "rows": [{"source_id": source_id}],
+                    "error": None,
+                }
+            }
+
+        with (
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record") as record,
+            mock.patch.object(scanned_table, "_document_batch_progress") as progress,
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                side_effect=extract_group,
+            ),
+        ):
+            result = scanned_table._extract_pdf_document_groups(
+                [("good-a", b"a"), ("bad", b"bad"), ("good-b", b"b")],
+                request_keys={
+                    "good-a": "key-good-a",
+                    "bad": "key-bad",
+                    "good-b": "key-good-b",
+                },
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=3,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        self.assertEqual(record.call_count, 2)
+        self.assertIsNone(result["good-a"]["error"])
+        self.assertIsNone(result["good-b"]["error"])
+        self.assertIn("source cannot be decoded", result["bad"]["error"])
+        self.assertEqual(progress.call_args.kwargs["completed"], 2)
+        self.assertEqual(progress.call_args.kwargs["failed"], 1)
+        self.assertTrue(progress.call_args.kwargs["done"])
+
+    def test_cache_commit_failure_does_not_repeat_paid_extraction(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        extracted = {
+            "a": {"document": {}, "rows": [], "error": None},
+            "b": {"document": {}, "rows": [], "error": None},
+        }
+
+        with (
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(
+                scanned_table,
+                "_document_result_record",
+                side_effect=RuntimeError("cache unavailable"),
+            ),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                return_value=extracted,
+            ) as extract_group,
+        ):
+            result = scanned_table._extract_pdf_document_groups(
+                [("a", b"a"), ("b", b"b")],
+                request_keys={"a": "key-a", "b": "key-b"},
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=2,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        self.assertEqual(extract_group.call_count, 1)
+        self.assertIn("cache unavailable", result["a"]["error"])
+        self.assertIn("cache unavailable", result["b"]["error"])
+
+    def test_permanent_gateway_rejection_does_not_split_and_multiply_calls(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        with (
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                side_effect=host.GatewayChatRequestError("budget denied"),
+            ) as extract_group,
+        ):
+            result = scanned_table._extract_pdf_document_groups(
+                [("a", b"a"), ("b", b"b"), ("c", b"c")],
+                request_keys={"a": "key-a", "b": "key-b", "c": "key-c"},
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=3,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        self.assertEqual(extract_group.call_count, 1)
+        self.assertTrue(
+            all("budget denied" in result[key]["error"] for key in ("a", "b", "c"))
+        )
 
     def test_schema_batch_uses_legacy_ocr_path_when_any_pdf_is_oversized(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")

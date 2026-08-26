@@ -1501,6 +1501,7 @@ def _extract_pdf_document_groups(
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
 ) -> dict[str, dict[str, Any]]:
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from nexustrade.host import GatewayChatTransportError
 
     results: dict[str, dict[str, Any]] = {}
     remaining: list[tuple[str, bytes]] = []
@@ -1520,8 +1521,8 @@ def _extract_pdf_document_groups(
     completed = len(results)
     failed = 0
 
-    def run_group(group: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
-        extracted = _extract_pdf_document_group(
+    def run_exact_group(group: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
+        return _extract_pdf_document_group(
             group,
             normalized_schema=normalized_schema,
             rows_model=rows_model,
@@ -1530,6 +1531,30 @@ def _extract_pdf_document_groups(
             instructions=instructions,
             extra_fields_by_key=extra_fields_by_key,
         )
+
+    def run_group(
+        group: list[tuple[str, bytes]],
+    ) -> tuple[dict[str, dict[str, Any]], int, int]:
+        try:
+            extracted = run_exact_group(group)
+        except Exception as exc:
+            if len(group) == 1:
+                key = group[0][0]
+                return {
+                    key: {"document": {}, "rows": [], "error": str(exc)}
+                }, 0, 1
+            if not isinstance(
+                exc, (GatewayChatTransportError, _RowsStructuringError)
+            ):
+                raise
+            midpoint = len(group) // 2
+            left_results, left_completed, left_failed = run_group(group[:midpoint])
+            right_results, right_completed, right_failed = run_group(group[midpoint:])
+            return (
+                {**left_results, **right_results},
+                left_completed + right_completed,
+                left_failed + right_failed,
+            )
         for key, payload in extracted.items():
             _document_result_record(
                 batch_key=batch_key,
@@ -1539,20 +1564,24 @@ def _extract_pdf_document_groups(
                 total=len(items),
                 track_progress=False,
             )
-        return extracted
+        return extracted, len(extracted), 0
 
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(groups) or 1))) as pool:
         futures = {pool.submit(run_group, group): group for group in groups}
         for future in as_completed(futures):
             group = futures[future]
             try:
-                extracted = future.result()
-                results.update(extracted)
-                completed += len(group)
-            except Exception as exc:  # one failed request stays explicit per source
-                for key, _ in group:
-                    results[key] = {"document": {}, "rows": [], "error": str(exc)}
-                    failed += 1
+                extracted, group_completed, group_failed = future.result()
+            except Exception as exc:
+                extracted = {
+                    key: {"document": {}, "rows": [], "error": str(exc)}
+                    for key, _ in group
+                }
+                group_completed = 0
+                group_failed = len(group)
+            results.update(extracted)
+            completed += group_completed
+            failed += group_failed
             _document_batch_progress(
                 batch_key=batch_key,
                 total=len(items),
@@ -1606,7 +1635,9 @@ def extract_pdfs(
 
     The legacy path retries transient failures per document (max_attempts,
     exponential backoff). The grouped path uses the gateway's bounded transport
-    retry and reports a failed group explicitly on every affected source.
+    retry, bisects a transport or structuring failure to isolate smaller
+    requests, and reports only an irreducible singleton failure on that source.
+    Permanent request or durable-cache failures are not split or repeated.
 
     Budget exhaustion (HTTP 429) is backpressure, not a crash and never retried:
     scheduling stops, already-running work finishes, and every unstarted document
@@ -1623,11 +1654,12 @@ def extract_pdfs(
     Do NOT confuse this with `target_schema`, which is Mistral's own column
     mapping and misaligns headers on real documents.
 
-    Pass `document_schema` alongside `rows_schema` when header-level facts such
-    as a report date, filing type, or amendment status must be recovered once per
+    Pass `document_schema` alongside `rows_schema` for facts present once per
     document. Both shapes are returned by the same schema-bound call as
-    `{"document": {...}, "rows": [...]}`; this avoids a second corpus pass and
-    prevents document metadata from being duplicated or guessed on every row.
+    `{"document": {...}, "rows": [...]}`. Pass trusted caller or publisher
+    inventory metadata through `extra_fields_by_key`; it is stamped mechanically
+    on each document and row in grouped and serial paths instead of being
+    re-extracted from PDF contents.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from nexustrade.host import GatewayChatError
@@ -1752,9 +1784,17 @@ def extract_pdfs(
                 instructions=instructions,
                 _durable_replay=False,
             )
+            extra = (extra_fields_by_key or {}).get(key, {})
+            document = {**extracted.document, **extra, "source_id": key}
+            rows: list[dict[str, Any]] = []
+            for row_index, extracted_row in enumerate(extracted.rows):
+                row = {**extracted_row, **extra}
+                row["source_id"] = key
+                row["_source_row_index"] = row_index
+                rows.append(row)
             return {
-                "document": extracted.document,
-                "rows": extracted.rows,
+                "document": document,
+                "rows": rows,
                 "markdown": extracted.markdown,
                 "page_audit": extracted.page_audit,
                 "apparent_table_rows": extracted.apparent_table_rows,
