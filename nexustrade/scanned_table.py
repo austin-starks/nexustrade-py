@@ -1499,11 +1499,17 @@ def _extract_pdf_document_groups(
     documents_per_request: int,
     max_workers: int,
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
+    initial_results: "Mapping[str, dict[str, Any]] | None" = None,
+    result_order: "Sequence[str] | None" = None,
 ) -> dict[str, dict[str, Any]]:
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from nexustrade.host import GatewayChatTransportError
 
-    results: dict[str, dict[str, Any]] = {}
+    results: dict[str, dict[str, Any]] = dict(initial_results or {})
+    ordered_ids = (
+        list(result_order) if result_order is not None else [key for key, _ in items]
+    )
+    total_documents = len(ordered_ids)
     remaining: list[tuple[str, bytes]] = []
     cache_hits = 0
     for key, data in items:
@@ -1518,8 +1524,8 @@ def _extract_pdf_document_groups(
         remaining[index : index + documents_per_request]
         for index in range(0, len(remaining), documents_per_request)
     ]
-    completed = len(results)
-    failed = 0
+    completed = sum(payload.get("error") is None for payload in results.values())
+    failed = len(results) - completed
 
     def run_exact_group(group: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
         return _extract_pdf_document_group(
@@ -1561,7 +1567,7 @@ def _extract_pdf_document_groups(
                 request_key=request_keys[key],
                 document_id=key,
                 payload=payload,
-                total=len(items),
+                total=total_documents,
                 track_progress=False,
             )
         return extracted, len(extracted), 0
@@ -1584,7 +1590,7 @@ def _extract_pdf_document_groups(
             failed += group_failed
             _document_batch_progress(
                 batch_key=batch_key,
-                total=len(items),
+                total=total_documents,
                 completed=completed,
                 failed=failed,
                 cache_hits=cache_hits,
@@ -1592,17 +1598,46 @@ def _extract_pdf_document_groups(
             )
     _document_batch_progress(
         batch_key=batch_key,
-        total=len(items),
+        total=total_documents,
         completed=completed,
         failed=failed,
         cache_hits=cache_hits,
         done=True,
     )
-    return {key: results[key] for key, _ in items}
+    return {key: results[key] for key in ordered_ids}
+
+
+def _prepare_pdf_document(
+    source_id: str,
+    value: bytes | bytearray | memoryview | Mapping[str, Any],
+) -> tuple[bytes | None, str | None]:
+    if isinstance(value, bytes):
+        return value, None
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value), None
+    if isinstance(value, Mapping):
+        if value.get("ok") is not True:
+            return None, f"fetch result for {source_id!r} is not successful"
+        from nexustrade.tigris import read_fetch_result
+
+        try:
+            pdf_bytes = read_fetch_result(dict(value))
+        except Exception as exc:  # one bad receipt must not hide the other sources
+            return None, f"fetch result for {source_id!r} could not be read: {exc}"
+        if pdf_bytes is None:
+            return None, f"fetch result for {source_id!r} has no staged body"
+        return pdf_bytes, None
+    return None, (
+        f"document {source_id!r} must be PDF bytes or a host.fetch result, "
+        f"got {type(value).__name__}"
+    )
 
 
 def extract_pdfs(
-    documents: "Mapping[str, bytes] | Sequence[tuple[str, bytes]]",
+    documents: (
+        "Mapping[str, bytes | Mapping[str, Any]] | "
+        "Sequence[tuple[str, bytes | Mapping[str, Any]]]"
+    ),
     *,
     max_workers: int | None = None,
     max_attempts: int = 3,
@@ -1629,7 +1664,9 @@ def extract_pdfs(
     including requested inclusion/exclusion rules; the helper remains agnostic to
     the source domain.
 
-    Returns {key: {"rows"|"markdown": ..., "error": str | None}} — one entry per
+    `documents` may contain PDF bytes or successful `host.fetch` result objects;
+    fetch receipts are hydrated internally. Returns
+    {key: {"rows"|"markdown": ..., "error": str | None}} — one entry per
     input, ALWAYS. A document that fails is reported rather than dropped, so a
     partial batch is visible instead of looking like a smaller-but-clean result.
 
@@ -1692,12 +1729,29 @@ def extract_pdfs(
         if instructions is not None:
             raise ValueError("instructions requires rows_schema or document_schema")
 
-    items: list[tuple[str, bytes]] = (
+    raw_items = (
         list(documents.items()) if hasattr(documents, "items") else list(documents)
     )
+    result_order = [key for key, _ in raw_items]
     results: dict[str, dict[str, Any]] = {}
-    if not items:
+    items: list[tuple[str, bytes]] = []
+    for key, value in raw_items:
+        pdf_bytes, error = _prepare_pdf_document(key, value)
+        if pdf_bytes is not None:
+            items.append((key, pdf_bytes))
+            continue
+        if normalized_schema is not None:
+            results[key] = {"document": {}, "rows": [], "error": error}
+        else:
+            results[key] = {
+                "markdown" if markdown else "rows": "" if markdown else [],
+                "error": error,
+            }
+    if not raw_items:
         return results
+    if not items:
+        return {key: results[key] for key in result_order}
+    total_documents = len(raw_items)
 
     use_group_extraction = (
         normalized_schema is not None
@@ -1749,7 +1803,7 @@ def extract_pdfs(
     try:
         _gateway_json(
             "document-extractions/begin",
-            {"batchKey": batch_key, "total": len(items)},
+            {"batchKey": batch_key, "total": total_documents},
         )
     except Exception as exc:  # noqa: BLE001 - record calls remain authoritative
         print(f"document extraction batch registration failed: {exc}")
@@ -1767,6 +1821,8 @@ def extract_pdfs(
             documents_per_request=documents_per_request,
             max_workers=workers,
             extra_fields_by_key=extra_fields_by_key,
+            initial_results=results,
+            result_order=result_order,
         )
 
     def run_once(key: str, pdf_bytes: bytes) -> dict[str, Any]:
@@ -1861,7 +1917,7 @@ def extract_pdfs(
                 request_key=request_keys[key],
                 document_id=key,
                 payload=result,
-                total=len(items),
+                total=total_documents,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -1880,8 +1936,8 @@ def extract_pdfs(
     # whole batch up front would make budget backpressure a no-op: every document
     # is already scheduled by the time the first 429 comes back.
     pending = list(items)
-    completed = 0
-    failed = 0
+    completed = sum(payload.get("error") is None for payload in results.values())
+    failed = len(results) - completed
     cache_hits = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         in_flight: dict[Any, str] = {}
@@ -1908,7 +1964,7 @@ def extract_pdfs(
                 failed += 1
             _document_batch_progress(
                 batch_key=batch_key,
-                total=len(items),
+                total=total_documents,
                 completed=completed,
                 failed=failed,
                 cache_hits=cache_hits,
@@ -1922,13 +1978,13 @@ def extract_pdfs(
         results.setdefault(key, unstarted("not_started: ocr budget exhausted"))
     _document_batch_progress(
         batch_key=batch_key,
-        total=len(items),
+        total=total_documents,
         completed=completed,
         failed=failed,
         cache_hits=cache_hits,
         done=True,
     )
-    return results
+    return {key: results[key] for key in result_order}
 
 def extract_pdf_markdown_with_audit(
     pdf_bytes: bytes,

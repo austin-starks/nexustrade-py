@@ -139,6 +139,99 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         self.assertEqual(result["filing-2"]["rows"][0]["source_id"], "filing-2")
         self.assertEqual(result["filing-2"]["rows"][0]["_source_row_index"], 0)
 
+    def test_schema_batch_accepts_host_fetch_results_without_manual_hydration(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+        tigris = mock.Mock()
+        tigris.read_fetch_result.side_effect = [b"pdf-a", b"pdf-b"]
+        receipts = {
+            "filing-a": {
+                "ok": True,
+                "data": {"objectKey": "fetch/a.pdf", "bucket": "bucket"},
+            },
+            "filing-b": {
+                "ok": True,
+                "data": {"objectKey": "fetch/b.pdf", "bucket": "bucket"},
+            },
+        }
+
+        with (
+            mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.dict("sys.modules", {"nexustrade.tigris": tigris}),
+            mock.patch.object(
+                host,
+                "gateway_chat_json",
+                return_value={
+                    "documents": [
+                        {"source_id": "filing-a", "rows": [{"ticker": "AAA"}]},
+                        {"source_id": "filing-b", "rows": [{"ticker": "BBB"}]},
+                    ]
+                },
+            ),
+        ):
+            result = scanned_table.extract_pdfs(
+                receipts,
+                rows_schema={"ticker": "string"},
+                instructions="Return the requested rows.",
+                max_workers=1,
+            )
+
+        self.assertEqual(tigris.read_fetch_result.call_count, 2)
+        self.assertEqual(list(result), ["filing-a", "filing-b"])
+        self.assertEqual(result["filing-a"]["rows"][0]["source_id"], "filing-a")
+        self.assertEqual(result["filing-b"]["rows"][0]["ticker"], "BBB")
+
+    def test_failed_fetch_receipt_is_source_local_and_preserves_result_order(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+        progress_calls: list[dict[str, object]] = []
+
+        with (
+            mock.patch.object(
+                scanned_table, "_gateway_json", return_value={"ok": True}
+            ) as gateway_json,
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(
+                scanned_table,
+                "_document_batch_progress",
+                side_effect=lambda **kwargs: progress_calls.append(kwargs),
+            ),
+            mock.patch.object(
+                host,
+                "gateway_chat_json",
+                return_value={
+                    "documents": [
+                        {"source_id": "good", "rows": [{"ticker": "GOOD"}]},
+                        {"source_id": "later", "rows": [{"ticker": "LATER"}]},
+                    ]
+                },
+            ),
+        ):
+            result = scanned_table.extract_pdfs(
+                {
+                    "good": b"pdf-good",
+                    "failed": {"ok": False, "error": "HTTP 404"},
+                    "later": b"pdf-later",
+                },
+                rows_schema={"ticker": "string"},
+                instructions="Return the requested rows.",
+                max_workers=1,
+            )
+
+        self.assertEqual(list(result), ["good", "failed", "later"])
+        self.assertIn("not successful", result["failed"]["error"])
+        self.assertEqual(result["failed"]["rows"], [])
+        self.assertEqual(result["later"]["rows"][0]["source_id"], "later")
+        self.assertEqual(gateway_json.call_args.args[1]["total"], 3)
+        self.assertEqual(progress_calls[-1]["total"], 3)
+        self.assertEqual(progress_calls[-1]["completed"], 2)
+        self.assertEqual(progress_calls[-1]["failed"], 1)
+        self.assertTrue(progress_calls[-1]["done"])
+
     def test_schema_batch_carries_official_inventory_metadata_mechanically(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")

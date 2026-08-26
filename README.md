@@ -42,7 +42,7 @@ document-level facts and logical rows in one schema-bound pass:
 
 ```python
 extracted = nt.extract_pdfs(
-    documents,
+    documents,  # PDF bytes or successful host.fetch result objects
     document_schema={"report_date": "string", "filing_type": "string"},
     rows_schema={"asset": "string", "transaction_date": "string"},
     instructions="Return the rows requested by the task, preserving repeated rows.",
@@ -56,6 +56,10 @@ for source_id, result in extracted.items():
 The helper sends a small group of PDFs per schema-bound request by default;
 set `documents_per_request=1` for the legacy one-document OCR path. Use
 `inspect_document` only when a concrete ambiguity actually needs visual review.
+For complete-corpus work, treat search results as leads rather than an inventory.
+Use the publisher's listing/API/index boundary; when its metadata does not prove
+document membership, extract the minimal identity fields with `document_schema`
+and exclude mismatches before projecting rows.
 `derive_rows` then adds a schema-bound `derived` object while retaining every
 raw record unchanged:
 

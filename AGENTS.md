@@ -106,6 +106,11 @@ only for exact pages or documents flagged by batch diagnostics, then repeat
 extraction with a corrected schema when evidence is missing or ambiguous. Regex
 is not a substitute for OCR plus schema-bound extraction and must not classify
 model-produced asset identities.
+`nt.extract_pdfs` accepts PDF bytes or successful `host.fetch` result objects;
+do not manually hydrate every receipt. Search results are candidate leads, not a
+complete inventory. Use the publisher's own inventory boundary and, when its
+metadata does not prove membership, extract the minimal document identity needed
+to exclude unrelated documents before row projection.
 
 For fetched HTML, pass the successful `host.read_results()` rows directly to
 `nt.extract_web_pages(..., instructions=..., schema=...)`. It reads the staged
