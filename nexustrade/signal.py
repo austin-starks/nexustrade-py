@@ -21,8 +21,9 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # or a row identity it can join through /work/lineage.jsonl. Mirrors
 # hostDatasetReconciliation.resolvedRowSourceIds.
 _ROW_IDENTITY_FIELDS = ("output_row_id", "row_id")
-# Fallback names the host still resolves when source_id/source_ids are absent.
-_LEGACY_DIRECT_SOURCE_FIELDS = ("sourceId", "filing_id", "filingId")
+# Legacy spelling of the canonical host identity. Domain identifiers such as
+# filing_id are source facts, not provenance, and must never satisfy this join.
+_LEGACY_DIRECT_SOURCE_FIELDS = ("sourceId",)
 
 
 def read_rows(
@@ -82,17 +83,21 @@ def validate_row(row: dict[str, Any]) -> None:
         raise ValueError(f"invalid ticker: {ticker!r}")
 
 
-def _fetched_document_ids(results_path: str | None = None) -> list[str]:
-    """Host fetch ids that returned a PDF — the host's own document denominator.
+def _host_provenance_ids(
+    results_path: str | None = None,
+) -> tuple[list[str], set[str]]:
+    """Return fetched PDF ids and every successful broker result id.
 
     Read straight off the ledger rather than through host.read_results(), which
     hydrates spilled Tigris payloads; deciding whether a contract applies must not
-    pull bytes over the network.
+    pull bytes over the network. A malformed ledger disarms the early check to
+    match the host parser; sandbox_finish remains the authoritative backstop.
     """
     path = results_path or host.HOST_RESULTS_PATH
     if not os.path.exists(path):
-        return []
-    ids: list[str] = []
+        return [], set()
+    document_ids: list[str] = []
+    successful_ids: set[str] = set()
     with open(path, encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -104,14 +109,15 @@ def _fetched_document_ids(results_path: str | None = None) -> list[str]:
                 # parseHostResults THROWS on a bad line and the host swallows it
                 # with inputIds=[], disarming the contract for the whole run.
                 # Skipping the line instead would arm a check the host does not.
-                return []
+                return [], set()
             if not isinstance(row, dict) or isinstance(row, list):
-                return []
+                return [], set()
             request_id = row.get("id")
             if not isinstance(request_id, str):
-                return []
+                return [], set()
             if not row.get("ok"):
                 continue
+            successful_ids.add(request_id)
             data = row.get("data")
             if not isinstance(data, dict):
                 continue
@@ -125,8 +131,8 @@ def _fetched_document_ids(results_path: str | None = None) -> list[str]:
                 .lower()
             )
             if mime == "application/pdf" or object_key.lower().endswith(".pdf"):
-                ids.append(request_id)
-    return ids
+                document_ids.append(request_id)
+    return document_ids, successful_ids
 
 
 def _source_ids_from_value(value: Any) -> list[str]:
@@ -155,11 +161,11 @@ def _dedupe(ids: list[str]) -> list[str]:
 
 
 def _direct_source_ids(row: dict[str, Any]) -> list[str]:
-    """Mirror of hostDatasetReconciliation.rowSourceIds, legacy fallback included.
+    """Resolve canonical provenance without confusing it with source facts.
 
-    The legacy names are a fallback the host still honours, so a row keyed on
-    `filing_id` reconciles there. Omitting them here would fail a run the host
-    would have passed — the one thing this guard must never do.
+    sourceId remains as a compatibility spelling of source_id. filing_id and
+    filingId deliberately do not: they identify a publisher record, not the
+    exact host fetch receipt that the independent grader can open.
     """
     canonical = _source_ids_from_value(row.get("source_id")) + _source_ids_from_value(
         row.get("source_ids")
@@ -185,8 +191,10 @@ def _row_identity(row: dict[str, Any]) -> str | None:
     return None
 
 
-def _lineage_output_ids(lineage_path: str | None = None) -> tuple[set[str], bool]:
-    """Output row ids declared in lineage.jsonl, plus whether the file is malformed.
+def _lineage_sources(
+    lineage_path: str | None = None,
+) -> tuple[dict[str, list[str]], bool]:
+    """Output row to source ids, plus whether lineage is malformed.
 
     Mirrors hostDatasetReconciliation.lineageSources INCLUDING its duplicate rule:
     a repeated output_row_id voids the entire map, so one duplicate unattributes
@@ -195,8 +203,8 @@ def _lineage_output_ids(lineage_path: str | None = None) -> tuple[set[str], bool
     """
     path = lineage_path or DEFAULT_LINEAGE_PATH
     if not os.path.exists(path):
-        return set(), False
-    ids: set[str] = set()
+        return {}, False
+    sources_by_output_id: dict[str, list[str]] = {}
     malformed = False
     with open(path, encoding="utf-8") as handle:
         for line in handle:
@@ -212,30 +220,34 @@ def _lineage_output_ids(lineage_path: str | None = None) -> tuple[set[str], bool
                 malformed = True
                 continue
             identity = _row_identity(row)
-            if not identity or not _direct_source_ids(row):
+            source_ids = _direct_source_ids(row)
+            if not identity or not source_ids:
                 continue
-            if identity in ids:
+            if identity in sources_by_output_id:
                 malformed = True
                 continue
-            ids.add(identity)
-    return ids, malformed
+            sources_by_output_id[identity] = source_ids
+    return sources_by_output_id, malformed
 
 
-def _has_provenance(
-    row: dict[str, Any], lineage_ids: set[str], lineage_malformed: bool
-) -> bool:
-    """True when the host could attribute this row to a source document.
+def _resolved_source_ids(
+    row: dict[str, Any],
+    lineage_sources: dict[str, list[str]],
+    lineage_malformed: bool,
+) -> list[str]:
+    """Resolve the exact evidence ids the host will use for this row.
 
     A bare row_id is NOT provenance. The host resolves it only through
     lineage.jsonl, so an unjoined row_id reconciles against nothing — which is
     exactly how a run emits rows that look identified and grade as unattributed.
     """
-    if _direct_source_ids(row):
-        return True
+    direct = _direct_source_ids(row)
+    if direct:
+        return direct
     if lineage_malformed:
-        return False
+        return []
     identity = _row_identity(row)
-    return bool(identity and identity in lineage_ids)
+    return lineage_sources.get(identity, []) if identity else []
 
 
 def assert_document_provenance(
@@ -256,16 +268,15 @@ def assert_document_provenance(
     """
     if not rows:
         return
-    document_ids = _fetched_document_ids(results_path)
+    document_ids, successful_ids = _host_provenance_ids(results_path)
     if not document_ids:
         return
-    lineage_ids, lineage_malformed = _lineage_output_ids(lineage_path)
-    missing = sum(
-        1 for row in rows if not _has_provenance(row, lineage_ids, lineage_malformed)
-    )
-    if not missing:
-        return
-    if lineage_malformed:
+    lineage_sources, lineage_malformed = _lineage_sources(lineage_path)
+    resolved = [
+        _resolved_source_ids(row, lineage_sources, lineage_malformed) for row in rows
+    ]
+    missing = sum(1 for source_ids in resolved if not source_ids)
+    if lineage_malformed and missing:
         raise ValueError(
             f"{missing} of {len(rows)} row(s) cannot be attributed because "
             f"{lineage_path or DEFAULT_LINEAGE_PATH} is malformed — a duplicate "
@@ -273,17 +284,41 @@ def assert_document_provenance(
             "just the offending entry. Emit exactly one lineage object per output "
             "row, then write the rows again."
         )
-    raise ValueError(
-        f"{missing} of {len(rows)} row(s) lack provenance. This run fetched "
-        f"{len(document_ids)} source document(s), so the host blocks every emitted "
-        "row it cannot attribute — writing them now defers the identical failure to "
-        "validation. Stamp direct rows with source_id: pass source_id= to "
-        "scanned_table.extract_pdf or extract_rows, or use extract_pdfs, which "
-        "stamps it from the document key. For aggregate rows, write "
-        f"{lineage_path or DEFAULT_LINEAGE_PATH} FIRST with one "
-        "{output_row_id, source_ids} object per output row — a row_id that no "
-        "lineage entry joins is not provenance."
+    if missing:
+        raise ValueError(
+            f"{missing} of {len(rows)} row(s) lack provenance. This run fetched "
+            f"{len(document_ids)} source document(s), so the host blocks every emitted "
+            "row it cannot attribute — writing them now defers the identical failure to "
+            "validation. Stamp direct rows with source_id: pass source_id= to "
+            "scanned_table.extract_pdf or extract_rows, or use extract_pdfs, which "
+            "stamps it from the document key. filing_id is a source fact and does not "
+            "count as provenance. For aggregate rows, write "
+            f"{lineage_path or DEFAULT_LINEAGE_PATH} FIRST with one "
+            "{output_row_id, source_ids} object per output row — a row_id that no "
+            "lineage entry joins is not provenance."
+        )
+
+    # Lake query ids are independently minted and verified by the host from its
+    # durable query ledger, which is not exposed in host_results.jsonl. Everything
+    # else in a document-derived run must be an exact successful broker result id.
+    unknown = sorted(
+        {
+            source_id
+            for source_ids in [*resolved, *lineage_sources.values()]
+            for source_id in source_ids
+            if source_id not in successful_ids
+            and not source_id.startswith("lake-query:")
+        }
     )
+    if unknown:
+        preview = ", ".join(unknown[:8])
+        suffix = f" (+{len(unknown) - 8} more)" if len(unknown) > 8 else ""
+        raise ValueError(
+            f"{len(unknown)} provenance id(s) are not successful host result keys: "
+            f"{preview}{suffix}. Preserve source_id from host.fetch receipts through "
+            "scanned_table.extract_pdfs; do not replace it with filing_id, a URL, or "
+            "another publisher identifier."
+        )
 
 
 def _write_jsonl_atomic(rows: list[dict[str, Any]], path: str) -> None:
