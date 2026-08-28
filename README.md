@@ -53,8 +53,11 @@ for source_id, result in extracted.items():
     rows = result["rows"]          # each includes source_id + _source_row_index
 ```
 
-The helper sends a small group of PDFs per schema-bound request by default;
-set `documents_per_request=1` for the legacy one-document OCR path. Use
+The helper sends the supplied PDF corpus in one schema-bound request by default
+when it fits OpenAI's combined file-input limit. It partitions only at that real
+byte boundary or after a transport/structured-output failure. Set
+`documents_per_request` only to intentionally partition a corpus; use `1` for
+the compatibility one-document OCR path. Use
 `inspect_document` only when a concrete ambiguity actually needs visual review.
 For complete-corpus work, treat search results as leads rather than an inventory.
 Use the publisher's listing/API/index boundary; when its metadata does not prove

@@ -1139,8 +1139,11 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v6"
-DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 8 * 1024 * 1024
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v7"
+DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 50 * 1024 * 1024
+# Keep this aligned with NexusGenAI's decoded attachment-byte ceiling. The
+# gateway accepts any number of files that fit inside this real payload bound.
+DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES = 50 * 1024 * 1024
 
 
 def _gateway_json(
@@ -1198,6 +1201,7 @@ def _document_request_key(
     rows_schema_name: str = "extract_rows",
     instructions: str | None = None,
     documents_per_request: int = 1,
+    group_context_key: str | None = None,
     extra_fields: dict[str, Any] | None = None,
 ) -> str:
     descriptor = {
@@ -1236,6 +1240,7 @@ def _document_request_key(
             else None
         ),
         "documents_per_request": documents_per_request,
+        "group_context_key": group_context_key,
         "extra_fields": extra_fields,
     }
     encoded = json.dumps(
@@ -1254,6 +1259,42 @@ def _document_batch_key(request_keys: dict[str, str]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _document_group_context_key(group: list[tuple[str, bytes]]) -> str:
+    encoded = json.dumps(
+        [
+            [source_id, hashlib.sha256(pdf_bytes).hexdigest()]
+            for source_id, pdf_bytes in group
+        ],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _partition_pdf_document_groups(
+    items: list[tuple[str, bytes]],
+    *,
+    documents_per_request: int,
+) -> list[list[tuple[str, bytes]]]:
+    groups: list[list[tuple[str, bytes]]] = []
+    current: list[tuple[str, bytes]] = []
+    current_bytes = 0
+    for item in items:
+        item_bytes = len(item[1])
+        if current and (
+            len(current) >= documents_per_request
+            or current_bytes + item_bytes > DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES
+        ):
+            groups.append(current)
+            current = []
+            current_bytes = 0
+        current.append(item)
+        current_bytes += item_bytes
+    if current:
+        groups.append(current)
+    return groups
 
 
 def _document_result_record(
@@ -1334,9 +1375,11 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "The caller instructions define the requested rows and any inclusion or "
     "exclusion semantics. Use the PDF bytes as the authoritative visual source. "
     "Return exactly one document result for every supplied source_id and no other "
-    "source_id. Treat each attachment as an isolated source: for a document result, "
-    "use only facts visible in the PDF mapped to that result's source_id. Never copy, "
-    "reuse, or complete a field from another attachment, even when rows look similar. "
+    "source_id. Keep every source fact attributed to the PDF where it is visible. "
+    "When the caller's schema or instructions request a cross-document relationship, "
+    "such as an amendment, restatement, or duplicate, compare the attached PDFs to "
+    "identify that relationship. Never copy, reuse, or complete a source-local field "
+    "from another attachment, even when rows look similar. "
     "Before returning, verify every non-null row field against that same attachment. "
     "Map source fields by their visible role and the declared output field meaning. "
     "When a document has distinct entity, asset, description, note, or transaction "
@@ -1384,6 +1427,7 @@ def _extract_pdf_document_group(
 ) -> dict[str, dict[str, Any]]:
     from nexustrade.host import (
         GatewayChatError,
+        GatewayChatTransportError,
         gateway_chat_json,
         gateway_file_part,
         gateway_multimodal_messages,
@@ -1394,6 +1438,13 @@ def _extract_pdf_document_group(
         raise ValueError(
             "multi-document extraction requires each PDF to fit rows_pdf_max_bytes; "
             f"oversized source_ids: {', '.join(oversized)}"
+        )
+    total_pdf_bytes = sum(len(data) for _, data in group)
+    if total_pdf_bytes > DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES:
+        raise GatewayChatTransportError(
+            "multi-document extraction corpus exceeds the gateway's aggregate "
+            f"attachment-byte limit ({total_pdf_bytes} > "
+            f"{DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES})"
         )
     source_ids = [key for key, _ in group]
     mapping = [
@@ -1510,20 +1561,24 @@ def _extract_pdf_document_groups(
         list(result_order) if result_order is not None else [key for key, _ in items]
     )
     total_documents = len(ordered_ids)
-    remaining: list[tuple[str, bytes]] = []
     cache_hits = 0
-    for key, data in items:
-        replay = _document_result_lookup(request_keys[key])
-        if replay is None:
-            remaining.append((key, data))
+    groups: list[list[tuple[str, bytes]]] = []
+    for group in _partition_pdf_document_groups(
+        items,
+        documents_per_request=documents_per_request,
+    ):
+        replays = {
+            key: _document_result_lookup(request_keys[key]) for key, _data in group
+        }
+        if all(payload is not None for payload in replays.values()):
+            results.update(
+                {key: payload for key, payload in replays.items() if payload is not None}
+            )
+            cache_hits += len(group)
         else:
-            results[key] = replay
-            cache_hits += 1
-
-    groups = [
-        remaining[index : index + documents_per_request]
-        for index in range(0, len(remaining), documents_per_request)
-    ]
+            # Cross-document fields depend on the exact peer corpus. A partial
+            # cache hit must not shrink the attachments sent for the group.
+            groups.append(group)
     completed = sum(payload.get("error") is None for payload in results.values())
     failed = len(results) - completed
 
@@ -1540,6 +1595,8 @@ def _extract_pdf_document_groups(
 
     def run_group(
         group: list[tuple[str, bytes]],
+        *,
+        record_results: bool = True,
     ) -> tuple[dict[str, dict[str, Any]], int, int]:
         try:
             extracted = run_exact_group(group)
@@ -1554,22 +1611,27 @@ def _extract_pdf_document_groups(
             ):
                 raise
             midpoint = len(group) // 2
-            left_results, left_completed, left_failed = run_group(group[:midpoint])
-            right_results, right_completed, right_failed = run_group(group[midpoint:])
+            left_results, left_completed, left_failed = run_group(
+                group[:midpoint], record_results=False
+            )
+            right_results, right_completed, right_failed = run_group(
+                group[midpoint:], record_results=False
+            )
             return (
                 {**left_results, **right_results},
                 left_completed + right_completed,
                 left_failed + right_failed,
             )
-        for key, payload in extracted.items():
-            _document_result_record(
-                batch_key=batch_key,
-                request_key=request_keys[key],
-                document_id=key,
-                payload=payload,
-                total=total_documents,
-                track_progress=False,
-            )
+        if record_results:
+            for key, payload in extracted.items():
+                _document_result_record(
+                    batch_key=batch_key,
+                    request_key=request_keys[key],
+                    document_id=key,
+                    payload=payload,
+                    total=total_documents,
+                    track_progress=False,
+                )
         return extracted, len(extracted), 0
 
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(groups) or 1))) as pool:
@@ -1653,16 +1715,17 @@ def extract_pdfs(
     rows_include_pdf: bool = True,
     rows_pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
     instructions: str | None = None,
-    documents_per_request: int = 3,
+    documents_per_request: int | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Extract many PDFs with small schema-bound multi-document requests.
+    """Extract a PDF corpus with one schema-bound multi-document request.
 
-    When `rows_schema` is supplied, up to `documents_per_request` PDFs share one
-    Luna request (default 3). This preserves the simple caller contract while
-    avoiding one paid semantic round trip per document. Pass 1 to use the legacy
-    OCR-plus-one-document path. `instructions` supplies concise task semantics,
-    including requested inclusion/exclusion rules; the helper remains agnostic to
-    the source domain.
+    When `rows_schema` is supplied, every eligible PDF shares one Luna request by
+    default. If the real transport or structured-output call cannot accept that
+    corpus, the request is bisected until the failing subset is isolated. Set a
+    positive `documents_per_request` only to intentionally partition the corpus;
+    pass 1 to use the compatibility OCR-plus-one-document path. `instructions`
+    supplies concise task semantics, including requested inclusion/exclusion rules;
+    the helper remains agnostic to the source domain.
 
     `documents` may contain PDF bytes or successful `host.fetch` result objects;
     fetch receipts are hydrated internally. Returns
@@ -1720,8 +1783,8 @@ def extract_pdfs(
         rows_schema = (
             normalize_rows_schema(rows_schema) if rows_schema is not None else None
         )
-        if documents_per_request < 1 or documents_per_request > 10:
-            raise ValueError("documents_per_request must be between 1 and 10")
+        if documents_per_request is not None and documents_per_request < 1:
+            raise ValueError("documents_per_request must be positive when supplied")
         if instructions is not None and not instructions.strip():
             raise ValueError("instructions must be non-empty when supplied")
     else:
@@ -1752,17 +1815,31 @@ def extract_pdfs(
     if not items:
         return {key: results[key] for key in result_order}
     total_documents = len(raw_items)
+    effective_documents_per_request = (
+        len(items) if documents_per_request is None else documents_per_request
+    )
 
     use_group_extraction = (
         normalized_schema is not None
         and rows_schema is not None
         and len(items) > 1
-        and documents_per_request > 1
+        and effective_documents_per_request > 1
         and max_pages is None
         and rows_include_pdf
         and all(len(pdf_bytes) <= rows_pdf_max_bytes for _, pdf_bytes in items)
     )
-    replay_documents_per_request = documents_per_request if use_group_extraction else 1
+    replay_documents_per_request = (
+        effective_documents_per_request if use_group_extraction else 1
+    )
+    group_context_by_key: dict[str, str] = {}
+    if use_group_extraction:
+        for group in _partition_pdf_document_groups(
+            items,
+            documents_per_request=effective_documents_per_request,
+        ):
+            context_key = _document_group_context_key(group)
+            for key, _pdf_bytes in group:
+                group_context_by_key[key] = context_key
 
     # Compute sessions route every schema-bound LLM call through a ledger-backed
     # dollar gate. An unbounded default here used to turn a 100-document corpus
@@ -1795,6 +1872,7 @@ def extract_pdfs(
             rows_schema_name="extract_rows",
             instructions=instructions,
             documents_per_request=replay_documents_per_request,
+            group_context_key=group_context_by_key.get(key),
             extra_fields=(extra_fields_by_key or {}).get(key),
         )
         for key, pdf_bytes in items
@@ -1818,7 +1896,7 @@ def extract_pdfs(
             rows_retries=rows_retries,
             rows_pdf_max_bytes=rows_pdf_max_bytes,
             instructions=instructions,
-            documents_per_request=documents_per_request,
+            documents_per_request=effective_documents_per_request,
             max_workers=workers,
             extra_fields_by_key=extra_fields_by_key,
             initial_results=results,
