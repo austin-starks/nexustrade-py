@@ -335,6 +335,36 @@ def queue_search(
     )
 
 
+def queue_sec(
+    request_id: str,
+    *,
+    action: str,
+    ticker: str,
+    periods: int,
+    cadence: str,
+    as_of: str | None = None,
+    roles: Sequence[str] | None = None,
+) -> None:
+    """Queue a point-in-time SEC statement or filing-fact candidate request.
+
+    Prefer ``nexustrade.sec.statement`` and ``nexustrade.sec.fact_candidates``;
+    this low-level helper exists for the shared host-call transport.
+    """
+    request: dict[str, Any] = {
+        "id": request_id,
+        "kind": "sec",
+        "action": action,
+        "ticker": ticker,
+        "periods": periods,
+        "cadence": cadence,
+    }
+    if as_of is not None:
+        request["asOf"] = as_of
+    if roles is not None:
+        request["roles"] = list(roles)
+    _pending_requests.append(request)
+
+
 def flush_requests() -> bool:
     """Write queued host requests. Returns True if any were written."""
     if not _pending_requests:

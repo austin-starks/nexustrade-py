@@ -82,6 +82,7 @@ _LAZY_EXPORTS = {
     # No optional dependency of its own — lazy purely so `nt.nl` matches the
     # `nt.lake` shape rather than importing at package load.
     "nl": ("nexustrade.nl", None),
+    "sec": ("nexustrade.sec", None),
     "stats": ("nexustrade.stats", None),
     "flush_requests": ("nexustrade.host", "flush_requests"),
     "gateway_chat": ("nexustrade.host", "gateway_chat"),
@@ -159,6 +160,7 @@ _PUBLIC_BASE_LAZY_MODULES = {
     "nexustrade.host",
     "nexustrade.inspect_document",
     "nexustrade.report",
+    "nexustrade.sec",
     "nexustrade.scanned_table",
     "nexustrade.semantic",
     "nexustrade.signal",

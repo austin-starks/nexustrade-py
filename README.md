@@ -564,6 +564,44 @@ Branch on `outcome`, not on status alone:
 
 This spends LLM credits. The structured `nt.lake` API below does not.
 
+## SEC statements and filing facts
+
+Run Compute can read point-in-time SEC fundamentals without reconstructing
+filing selection in ad hoc SQL:
+
+```python
+import nexustrade as nt
+
+statement = nt.sec.statement(
+    ticker="GOOGL",
+    periods=10,
+    cadence="annual",
+    as_of="2026-08-28",
+)
+
+candidates = nt.sec.fact_candidates(
+    ticker="GOOGL",
+    roles=[
+        "depreciation_and_amortization",
+        "capital_expenditures",
+        "operating_cash_flow",
+        "current_operating_assets",
+        "current_operating_liabilities",
+    ],
+    periods=10,
+    cadence="annual",
+    as_of="2026-08-28",
+)
+```
+
+`statement["rows"]` is ordered newest first and keeps accession, form, filing
+URL, availability time, and archive provenance. `fact_candidates` returns the
+underlying concepts plus a reconciliation result for each role and period.
+Working-capital components are deliberately not presented as a reported total;
+the result says when a component set is incomplete or requires review. SEC
+CompanyFacts does not expose inline-XBRL dimensional contexts, so candidates
+also say that their consolidated-versus-dimensional scope is not proven.
+
 ## Lake SQL
 
 Read-only SQL over the NexusTrade market-data lake. Results are durable Parquet

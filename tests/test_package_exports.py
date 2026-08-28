@@ -182,6 +182,8 @@ class PackageExportTests(unittest.TestCase):
         self.assertTrue(callable(nt.extract_pdfs))
         self.assertTrue(callable(nt.extract_web_pages))
         self.assertTrue(callable(nt.write_rows))
+        self.assertTrue(callable(nt.sec.statement))
+        self.assertTrue(callable(nt.sec.fact_candidates))
         with self.assertRaises(AttributeError) as unknown:
             nt.definitely_not_a_real_export
         self.assertIn("has no attribute", str(unknown.exception))
@@ -228,6 +230,7 @@ class PackageExportTests(unittest.TestCase):
             "inspect_document",
             "report",
             "scanned_table",
+            "sec",
             "semantic",
             "signal",
             "tigris",
