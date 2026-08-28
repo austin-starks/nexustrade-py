@@ -265,7 +265,8 @@ ones the run cannot leave on its own, so the caller is the approver.
 
 ```python
 run = client.create_agent("Find momentum names in the S&P 500",
-                      idempotency_key="momentum-scan-v1")
+                      idempotency_key="momentum-scan-v1",
+                      cost_ceiling_usd=20)
 
 for event in run:
     print(event.text)

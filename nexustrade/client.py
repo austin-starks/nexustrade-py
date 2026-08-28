@@ -1523,6 +1523,7 @@ class NexusTradeClient:
         *,
         idempotency_key: str,
         max_iterations: int | None = None,
+        cost_ceiling_usd: float | None = None,
     ) -> "AgentRun":
         """Start an agent run and return an iterable handle.
 
@@ -1534,6 +1535,8 @@ class NexusTradeClient:
         body: dict[str, Any] = {"prompt": prompt}
         if max_iterations is not None:
             body["maxIterations"] = max_iterations
+        if cost_ceiling_usd is not None:
+            body["costCeilingUsd"] = cost_ceiling_usd
         response = self._transport.request(
             "POST",
             "agents",

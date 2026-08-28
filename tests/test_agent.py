@@ -77,6 +77,29 @@ def _client(
 
 
 class AgentIterationTests(unittest.TestCase):
+    def test_create_sends_iteration_and_cost_ceilings(self) -> None:
+        client, transport = _client([])
+
+        client.create_agent(
+            "do a thing",
+            idempotency_key="bounded",
+            max_iterations=65,
+            cost_ceiling_usd=20,
+        )
+
+        self.assertEqual(
+            transport.calls[0],
+            (
+                "POST",
+                "agents",
+                {
+                    "prompt": "do a thing",
+                    "maxIterations": 65,
+                    "costCeilingUsd": 20,
+                },
+            ),
+        )
+
     def test_yields_events_until_terminal(self) -> None:
         client, transport = _client(
             [
