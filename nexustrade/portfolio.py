@@ -715,7 +715,16 @@ def structure_template(
     name: Optional[str] = None,
     eligibility: Optional[Condition] = None,
     spread_type: Optional[str] = None,
+    width_constraint: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Structure template for RebalanceOption.
+
+    width_constraint sets a minimum realised strike width, checked AFTER
+    contracts resolve: {"minWidthPercent": 4} or {"minWidthDollars": 40}.
+    Each leg snaps independently to the nearest listed strike, so the authored
+    offsets and the width you actually get differ by up to a full grid step in
+    either direction. minWidthPercent is a whole-number percent of spot.
+    """
     return _compact(
         {
             "legs": list(legs),
@@ -726,6 +735,7 @@ def structure_template(
                 else None
             ),
             "spreadType": spread_type,
+            "widthConstraint": width_constraint,
         }
     )
 
