@@ -78,6 +78,76 @@ class HostFetchIdentityTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be verified"):
             host.fetch({"pdf_1": "https://example.gov/a.pdf"})
 
+    def test_unknown_form_field_fails_with_supported_html_form_shape(self):
+        with patch.object(host, "_gateway_fetch_many") as gateway:
+            with self.assertRaisesRegex(
+                ValueError,
+                "URL-encode its fields into `body`.*`source_receipt`",
+            ):
+                host.fetch(
+                    {
+                        "search": {
+                            "url": "https://example.gov/search",
+                            "method": "POST",
+                            "form": {"LastName": "Example"},
+                        }
+                    }
+                )
+        gateway.assert_not_called()
+
+    def test_post_shape_is_normalized_before_gateway_use(self):
+        gateway_result = {
+            "search": {
+                "id": "search",
+                "ok": False,
+                "url": "https://example.gov/search",
+                "error": "example",
+            }
+        }
+        with patch.object(
+            host,
+            "_gateway_fetch_many",
+            return_value=gateway_result,
+        ) as gateway:
+            result = host.fetch(
+                {
+                    "search": {
+                        "url": " https://example.gov/search ",
+                        "method": "post",
+                        "body": "LastName=Example",
+                        "content_type": "application/x-www-form-urlencoded",
+                        "source_receipt": "signed-parent",
+                    }
+                }
+            )
+
+        self.assertEqual(result, gateway_result)
+        gateway.assert_called_once_with(
+            {
+                "search": {
+                    "url": "https://example.gov/search",
+                    "method": "POST",
+                    "body": "LastName=Example",
+                    "content_type": "application/x-www-form-urlencoded",
+                    "source_receipt": "signed-parent",
+                }
+            }
+        )
+
+    def test_post_without_parent_receipt_fails_before_gateway_use(self):
+        with patch.object(host, "_gateway_fetch_many") as gateway:
+            with self.assertRaisesRegex(ValueError, "POST requires source_receipt"):
+                host.fetch(
+                    {
+                        "search": {
+                            "url": "https://example.gov/search",
+                            "method": "POST",
+                            "body": "LastName=Example",
+                        }
+                    }
+                )
+        gateway.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

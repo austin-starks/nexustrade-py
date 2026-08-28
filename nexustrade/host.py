@@ -165,6 +165,90 @@ def _assert_fetch_id_matches_request(
         )
 
 
+_FETCH_SPEC_FIELDS = {
+    "url",
+    "headers",
+    "source_receipt",
+    "method",
+    "body",
+    "content_type",
+    "boundary_capability",
+}
+
+
+def _normalize_fetch_spec(
+    spec: str | dict[str, Any],
+) -> str | dict[str, Any]:
+    """Validate one public ``host.fetch`` request before either transport.
+
+    The gateway and broker must accept the same public shape. In particular, an
+    unknown convenience field such as ``form`` must not be forwarded to a typed
+    server route that silently drops it and turns the request into an empty POST.
+    """
+    if isinstance(spec, str):
+        if not spec.strip():
+            raise ValueError("fetch request URL must be a non-empty string")
+        return spec
+    if not isinstance(spec, dict):
+        raise ValueError("fetch request must be a URL string or request dict")
+
+    unknown = sorted(set(spec) - _FETCH_SPEC_FIELDS)
+    if unknown:
+        fields = ", ".join(repr(field) for field in unknown)
+        form_help = (
+            " For an HTML form, URL-encode its fields into `body`, set "
+            "`content_type='application/x-www-form-urlencoded'`, and pass "
+            "`source_receipt` from the form-page fetch."
+            if "form" in unknown
+            else ""
+        )
+        raise ValueError(f"unsupported fetch request field(s): {fields}.{form_help}")
+
+    normalized = dict(spec)
+    normalized.pop("boundary_capability", None)
+    url = normalized.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("fetch request spec requires a non-empty url")
+    normalized["url"] = url.strip()
+
+    method = normalized.get("method", "GET")
+    if not isinstance(method, str):
+        raise ValueError("fetch request method must be GET or POST")
+    method = method.upper()
+    if method not in ("GET", "POST"):
+        raise ValueError("fetch request method must be GET or POST")
+    normalized["method"] = method
+
+    headers = normalized.get("headers")
+    if headers is not None and (
+        not isinstance(headers, dict)
+        or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in headers.items()
+        )
+    ):
+        raise ValueError("fetch request headers must map strings to strings")
+    body = normalized.get("body")
+    if body is not None and not isinstance(body, str):
+        raise ValueError("fetch request body must be a string")
+    content_type = normalized.get("content_type")
+    if content_type is not None and not isinstance(content_type, str):
+        raise ValueError("fetch request content_type must be a string")
+    source_receipt = normalized.get("source_receipt")
+    if source_receipt is not None and (
+        not isinstance(source_receipt, str) or not source_receipt.strip()
+    ):
+        raise ValueError("fetch request source_receipt must be a non-empty string")
+    if method == "GET" and body is not None:
+        raise ValueError("fetch GET requests cannot include a body")
+    if method == "POST" and not source_receipt:
+        raise ValueError(
+            "fetch POST requires source_receipt from a prior fetch in this job "
+            "(GET the form/API page first, then POST with that data.receipt)"
+        )
+    return normalized
+
+
 def queue_fetch(
     request_id: str,
     url: str,
@@ -184,32 +268,32 @@ def queue_fetch(
     read the API docs, then urlencode it, or pass JSON with
     content_type="application/json").
     """
-    # Accept and ignore legacy boundary_capability kwarg from older agent code.
-    _ = _deprecated.pop("boundary_capability", None)
-    method = method.upper()
-    if method not in ("GET", "POST"):
-        raise ValueError("queue_fetch method must be GET or POST")
-    if method == "GET" and body is not None:
-        raise ValueError("queue_fetch GET requests cannot include a body")
-    if method == "POST" and not source_receipt:
-        raise ValueError(
-            "queue_fetch POST requires source_receipt from a prior fetch in this "
-            "job (GET the form/API page first, then POST with that data.receipt)"
-        )
+    spec = _normalize_fetch_spec(
+        {
+            "url": url,
+            "headers": headers,
+            "source_receipt": source_receipt,
+            "method": method,
+            "body": body,
+            "content_type": content_type,
+            **_deprecated,
+        }
+    )
+    assert isinstance(spec, dict)
     req: dict[str, Any] = {
         "id": request_id,
         "kind": "fetch",
-        "url": url,
-        "method": method,
+        "url": spec["url"],
+        "method": spec["method"],
     }
-    if headers:
-        req["headers"] = headers
-    if body is not None:
-        req["body"] = body
-    if content_type:
-        req["contentType"] = content_type
-    if source_receipt:
-        req["sourceReceipt"] = source_receipt
+    if spec.get("headers"):
+        req["headers"] = spec["headers"]
+    if spec.get("body") is not None:
+        req["body"] = spec["body"]
+    if spec.get("content_type"):
+        req["contentType"] = spec["content_type"]
+    if spec.get("source_receipt"):
+        req["sourceReceipt"] = spec["source_receipt"]
     _pending_requests.append(req)
 
 
@@ -392,19 +476,24 @@ def fetch(
     (`f"p{i}"` over enumerate) all produce a NEW key for data the host already
     stored, so the batch never drains and nothing announces it.
     """
+    normalized_requests = {
+        rid: _normalize_fetch_spec(spec) for rid, spec in requests.items()
+    }
     results = read_results()
-    for rid, spec in requests.items():
+    for rid, spec in normalized_requests.items():
         existing = results.get(rid)
         if existing is not None:
             _assert_fetch_id_matches_request(rid, spec, existing)
-    missing = {rid: spec for rid, spec in requests.items() if rid not in results}
+    missing = {
+        rid: spec for rid, spec in normalized_requests.items() if rid not in results
+    }
     if not missing:
-        return {rid: results[rid] for rid in requests}
+        return {rid: results[rid] for rid in normalized_requests}
 
     gateway = _gateway_fetch_many(missing)
     if gateway is not None:
         results.update(gateway)
-        return {rid: results[rid] for rid in requests if rid in results}
+        return {rid: results[rid] for rid in normalized_requests if rid in results}
 
     for rid, spec in missing.items():
         if isinstance(spec, str):
@@ -416,7 +505,7 @@ def fetch(
         # The host fulfills what we queued and re-runs this script from the top;
         # this call then returns the data instead of queueing again.
         raise SystemExit(0)
-    return {rid: results[rid] for rid in requests if rid in results}
+    return {rid: results[rid] for rid in normalized_requests if rid in results}
 
 
 
