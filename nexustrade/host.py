@@ -1566,12 +1566,17 @@ def gateway_chat(
     temperature: float = 0,
     response_format: dict[str, Any] | None = None,
     timeout_sec: int = 180,
+    max_transport_attempts: int | None = None,
+    idempotency_key: str | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """
     OpenAI-compatible chat completion via the sandbox gateway (/chat/completions).
     A positional mapping is serialized as the user prompt; a positional list is
     treated as an already-formed OpenAI messages array.
+    `max_transport_attempts` lets a higher-level recovery strategy, such as
+    document-group bisection, remain the sole retry owner. `idempotency_key`
+    makes any lower-hop rejoin or replay the same billed logical request.
     Returns the raw OpenAI response object (choices, usage, model, …).
     """
     built_messages = _build_chat_messages(messages, prompt=prompt, system=system)
@@ -1585,16 +1590,31 @@ def gateway_chat(
         body["response_format"] = response_format
     body.update(extra)
     encoded_body = json.dumps(body).encode("utf-8")
+    attempts = (
+        _GATEWAY_CHAT_MAX_ATTEMPTS
+        if max_transport_attempts is None
+        else max_transport_attempts
+    )
+    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
+        raise ValueError("max_transport_attempts must be a positive integer")
+    if attempts > _GATEWAY_CHAT_MAX_ATTEMPTS:
+        raise ValueError(
+            f"max_transport_attempts cannot exceed {_GATEWAY_CHAT_MAX_ATTEMPTS}"
+        )
+    normalized_idempotency_key = (idempotency_key or "").strip()
     payload: Any = None
-    for attempt in range(_GATEWAY_CHAT_MAX_ATTEMPTS):
+    for attempt in range(attempts):
         _touch_host_activity()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        if normalized_idempotency_key:
+            headers["Idempotency-Key"] = normalized_idempotency_key
         req = urllib.request.Request(
             f"{base}/chat/completions",
             data=encoded_body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:
@@ -1607,7 +1627,7 @@ def gateway_chat(
             detail = exc.read().decode("utf-8", errors="replace")
             if (
                 exc.code not in _GATEWAY_CHAT_TRANSIENT_HTTP_STATUSES
-                or attempt + 1 == _GATEWAY_CHAT_MAX_ATTEMPTS
+                or attempt + 1 == attempts
             ):
                 error_type = (
                     GatewayChatTransportError
@@ -1617,10 +1637,10 @@ def gateway_chat(
                 raise error_type(f"gateway chat HTTP {exc.code}: {detail}") from exc
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             _touch_host_activity()
-            if attempt + 1 == _GATEWAY_CHAT_MAX_ATTEMPTS:
+            if attempt + 1 == attempts:
                 raise GatewayChatTransportError(
                     f"gateway chat transport failed after "
-                    f"{_GATEWAY_CHAT_MAX_ATTEMPTS} attempts: {exc}"
+                    f"{attempts} attempts: {exc}"
                 ) from exc
 
         retry_base = _GATEWAY_CHAT_RETRY_BASE_SECONDS * (2**attempt)
@@ -1639,6 +1659,8 @@ def gateway_chat_text(
     temperature: float = 0,
     response_format: dict[str, Any] | None = None,
     timeout_sec: int = 180,
+    max_transport_attempts: int | None = None,
+    idempotency_key: str | None = None,
     **extra: Any,
 ) -> str:
     """Chat completion returning the assistant message content string."""
@@ -1650,6 +1672,8 @@ def gateway_chat_text(
         temperature=temperature,
         response_format=response_format,
         timeout_sec=timeout_sec,
+        max_transport_attempts=max_transport_attempts,
+        idempotency_key=idempotency_key,
         **extra,
     )
     choices = payload.get("choices")
@@ -1673,6 +1697,8 @@ def gateway_chat_json(
     schema_name: str = "response",
     strict: bool = True,
     timeout_sec: int = 180,
+    max_transport_attempts: int | None = None,
+    idempotency_key: str | None = None,
     **extra: Any,
 ) -> Any:
     """
@@ -1698,6 +1724,8 @@ def gateway_chat_json(
         temperature=temperature,
         response_format=response_format,
         timeout_sec=timeout_sec,
+        max_transport_attempts=max_transport_attempts,
+        idempotency_key=idempotency_key,
         **extra,
     )
     return _parse_json_content(content)

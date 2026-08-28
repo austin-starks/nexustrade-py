@@ -12,7 +12,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
@@ -1139,8 +1139,9 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v7"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v8"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 50 * 1024 * 1024
+GROUP_EXTRACT_GATEWAY_TIMEOUT_SEC = 15 * 60 + 30
 # Keep this aligned with NexusGenAI's decoded attachment-byte ceiling. The
 # gateway accepts any number of files that fit inside this real payload bound.
 DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES = 50 * 1024 * 1024
@@ -1206,9 +1207,8 @@ def _document_request_key(
 ) -> str:
     descriptor = {
         "protocol": DOCUMENT_EXTRACTION_PROTOCOL_VERSION,
-        # The gateway scopes lookups to one compute session. Keeping this key
-        # deterministic inside that scope lets a code-only remediation reuse
-        # the exact validated extraction without leaking answers across runs.
+        # Every semantic input belongs in this key so session-local replay cannot
+        # survive a changed corpus, schema, prompt, or model.
         "document_id": key,
         "document_sha256": hashlib.sha256(pdf_bytes).hexdigest(),
         "markdown": markdown,
@@ -1271,6 +1271,47 @@ def _document_group_context_key(group: list[tuple[str, bytes]]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _document_group_request_keys(
+    group: list[tuple[str, bytes]],
+    *,
+    markdown: bool,
+    max_pages: int | None,
+    target_schema: Any,
+    document_schema: dict[str, Any] | None,
+    rows_schema: dict[str, Any] | None,
+    rows_model: str | None,
+    rows_retries: int,
+    rows_include_pdf: bool,
+    rows_pdf_max_bytes: int,
+    instructions: str | None,
+    extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
+) -> dict[str, str]:
+    """Address results by the exact peer corpus sent to the model."""
+    context_key = _document_group_context_key(group)
+    return {
+        key: _document_request_key(
+            key,
+            pdf_bytes,
+            markdown=markdown,
+            max_pages=max_pages,
+            target_schema=target_schema,
+            document_schema=document_schema,
+            rows_schema=rows_schema,
+            rows_model=rows_model,
+            rows_retries=rows_retries,
+            rows_include_pdf=rows_include_pdf,
+            rows_pdf_max_bytes=rows_pdf_max_bytes,
+            rows_force_ocr=True,
+            rows_schema_name="extract_rows",
+            instructions=instructions,
+            documents_per_request=len(group),
+            group_context_key=context_key,
+            extra_fields=(extra_fields_by_key or {}).get(key),
+        )
+        for key, pdf_bytes in group
+    }
 
 
 def _partition_pdf_document_groups(
@@ -1387,8 +1428,16 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "different semantic field merely because the names are similar. "
     "Preserve source row order and repeated complete rows. Join wrapped "
     "lines or page-boundary continuations to their logical row, but never merge two "
-    "separately printed rows. Copy source facts faithfully, represent absent values "
-    "as null, and never invent facts from world knowledge. Return only the strict "
+    "separately printed rows. Copy literal source text character-for-character when "
+    "a string output field represents a printed fact: do not drop leading date digits, "
+    "alter punctuation or thousands separators, or expand an absent identifier from "
+    "the entity's real-world identity. For example, printed date 11/26/13 stays "
+    "11/26/13, printed 1,000 stays 1,000, and an empty ticker or symbol cell stays "
+    "null even if the company is recognizable. When a visible source legend defines "
+    "an exact code, preserve the raw code in its matching source field and do not "
+    "paraphrase or classify it; the caller can map it after extraction. Copy source "
+    "facts faithfully, represent absent values as null, "
+    "and never invent facts from world knowledge. Return only the strict "
     "structured response."
 )
 
@@ -1424,6 +1473,7 @@ def _extract_pdf_document_group(
     rows_pdf_max_bytes: int,
     instructions: str | None,
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
+    idempotency_key: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     from nexustrade.host import (
         GatewayChatError,
@@ -1472,6 +1522,9 @@ def _extract_pdf_document_group(
     attempts = max(1, rows_retries + 1)
     last_error: Exception | None = None
     for attempt in range(attempts):
+        attempt_idempotency_key = (
+            f"{idempotency_key}.{attempt}" if idempotency_key else None
+        )
         try:
             response = gateway_chat_json(
                 gateway_multimodal_messages("\n\n".join(prompt_parts), attachments),
@@ -1481,7 +1534,12 @@ def _extract_pdf_document_group(
                 json_schema=_group_response_schema(normalized_schema, source_ids),
                 schema_name="extract_pdf_documents",
                 temperature=0,
-                timeout_sec=300,
+                # The NexusTrade-to-NexusGenAI hop owns a 15-minute upstream
+                # bound. Leave response overhead so this client does not abort
+                # first and strand a still-accounting logical request.
+                timeout_sec=GROUP_EXTRACT_GATEWAY_TIMEOUT_SEC,
+                max_transport_attempts=1,
+                idempotency_key=attempt_idempotency_key,
             )
             if not isinstance(response, dict) or not isinstance(
                 response.get("documents"), list
@@ -1550,6 +1608,9 @@ def _extract_pdf_document_groups(
     documents_per_request: int,
     max_workers: int,
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
+    request_keys_for_group: (
+        "Callable[[list[tuple[str, bytes]]], dict[str, str]] | None"
+    ) = None,
     initial_results: "Mapping[str, dict[str, Any]] | None" = None,
     result_order: "Sequence[str] | None" = None,
 ) -> dict[str, dict[str, Any]]:
@@ -1561,28 +1622,18 @@ def _extract_pdf_document_groups(
         list(result_order) if result_order is not None else [key for key, _ in items]
     )
     total_documents = len(ordered_ids)
-    cache_hits = 0
-    groups: list[list[tuple[str, bytes]]] = []
-    for group in _partition_pdf_document_groups(
+    groups = _partition_pdf_document_groups(
         items,
         documents_per_request=documents_per_request,
-    ):
-        replays = {
-            key: _document_result_lookup(request_keys[key]) for key, _data in group
-        }
-        if all(payload is not None for payload in replays.values()):
-            results.update(
-                {key: payload for key, payload in replays.items() if payload is not None}
-            )
-            cache_hits += len(group)
-        else:
-            # Cross-document fields depend on the exact peer corpus. A partial
-            # cache hit must not shrink the attachments sent for the group.
-            groups.append(group)
+    )
+    cache_hits = 0
     completed = sum(payload.get("error") is None for payload in results.values())
     failed = len(results) - completed
 
-    def run_exact_group(group: list[tuple[str, bytes]]) -> dict[str, dict[str, Any]]:
+    def run_exact_group(
+        group: list[tuple[str, bytes]],
+        group_request_keys: dict[str, str] | None,
+    ) -> dict[str, dict[str, Any]]:
         return _extract_pdf_document_group(
             group,
             normalized_schema=normalized_schema,
@@ -1591,55 +1642,123 @@ def _extract_pdf_document_groups(
             rows_pdf_max_bytes=rows_pdf_max_bytes,
             instructions=instructions,
             extra_fields_by_key=extra_fields_by_key,
+            idempotency_key=(
+                _document_batch_key(group_request_keys)
+                if group_request_keys is not None
+                else None
+            ),
         )
+
+    def exact_keys(
+        group: list[tuple[str, bytes]],
+        fallback: dict[str, str] | None = None,
+    ) -> dict[str, str] | None:
+        if request_keys_for_group is not None:
+            return request_keys_for_group(group)
+        return fallback
+
+    def lookup_exact_group(
+        group: list[tuple[str, bytes]],
+        group_request_keys: dict[str, str] | None,
+    ) -> dict[str, dict[str, Any]] | None:
+        if group_request_keys is None:
+            return None
+        replays: dict[str, dict[str, Any]] = {}
+        for key, _data in group:
+            payload = _document_result_lookup(group_request_keys[key])
+            if payload is None:
+                return None
+            replays[key] = payload
+        return replays
+
+    def lookup_bisected_tree(
+        group: list[tuple[str, bytes]],
+    ) -> dict[str, dict[str, Any]] | None:
+        if request_keys_for_group is None or len(group) == 1:
+            return None
+        midpoint = len(group) // 2
+        recovered: dict[str, dict[str, Any]] = {}
+        for child in (group[:midpoint], group[midpoint:]):
+            child_replay = lookup_exact_group(child, exact_keys(child))
+            if child_replay is None:
+                child_replay = lookup_bisected_tree(child)
+            if child_replay is None:
+                return None
+            recovered.update(child_replay)
+        return recovered
 
     def run_group(
         group: list[tuple[str, bytes]],
-        *,
-        record_results: bool = True,
-    ) -> tuple[dict[str, dict[str, Any]], int, int]:
+        group_request_keys: dict[str, str] | None,
+    ) -> tuple[dict[str, dict[str, Any]], int, int, int]:
+        replay = lookup_exact_group(group, group_request_keys)
+        if replay is not None:
+            return replay, len(replay), 0, len(replay)
+        bisected_replay = lookup_bisected_tree(group)
+        if bisected_replay is not None:
+            return (
+                bisected_replay,
+                len(bisected_replay),
+                0,
+                len(bisected_replay),
+            )
         try:
-            extracted = run_exact_group(group)
+            extracted = run_exact_group(group, group_request_keys)
         except Exception as exc:
             if len(group) == 1:
                 key = group[0][0]
                 return {
                     key: {"document": {}, "rows": [], "error": str(exc)}
-                }, 0, 1
+                }, 0, 1, 0
             if not isinstance(
                 exc, (GatewayChatTransportError, _RowsStructuringError)
             ):
                 raise
             midpoint = len(group) // 2
-            left_results, left_completed, left_failed = run_group(
-                group[:midpoint], record_results=False
+            left_group = group[:midpoint]
+            right_group = group[midpoint:]
+            left_results, left_completed, left_failed, left_hits = run_group(
+                left_group, exact_keys(left_group)
             )
-            right_results, right_completed, right_failed = run_group(
-                group[midpoint:], record_results=False
+            right_results, right_completed, right_failed, right_hits = run_group(
+                right_group, exact_keys(right_group)
             )
             return (
                 {**left_results, **right_results},
                 left_completed + right_completed,
                 left_failed + right_failed,
+                left_hits + right_hits,
             )
-        if record_results:
+        if group_request_keys is not None:
             for key, payload in extracted.items():
                 _document_result_record(
                     batch_key=batch_key,
-                    request_key=request_keys[key],
+                    request_key=group_request_keys[key],
                     document_id=key,
                     payload=payload,
                     total=total_documents,
                     track_progress=False,
                 )
-        return extracted, len(extracted), 0
+        return extracted, len(extracted), 0, 0
 
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(groups) or 1))) as pool:
-        futures = {pool.submit(run_group, group): group for group in groups}
+        futures = {
+            pool.submit(
+                run_group,
+                group,
+                exact_keys(
+                    group,
+                    {key: request_keys[key] for key, _data in group},
+                ),
+            ): group
+            for group in groups
+        }
         for future in as_completed(futures):
             group = futures[future]
             try:
-                extracted, group_completed, group_failed = future.result()
+                extracted, group_completed, group_failed, group_cache_hits = (
+                    future.result()
+                )
             except Exception as exc:
                 extracted = {
                     key: {"document": {}, "rows": [], "error": str(exc)}
@@ -1647,9 +1766,11 @@ def _extract_pdf_document_groups(
                 }
                 group_completed = 0
                 group_failed = len(group)
+                group_cache_hits = 0
             results.update(extracted)
             completed += group_completed
             failed += group_failed
+            cache_hits += group_cache_hits
             _document_batch_progress(
                 batch_key=batch_key,
                 total=total_documents,
@@ -1734,9 +1855,10 @@ def extract_pdfs(
     partial batch is visible instead of looking like a smaller-but-clean result.
 
     The legacy path retries transient failures per document (max_attempts,
-    exponential backoff). The grouped path uses the gateway's bounded transport
-    retry, bisects a transport or structuring failure to isolate smaller
-    requests, and reports only an irreducible singleton failure on that source.
+    exponential backoff). The grouped path gives each exact group one transport
+    attempt, then bisects a transport or structuring failure to isolate smaller
+    requests and commits each successful child group immediately. A later
+    remediation in the same compute session can reuse the completed subtree.
     Permanent request or durable-cache failures are not split or repeated.
 
     Budget exhaustion (HTTP 429) is backpressure, not a crash and never retried:
@@ -1831,15 +1953,28 @@ def extract_pdfs(
     replay_documents_per_request = (
         effective_documents_per_request if use_group_extraction else 1
     )
-    group_context_by_key: dict[str, str] = {}
+    group_request_keys_by_key: dict[str, str] = {}
     if use_group_extraction:
         for group in _partition_pdf_document_groups(
             items,
             documents_per_request=effective_documents_per_request,
         ):
-            context_key = _document_group_context_key(group)
-            for key, _pdf_bytes in group:
-                group_context_by_key[key] = context_key
+            group_request_keys_by_key.update(
+                _document_group_request_keys(
+                    group,
+                    markdown=markdown,
+                    max_pages=max_pages,
+                    target_schema=target_schema,
+                    document_schema=document_schema,
+                    rows_schema=rows_schema,
+                    rows_model=rows_model,
+                    rows_retries=rows_retries,
+                    rows_include_pdf=rows_include_pdf,
+                    rows_pdf_max_bytes=rows_pdf_max_bytes,
+                    instructions=instructions,
+                    extra_fields_by_key=extra_fields_by_key,
+                )
+            )
 
     # Compute sessions route every schema-bound LLM call through a ledger-backed
     # dollar gate. An unbounded default here used to turn a 100-document corpus
@@ -1856,7 +1991,8 @@ def extract_pdfs(
     stop = False
 
     request_keys = {
-        key: _document_request_key(
+        key: group_request_keys_by_key.get(key)
+        or _document_request_key(
             key,
             pdf_bytes,
             markdown=markdown,
@@ -1872,7 +2008,7 @@ def extract_pdfs(
             rows_schema_name="extract_rows",
             instructions=instructions,
             documents_per_request=replay_documents_per_request,
-            group_context_key=group_context_by_key.get(key),
+            group_context_key=None,
             extra_fields=(extra_fields_by_key or {}).get(key),
         )
         for key, pdf_bytes in items
@@ -1899,6 +2035,20 @@ def extract_pdfs(
             documents_per_request=effective_documents_per_request,
             max_workers=workers,
             extra_fields_by_key=extra_fields_by_key,
+            request_keys_for_group=lambda group: _document_group_request_keys(
+                group,
+                markdown=markdown,
+                max_pages=max_pages,
+                target_schema=target_schema,
+                document_schema=document_schema,
+                rows_schema=rows_schema,
+                rows_model=rows_model,
+                rows_retries=rows_retries,
+                rows_include_pdf=rows_include_pdf,
+                rows_pdf_max_bytes=rows_pdf_max_bytes,
+                instructions=instructions,
+                extra_fields_by_key=extra_fields_by_key,
+            ),
             initial_results=results,
             result_order=result_order,
         )
@@ -2140,8 +2290,13 @@ _EXTRACT_ROWS_SYSTEM = (
     "visible in the row, its table "
     "headers, an inspected source legend, or document metadata included in the "
     "input. Use schema field names, descriptions, and caller instructions to locate "
-    "and interpret those observations; "
-    "a requested observation may be embedded inside another table cell rather "
+    "and interpret those observations. Copy literal source text character-for-character "
+    "when a string field represents a printed fact: 11/26/13 must not become 1/26/13, "
+    "1,000 must not become 1.000, and an empty ticker or symbol stays null even "
+    "when the entity is recognizable. If a visible legend defines an exact source "
+    "code, preserve that raw code in its matching field without paraphrasing or "
+    "classifying it; the caller can map it after extraction. "
+    "A requested observation may be embedded inside another table cell rather "
     "than have a standalone column. Apply only the task-specific selection and "
     "interpretation the caller requests. Copy stable printed facts rather than "
     "regenerating them, and never fill a field from world knowledge. When the "

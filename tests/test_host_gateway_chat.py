@@ -195,6 +195,65 @@ class GatewayChatRetryTest(unittest.TestCase):
             host._GATEWAY_CHAT_MAX_ATTEMPTS - 1,
         )
 
+    def test_caller_can_own_transport_recovery_without_nested_retries(self) -> None:
+        calls = 0
+
+        def fake_urlopen(*_: object, **__: object) -> _Response:
+            nonlocal calls
+            calls += 1
+            raise _http_error(524)
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+            patch.object(host.time, "sleep") as sleep,
+            self.assertRaisesRegex(host.GatewayChatTransportError, "HTTP 524"),
+        ):
+            host.gateway_chat(
+                prompt="extract this corpus",
+                max_transport_attempts=1,
+            )
+
+        self.assertEqual(calls, 1)
+        sleep.assert_not_called()
+
+    def test_forwards_caller_idempotency_key(self) -> None:
+        captured: object | None = None
+
+        def fake_urlopen(request: object, **__: object) -> _Response:
+            nonlocal captured
+            captured = request
+            return _Response(
+                {"choices": [{"message": {"content": "ok"}}], "model": "test"}
+            )
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+        ):
+            host.gateway_chat(
+                prompt="extract this corpus",
+                idempotency_key="exact-request-key",
+            )
+
+        self.assertIsNotNone(captured)
+        self.assertEqual(
+            getattr(captured, "get_header")("Idempotency-key"),
+            "exact-request-key",
+        )
+
     def test_does_not_retry_permanent_403(self) -> None:
         calls = 0
 

@@ -31,6 +31,14 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             "never place one column's text into a different semantic field",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
+        self.assertIn(
+            "printed date 11/26/13 stays 11/26/13",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "empty ticker or symbol cell stays null",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
 
     def test_extracted_rows_preserves_legacy_positional_construction(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -149,6 +157,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
         calls: list[list[str]] = []
+        call_options: list[dict[str, object]] = []
 
         def structured(*args: object, **kwargs: object) -> dict[str, object]:
             del args
@@ -156,6 +165,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 "items"
             ]["properties"]["source_id"]["enum"]
             calls.append(list(source_ids))
+            call_options.append(kwargs)
             return {
                 "documents": [
                     {"source_id": source_id, "rows": [{"ticker": "ACME"}]}
@@ -178,7 +188,47 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertEqual(calls, [list(documents)])
+        self.assertEqual(call_options[0]["timeout_sec"], 930)
+        self.assertEqual(call_options[0]["max_transport_attempts"], 1)
+        self.assertRegex(
+            str(call_options[0]["idempotency_key"]), r"^[a-f0-9]{64}\.0$"
+        )
         self.assertEqual(len(result), 30)
+
+    def test_group_structuring_retry_has_a_distinct_idempotency_key(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+        options: list[dict[str, object]] = []
+
+        def structured(*args: object, **kwargs: object) -> dict[str, object]:
+            del args
+            options.append(kwargs)
+            if len(options) == 1:
+                return {"documents": []}
+            return {
+                "documents": [
+                    {"source_id": "a", "rows": []},
+                    {"source_id": "b", "rows": []},
+                ]
+            }
+
+        with mock.patch.object(host, "gateway_chat_json", side_effect=structured):
+            result = scanned_table._extract_pdf_document_group(
+                [("a", b"a"), ("b", b"b")],
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=1,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                extra_fields_by_key=None,
+                idempotency_key="group-key",
+            )
+
+        self.assertEqual(set(result), {"a", "b"})
+        self.assertEqual(
+            [option["idempotency_key"] for option in options],
+            ["group-key.0", "group-key.1"],
+        )
 
     def test_schema_batch_rejects_non_positive_explicit_partition_size(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -454,6 +504,154 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         self.assertEqual(progress.call_args.kwargs["completed"], 3)
         self.assertEqual(progress.call_args.kwargs["failed"], 0)
         self.assertTrue(progress.call_args.kwargs["done"])
+
+    def test_bisected_successes_are_committed_under_exact_child_contexts(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        def keys_for(group: list[tuple[str, bytes]]) -> dict[str, str]:
+            peers = "-".join(key for key, _data in group)
+            return {key: f"key-{peers}-{key}" for key, _data in group}
+
+        def extract_group(
+            group: list[tuple[str, bytes]],
+            **kwargs: object,
+        ) -> dict[str, dict[str, object]]:
+            del kwargs
+            if len(group) > 1:
+                raise host.GatewayChatTransportError("split me")
+            source_id = group[0][0]
+            return {
+                source_id: {
+                    "document": {},
+                    "rows": [{"source_id": source_id}],
+                    "error": None,
+                }
+            }
+
+        with (
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record") as record,
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                side_effect=extract_group,
+            ),
+        ):
+            scanned_table._extract_pdf_document_groups(
+                [("a", b"a"), ("b", b"b"), ("c", b"c")],
+                request_keys=keys_for([("a", b"a"), ("b", b"b"), ("c", b"c")]),
+                request_keys_for_group=keys_for,
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=3,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        self.assertEqual(record.call_count, 3)
+        self.assertEqual(
+            {call.kwargs["request_key"] for call in record.call_args_list},
+            {"key-a-a", "key-b-b", "key-c-c"},
+        )
+
+    def test_complete_bisected_replay_skips_parent_extraction(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        items = [("a", b"a"), ("b", b"b"), ("c", b"c")]
+
+        def keys_for(group: list[tuple[str, bytes]]) -> dict[str, str]:
+            peers = "-".join(key for key, _data in group)
+            return {key: f"key-{peers}-{key}" for key, _data in group}
+
+        cached = {
+            "key-a-a": {"document": {}, "rows": [{"source_id": "a"}], "error": None},
+            "key-b-b": {"document": {}, "rows": [{"source_id": "b"}], "error": None},
+            "key-c-c": {"document": {}, "rows": [{"source_id": "c"}], "error": None},
+        }
+
+        with (
+            mock.patch.object(
+                scanned_table,
+                "_document_result_lookup",
+                side_effect=lambda key: cached.get(key),
+            ) as lookup,
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress") as progress,
+            mock.patch.object(scanned_table, "_extract_pdf_document_group") as extract,
+        ):
+            result = scanned_table._extract_pdf_document_groups(
+                items,
+                request_keys=keys_for(items),
+                request_keys_for_group=keys_for,
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=3,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        extract.assert_not_called()
+        self.assertEqual(set(result), {"a", "b", "c"})
+        self.assertEqual(lookup.call_count, 5)
+        self.assertEqual(progress.call_args.kwargs["cache_hits"], 3)
+
+    def test_partial_child_replay_still_attempts_complete_parent(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        items = [("a", b"a"), ("b", b"b")]
+
+        def keys_for(group: list[tuple[str, bytes]]) -> dict[str, str]:
+            peers = "-".join(key for key, _data in group)
+            return {key: f"key-{peers}-{key}" for key, _data in group}
+
+        extracted = {
+            key: {"document": {}, "rows": [{"source_id": key}], "error": None}
+            for key, _data in items
+        }
+        with (
+            mock.patch.object(
+                scanned_table,
+                "_document_result_lookup",
+                side_effect=lambda key: (
+                    {"document": {}, "rows": [], "error": None}
+                    if key == "key-a-a"
+                    else None
+                ),
+            ),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                return_value=extracted,
+            ) as extract,
+        ):
+            scanned_table._extract_pdf_document_groups(
+                items,
+                request_keys=keys_for(items),
+                request_keys_for_group=keys_for,
+                batch_key="batch",
+                normalized_schema={"type": "object", "properties": {}},
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                documents_per_request=2,
+                max_workers=1,
+                extra_fields_by_key=None,
+            )
+
+        self.assertEqual(
+            [key for key, _data in extract.call_args.args[0]], ["a", "b"]
+        )
 
     def test_failed_document_group_isolates_only_a_bad_singleton(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
