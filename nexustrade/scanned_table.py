@@ -1139,7 +1139,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v8"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v9"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 50 * 1024 * 1024
 GROUP_EXTRACT_GATEWAY_TIMEOUT_SEC = 15 * 60 + 30
 # Keep this aligned with NexusGenAI's decoded attachment-byte ceiling. The
@@ -1415,8 +1415,9 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "Complete the caller's schema-bound extraction task from every attached PDF. "
     "The caller instructions define the requested rows and any inclusion or "
     "exclusion semantics. Use the PDF bytes as the authoritative visual source. "
-    "Return exactly one document result for every supplied source_id and no other "
-    "source_id. Keep every source fact attributed to the PDF where it is visible. "
+    "Return a documents object keyed by source_id with exactly one value for every "
+    "supplied source_id and no other key. Keep every source fact attributed to the "
+    "PDF where it is visible. "
     "When the caller's schema or instructions request a cross-document relationship, "
     "such as an amendment, restatement, or duplicate, compare the attached PDFs to "
     "identify that relationship. Never copy, reuse, or complete a source-local field "
@@ -1445,21 +1446,17 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
 def _group_response_schema(
     normalized_schema: dict[str, Any], source_ids: list[str]
 ) -> dict[str, Any]:
-    item_properties: dict[str, Any] = {
-        "source_id": {"type": "string", "enum": source_ids}
-    }
     normalized_properties = normalized_schema.get("properties")
     if not isinstance(normalized_properties, Mapping):
         raise RowsSchemaError("normalized extraction schema has no properties")
-    item_properties.update(dict(normalized_properties))
     return _strict_object_schema(
         {
-            "documents": {
-                "type": "array",
-                "minItems": len(source_ids),
-                "maxItems": len(source_ids),
-                "items": _strict_object_schema(item_properties),
-            }
+            "documents": _strict_object_schema(
+                {
+                    source_id: _strict_object_schema(dict(normalized_properties))
+                    for source_id in source_ids
+                }
+            )
         }
     )
 
@@ -1542,14 +1539,13 @@ def _extract_pdf_document_group(
                 idempotency_key=attempt_idempotency_key,
             )
             if not isinstance(response, dict) or not isinstance(
-                response.get("documents"), list
+                response.get("documents"), dict
             ):
                 raise RuntimeError("multi-document extraction omitted documents")
             grouped: dict[str, dict[str, Any]] = {}
-            for raw in response["documents"]:
+            for source_id, raw in response["documents"].items():
                 if not isinstance(raw, dict):
                     raise RuntimeError("multi-document result is not an object")
-                source_id = raw.get("source_id")
                 if not isinstance(source_id, str) or source_id not in source_ids:
                     raise RuntimeError(
                         f"multi-document extraction returned unknown source_id {source_id!r}"

@@ -119,18 +119,15 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         def structured(*args: object, **kwargs: object) -> dict[str, object]:
             del args
             schema = kwargs["json_schema"]
-            source_ids = schema["properties"]["documents"]["items"]["properties"][
-                "source_id"
-            ]["enum"]
+            source_ids = list(
+                schema["properties"]["documents"]["properties"]
+            )
             calls.append(list(source_ids))
             return {
-                "documents": [
-                    {
-                        "source_id": source_id,
-                        "rows": [{"ticker": source_id.upper()}],
-                    }
+                "documents": {
+                    source_id: {"rows": [{"ticker": source_id.upper()}]}
                     for source_id in source_ids
-                ]
+                }
             }
 
         with (
@@ -161,16 +158,16 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
 
         def structured(*args: object, **kwargs: object) -> dict[str, object]:
             del args
-            source_ids = kwargs["json_schema"]["properties"]["documents"][
-                "items"
-            ]["properties"]["source_id"]["enum"]
+            source_ids = list(
+                kwargs["json_schema"]["properties"]["documents"]["properties"]
+            )
             calls.append(list(source_ids))
             call_options.append(kwargs)
             return {
-                "documents": [
-                    {"source_id": source_id, "rows": [{"ticker": "ACME"}]}
+                "documents": {
+                    source_id: {"rows": [{"ticker": "ACME"}]}
                     for source_id in source_ids
-                ]
+                }
             }
 
         documents = {f"filing-{index}": b"pdf" for index in range(30)}
@@ -204,12 +201,9 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             del args
             options.append(kwargs)
             if len(options) == 1:
-                return {"documents": []}
+                return {"documents": {}}
             return {
-                "documents": [
-                    {"source_id": "a", "rows": []},
-                    {"source_id": "b", "rows": []},
-                ]
+                "documents": {"a": {"rows": []}, "b": {"rows": []}}
             }
 
         with mock.patch.object(host, "gateway_chat_json", side_effect=structured):
@@ -249,15 +243,15 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
 
         def structured(*args: object, **kwargs: object) -> dict[str, object]:
             del args
-            source_ids = kwargs["json_schema"]["properties"]["documents"][
-                "items"
-            ]["properties"]["source_id"]["enum"]
+            source_ids = list(
+                kwargs["json_schema"]["properties"]["documents"]["properties"]
+            )
             calls.append(list(source_ids))
             return {
-                "documents": [
-                    {"source_id": source_id, "rows": [{"ticker": "ACME"}]}
+                "documents": {
+                    source_id: {"rows": [{"ticker": "ACME"}]}
                     for source_id in source_ids
-                ]
+                }
             }
 
         documents = {"a": b"123", "b": b"456", "c": b"789"}
@@ -307,10 +301,10 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 host,
                 "gateway_chat_json",
                 return_value={
-                    "documents": [
-                        {"source_id": "filing-a", "rows": [{"ticker": "AAA"}]},
-                        {"source_id": "filing-b", "rows": [{"ticker": "BBB"}]},
-                    ]
+                    "documents": {
+                        "filing-a": {"rows": [{"ticker": "AAA"}]},
+                        "filing-b": {"rows": [{"ticker": "BBB"}]},
+                    }
                 },
             ),
         ):
@@ -346,10 +340,10 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 host,
                 "gateway_chat_json",
                 return_value={
-                    "documents": [
-                        {"source_id": "good", "rows": [{"ticker": "GOOD"}]},
-                        {"source_id": "later", "rows": [{"ticker": "LATER"}]},
-                    ]
+                    "documents": {
+                        "good": {"rows": [{"ticker": "GOOD"}]},
+                        "later": {"rows": [{"ticker": "LATER"}]},
+                    }
                 },
             ),
         ):
@@ -413,7 +407,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             "2025-01-05",
         )
 
-    def test_schema_batch_rejects_duplicate_or_missing_document_groups(self) -> None:
+    def test_schema_batch_rejects_missing_document_groups(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
 
@@ -426,10 +420,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 host,
                 "gateway_chat_json",
                 return_value={
-                    "documents": [
-                        {"source_id": "a", "rows": []},
-                        {"source_id": "a", "rows": []},
-                    ]
+                    "documents": {"a": {"rows": []}}
                 },
             ),
         ):
@@ -441,7 +432,8 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 max_workers=1,
             )
 
-        self.assertIn("duplicated source_id", result["a"]["error"])
+        self.assertIsNone(result["a"]["error"])
+        self.assertIn("source_id", result["b"]["error"])
         self.assertEqual(result["b"]["rows"], [])
 
     def test_failed_document_group_is_bisected_until_each_source_succeeds(self) -> None:
