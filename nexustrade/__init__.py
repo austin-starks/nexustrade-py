@@ -79,6 +79,8 @@ _LAZY_EXPORTS = {
     # `(module, None)` exposes the SUBMODULE itself, so `nt.lake.sql(...)`
     # resolves lazily without making duckdb a base-install dependency.
     "lake": ("nexustrade.lake", None),
+    # Pure accounting and valuation arithmetic with no optional dependencies.
+    "finance": ("nexustrade.finance", None),
     # No optional dependency of its own — lazy purely so `nt.nl` matches the
     # `nt.lake` shape rather than importing at package load.
     "nl": ("nexustrade.nl", None),
@@ -157,6 +159,7 @@ _LAZY_EXPORTS = {
 # Tigris/stats names remain attribute-accessible but stay out of ``__all__``
 # because ``import *`` resolves every name eagerly and would require extras.
 _PUBLIC_BASE_LAZY_MODULES = {
+    "nexustrade.finance",
     "nexustrade.host",
     "nexustrade.inspect_document",
     "nexustrade.report",

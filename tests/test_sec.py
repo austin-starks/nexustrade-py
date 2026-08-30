@@ -68,7 +68,17 @@ class SecSdkTests(unittest.TestCase):
     def test_fact_candidates_replays_the_host_payload(self) -> None:
         nt.sec.fact_candidates(
             ticker="GOOGL",
-            roles=["operating_cash_flow", "capital_expenditures"],
+            roles=[
+                "pretax_income",
+                "income_tax_expense",
+                "interest_expense",
+                "cash_taxes_paid",
+                "cash_interest_paid",
+                "research_and_development",
+                "diluted_shares",
+                "operating_cash_flow",
+                "capital_expenditures",
+            ],
             _exit=False,
         )
         with open(self.requests_path, encoding="utf-8") as handle:
@@ -89,7 +99,17 @@ class SecSdkTests(unittest.TestCase):
         self.assertEqual(
             nt.sec.fact_candidates(
                 ticker="GOOGL",
-                roles=["operating_cash_flow", "capital_expenditures"],
+                roles=[
+                    "pretax_income",
+                    "income_tax_expense",
+                    "interest_expense",
+                    "cash_taxes_paid",
+                    "cash_interest_paid",
+                    "research_and_development",
+                    "diluted_shares",
+                    "operating_cash_flow",
+                    "capital_expenditures",
+                ],
             ),
             payload,
         )

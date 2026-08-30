@@ -184,6 +184,8 @@ class PackageExportTests(unittest.TestCase):
         self.assertTrue(callable(nt.write_rows))
         self.assertTrue(callable(nt.sec.statement))
         self.assertTrue(callable(nt.sec.fact_candidates))
+        self.assertTrue(callable(nt.finance.fcff))
+        self.assertTrue(callable(nt.finance.wacc))
         with self.assertRaises(AttributeError) as unknown:
             nt.definitely_not_a_real_export
         self.assertIn("has no attribute", str(unknown.exception))

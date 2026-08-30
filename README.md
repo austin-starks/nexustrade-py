@@ -583,6 +583,13 @@ statement = nt.sec.statement(
 candidates = nt.sec.fact_candidates(
     ticker="GOOGL",
     roles=[
+        "pretax_income",
+        "income_tax_expense",
+        "interest_expense",
+        "cash_taxes_paid",
+        "cash_interest_paid",
+        "research_and_development",
+        "diluted_shares",
         "depreciation_and_amortization",
         "capital_expenditures",
         "operating_cash_flow",
@@ -602,6 +609,44 @@ Working-capital components are deliberately not presented as a reported total;
 the result says when a component set is incomplete or requires review. SEC
 CompanyFacts does not expose inline-XBRL dimensional contexts, so candidates
 also say that their consolidated-versus-dimensional scope is not proven.
+
+## Financial-model arithmetic
+
+The base install includes dependency-free accounting and valuation helpers.
+They compute disclosed assumptions; they do not choose forecasts, tax rates,
+capital structures, or missing inputs.
+
+```python
+operating_profit_after_tax = nt.finance.nopat(operating_income, tax_rate)
+working_capital_change = nt.finance.change_in_operating_nwc(
+    nt.finance.operating_nwc(current_operating_assets, current_operating_liabilities),
+    nt.finance.operating_nwc(prior_operating_assets, prior_operating_liabilities),
+)
+historical_fcff = nt.finance.fcff(
+    operating_profit_after_tax,
+    depreciation_and_amortization,
+    capital_expenditures,
+    working_capital_change,
+)
+
+terminal_value = nt.finance.gordon_growth_terminal_value(
+    forecast_fcff[-1], discount_rate, perpetual_growth_rate
+)
+enterprise_value = nt.finance.enterprise_value_from_fcff(
+    forecast_fcff, discount_rate, terminal_value
+)
+equity_value = nt.finance.enterprise_to_equity_value(
+    enterprise_value,
+    cash_and_non_operating_assets,
+    debt_and_debt_like_liabilities,
+)
+per_share = nt.finance.per_share_value(equity_value, diluted_shares)
+```
+
+Other helpers cover CAPM cost of equity, WACC, probability-weighted values,
+margin of safety, invested capital, net investment, ROIC, incremental ROIC,
+reinvestment rate, EVA, and conventional IRR. Build one model object from these
+results and render every repeated report value from that object.
 
 ## Lake SQL
 

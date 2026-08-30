@@ -13,6 +13,13 @@ from nexustrade import host
 
 Cadence = Literal["annual", "quarterly"]
 FactRole = Literal[
+    "pretax_income",
+    "income_tax_expense",
+    "interest_expense",
+    "cash_taxes_paid",
+    "cash_interest_paid",
+    "research_and_development",
+    "diluted_shares",
     "depreciation_and_amortization",
     "capital_expenditures",
     "operating_cash_flow",
@@ -21,6 +28,13 @@ FactRole = Literal[
 ]
 
 FACT_ROLES: tuple[FactRole, ...] = (
+    "pretax_income",
+    "income_tax_expense",
+    "interest_expense",
+    "cash_taxes_paid",
+    "cash_interest_paid",
+    "research_and_development",
+    "diluted_shares",
     "depreciation_and_amortization",
     "capital_expenditures",
     "operating_cash_flow",
