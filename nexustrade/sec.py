@@ -112,19 +112,13 @@ def _run(
     rid = request_id or _stable_request_id(payload)
     result = host.read_result(rid)
     if result is None:
-        host.queue_sec(
-            rid,
-            action=action,
-            ticker=ticker,
-            periods=periods,
-            cadence=cadence,
-            as_of=as_of,
-            roles=roles,
-        )
-        host.flush_requests()
-        if _exit:
-            raise SystemExit(0)
-        return {}
+        request: dict[str, Any] = {"id": rid, **payload}
+        if "as_of" in request:
+            request["asOf"] = request.pop("as_of")
+        result = host.run_sec(request)
+    # Kept for source compatibility with earlier SDKs. Public SEC calls are now
+    # blocking, so neither value changes execution behavior.
+    del _exit
     if not result.get("ok"):
         raise RuntimeError(f"sec.{action}({ticker!r}) failed: {result.get('error')}")
     data = result.get("data")

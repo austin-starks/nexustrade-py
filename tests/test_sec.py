@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.request import Request
 
 import nexustrade as nt
 from nexustrade import host
@@ -28,23 +30,48 @@ class SecSdkTests(unittest.TestCase):
     def tearDown(self) -> None:
         host._pending_requests.clear()
 
-    def test_statement_queues_a_deterministic_point_in_time_request(self) -> None:
-        self.assertEqual(
-            nt.sec.statement(
+    def test_statement_blocks_on_a_deterministic_point_in_time_request(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        def urlopen(req: Request, timeout: int = 0) -> io.BytesIO:
+            payload = json.loads(req.data.decode("utf-8"))
+            requests.append(payload)
+            return io.BytesIO(
+                json.dumps(
+                    {
+                        "id": payload["id"],
+                        "ok": True,
+                        "data": {"ticker": payload["ticker"], "rows": []},
+                    }
+                ).encode("utf-8")
+            )
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://gateway.example.test/v1",
+                "OPENAI_API_KEY": "sandbox-key",
+            },
+        ), patch.object(host.urllib.request, "urlopen", side_effect=urlopen):
+            first = nt.sec.statement(
                 ticker="googl",
                 periods=10,
                 cadence="annual",
                 as_of="2026-08-28",
-                _exit=False,
-            ),
-            {},
-        )
-        with open(self.requests_path, encoding="utf-8") as handle:
-            first = json.loads(handle.read())
+            )
+            second = nt.sec.statement(
+                ticker="GOOGL",
+                periods=10,
+                cadence="annual",
+                as_of="2026-08-28",
+            )
+
+        self.assertEqual(first, {"ticker": "GOOGL", "rows": []})
+        self.assertEqual(second, first)
+        self.assertEqual(len(requests), 1)
         self.assertEqual(
-            {key: first[key] for key in first if key != "id"},
+            {key: requests[0][key] for key in requests[0] if key != "id"},
             {
-                "kind": "sec",
                 "action": "statement",
                 "ticker": "GOOGL",
                 "periods": 10,
@@ -52,23 +79,15 @@ class SecSdkTests(unittest.TestCase):
                 "asOf": "2026-08-28",
             },
         )
+        self.assertFalse(os.path.exists(self.requests_path))
 
-        os.remove(self.requests_path)
-        nt.sec.statement(
-            ticker="GOOGL",
-            periods=10,
-            cadence="annual",
-            as_of="2026-08-28",
-            _exit=False,
-        )
-        with open(self.requests_path, encoding="utf-8") as handle:
-            second = json.loads(handle.read())
-        self.assertEqual(first["id"], second["id"])
-
-    def test_fact_candidates_replays_the_host_payload(self) -> None:
-        nt.sec.fact_candidates(
-            ticker="GOOGL",
-            roles=[
+    def test_fact_candidates_replays_the_recorded_gateway_payload(self) -> None:
+        request = {
+            "action": "fact_candidates",
+            "ticker": "GOOGL",
+            "periods": 10,
+            "cadence": "annual",
+            "roles": [
                 "pretax_income",
                 "income_tax_expense",
                 "interest_expense",
@@ -79,10 +98,8 @@ class SecSdkTests(unittest.TestCase):
                 "operating_cash_flow",
                 "capital_expenditures",
             ],
-            _exit=False,
-        )
-        with open(self.requests_path, encoding="utf-8") as handle:
-            request = json.loads(handle.read())
+        }
+        request["id"] = nt.sec._stable_request_id(request)
         payload = {
             "ticker": "GOOGL",
             "candidates": [
@@ -114,14 +131,19 @@ class SecSdkTests(unittest.TestCase):
             payload,
         )
 
+    def test_no_gateway_raises_without_staging_a_broker_request(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": "", "OPENAI_API_KEY": ""}):
+            with self.assertRaisesRegex(RuntimeError, "public blocking transport"):
+                nt.sec.statement(ticker="MSFT")
+        self.assertFalse(os.path.exists(self.requests_path))
+
     def test_validation_fails_before_queueing(self) -> None:
         with self.assertRaisesRegex(ValueError, "real date"):
-            nt.sec.statement(ticker="GOOGL", as_of="2026-02-30", _exit=False)
+            nt.sec.statement(ticker="GOOGL", as_of="2026-02-30")
         with self.assertRaisesRegex(ValueError, "unsupported SEC fact role"):
             nt.sec.fact_candidates(
                 ticker="GOOGL",
                 roles=["magic_number"],  # type: ignore[list-item]
-                _exit=False,
             )
         self.assertFalse(os.path.exists(self.requests_path))
 

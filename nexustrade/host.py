@@ -389,15 +389,15 @@ def _record_host_result(row: dict[str, Any]) -> None:
         pass
 
 
-def _require_sandbox_gateway() -> tuple[str, str]:
-    """host.fetch talks only to the sandbox gateway. The JSONL broker is gone."""
+def _require_sandbox_gateway(capability: str = "host.fetch") -> tuple[str, str]:
+    """Return compute-gateway credentials for a blocking public SDK call."""
     base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not base or not api_key:
         raise RuntimeError(
-            "host.fetch requires the sandbox gateway "
+            f"{capability} requires the sandbox gateway "
             "(OPENAI_BASE_URL and OPENAI_API_KEY). "
-            "The JSONL broker is not a fetch transport."
+            "The JSONL broker is not its public blocking transport."
         )
     return base, api_key
 
@@ -598,6 +598,62 @@ def fetch(
     gateway = _gateway_fetch_many(missing)
     results.update(gateway)
     return {rid: results[rid] for rid in normalized_requests}
+
+
+def run_sec(request: dict[str, Any], timeout_sec: int = 300) -> dict[str, Any]:
+    """Run one validated SEC request through the blocking compute gateway.
+
+    The public ``nexustrade.sec`` module owns input validation and stable ids.
+    This transport always returns a terminal gateway row or raises; it never
+    writes ``host_requests.jsonl`` and never exits the caller's process.
+    """
+    rid = request.get("id")
+    if not isinstance(rid, str) or not rid.strip():
+        raise ValueError("SEC gateway request requires a non-empty id")
+    base, api_key = _require_sandbox_gateway("nt.sec")
+    last_error = "gateway SEC request failed"
+    for attempt in range(_GATEWAY_FETCH_ATTEMPTS):
+        req = urllib.request.Request(
+            f"{base}/host-sec",
+            data=json.dumps(request).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        _touch_host_activity()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                row = json.loads(resp.read().decode("utf-8"))
+            _touch_host_activity()
+        except urllib.error.HTTPError as exc:
+            _touch_host_activity()
+            last_error = _http_error_detail(exc)
+            if (
+                exc.code in _GATEWAY_RETRYABLE_STATUS
+                and attempt + 1 < _GATEWAY_FETCH_ATTEMPTS
+            ):
+                time.sleep(_gateway_retry_delay_sec(attempt))
+                continue
+            raise RuntimeError(last_error) from exc
+        except urllib.error.URLError as exc:
+            _touch_host_activity()
+            last_error = f"gateway transport: {getattr(exc, 'reason', exc)}"
+            if attempt + 1 < _GATEWAY_FETCH_ATTEMPTS:
+                time.sleep(_gateway_retry_delay_sec(attempt))
+                continue
+            raise RuntimeError(last_error) from exc
+        if not isinstance(row, dict):
+            last_error = "gateway returned a non-object SEC response"
+            if attempt + 1 < _GATEWAY_FETCH_ATTEMPTS:
+                time.sleep(_gateway_retry_delay_sec(attempt))
+                continue
+            raise RuntimeError(last_error)
+        row.setdefault("id", rid)
+        _record_host_result(row)
+        return _hydrate_spilled_row(row)
+    raise RuntimeError(last_error)
 
 
 

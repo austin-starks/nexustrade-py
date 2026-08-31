@@ -322,13 +322,156 @@ def internal_rate_of_return(cash_flows: Sequence[Number]) -> float:
     return (low + high) / 2.0
 
 
+def operating_period_metrics(
+    *,
+    operating_income: Number,
+    tax_rate: Number,
+    depreciation_and_amortization: Number,
+    capital_expenditures: Number,
+    current_operating_nwc: Number,
+    prior_operating_nwc: Number,
+    current_invested_capital: Number,
+    prior_invested_capital: Number,
+    cost_of_capital: Number,
+) -> dict[str, float]:
+    """Return one reproducible operating-period bridge from explicit inputs.
+
+    This composes the public primitives; it does not decide which filing facts
+    are operating, normalize capex, capitalize R&D, or choose a tax rate/WACC.
+    ROIC and EVA use average beginning/ending invested capital.
+    """
+    current_capital = _finite("current_invested_capital", current_invested_capital)
+    prior_capital = _finite("prior_invested_capital", prior_invested_capital)
+    average_capital = (current_capital + prior_capital) / 2.0
+    if average_capital <= 0.0:
+        raise ValueError("average invested capital must be positive")
+    operating_profit_after_tax = nopat(operating_income, tax_rate)
+    nwc_change = change_in_operating_nwc(
+        current_operating_nwc,
+        prior_operating_nwc,
+    )
+    investment = net_investment(
+        capital_expenditures,
+        depreciation_and_amortization,
+        nwc_change,
+    )
+    return {
+        "nopat": operating_profit_after_tax,
+        "change_in_operating_nwc": nwc_change,
+        "fcff": fcff(
+            operating_profit_after_tax,
+            depreciation_and_amortization,
+            capital_expenditures,
+            nwc_change,
+        ),
+        "average_invested_capital": average_capital,
+        "roic": return_on_invested_capital(
+            operating_profit_after_tax,
+            average_capital,
+        ),
+        "net_investment": investment,
+        "reinvestment_rate": reinvestment_rate(
+            investment,
+            operating_profit_after_tax,
+        ),
+        "eva": economic_value_added(
+            operating_profit_after_tax,
+            average_capital,
+            cost_of_capital,
+        ),
+    }
+
+
+def fcff_valuation_case(
+    *,
+    forecast_fcff: Sequence[Number],
+    discount_rate: Number,
+    perpetual_growth_rate: Number,
+    cash_and_non_operating_assets: Number,
+    debt_and_debt_like_liabilities: Number,
+    diluted_shares: Number,
+    other_senior_claims: Number = 0.0,
+    market_price: Number | None = None,
+) -> dict[str, float]:
+    """Return an internally consistent FCFF-to-per-share valuation bridge."""
+    values = [
+        _finite(f"forecast_fcff[{index}]", value)
+        for index, value in enumerate(forecast_fcff)
+    ]
+    if not values:
+        raise ValueError("forecast_fcff must contain at least one period")
+    terminal = gordon_growth_terminal_value(
+        values[-1],
+        discount_rate,
+        perpetual_growth_rate,
+    )
+    enterprise = enterprise_value_from_fcff(values, discount_rate, terminal)
+    equity = enterprise_to_equity_value(
+        enterprise,
+        cash_and_non_operating_assets,
+        debt_and_debt_like_liabilities,
+        other_senior_claims,
+    )
+    per_share = per_share_value(equity, diluted_shares)
+    result = {
+        "terminal_value": terminal,
+        "enterprise_value": enterprise,
+        "equity_value": equity,
+        "per_share_value": per_share,
+    }
+    if market_price is not None:
+        result["margin_of_safety"] = margin_of_safety(per_share, market_price)
+    return result
+
+
+def equity_return_case(
+    *,
+    entry_price: Number,
+    interim_distributions: Sequence[Number],
+    exit_price: Number,
+    required_return: Number | None = None,
+) -> dict[str, float]:
+    """Return holding-period IRR and, optionally, the hurdle-consistent entry.
+
+    Each distribution occurs at the end of its numbered period. The exit occurs
+    with the final distribution. This keeps timing explicit and avoids treating
+    a time-zero DCF value as a future exit price.
+    """
+    entry = _finite("entry_price", entry_price)
+    if entry <= 0.0:
+        raise ValueError("entry_price must be positive")
+    distributions = [
+        _finite(f"interim_distributions[{index}]", value)
+        for index, value in enumerate(interim_distributions)
+    ]
+    if not distributions:
+        raise ValueError("interim_distributions must contain at least one period")
+    if any(value < 0.0 for value in distributions):
+        raise ValueError("interim_distributions must be non-negative")
+    exit_value = _finite("exit_price", exit_price)
+    if exit_value < 0.0:
+        raise ValueError("exit_price must be non-negative")
+    cash_flows = [-entry, *distributions]
+    cash_flows[-1] += exit_value
+    result = {"irr": internal_rate_of_return(cash_flows)}
+    if required_return is not None:
+        hurdle = _rate("required_return", required_return)
+        result["hurdle_entry_price"] = present_value_cash_flows(
+            [*distributions[:-1], distributions[-1] + exit_value],
+            hurdle,
+        )
+    return result
+
+
 __all__ = [
     "capm_cost_of_equity",
     "change_in_operating_nwc",
     "enterprise_to_equity_value",
     "enterprise_value_from_fcff",
     "economic_value_added",
+    "equity_return_case",
     "fcff",
+    "fcff_valuation_case",
     "gordon_growth_terminal_value",
     "internal_rate_of_return",
     "incremental_return_on_invested_capital",
@@ -337,6 +480,7 @@ __all__ = [
     "nopat",
     "net_investment",
     "operating_nwc",
+    "operating_period_metrics",
     "per_share_value",
     "present_value_cash_flows",
     "probability_weighted_value",
