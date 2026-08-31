@@ -54,6 +54,9 @@ def _gateway_fetch_concurrency() -> int:
 
 
 _GATEWAY_FETCH_CONCURRENCY = _gateway_fetch_concurrency()
+_GATEWAY_FETCH_ATTEMPTS = 4
+_GATEWAY_RETRY_BASE_SEC = 0.5
+_GATEWAY_RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 def _sdk_api_enabled() -> bool:
@@ -386,19 +389,71 @@ def _record_host_result(row: dict[str, Any]) -> None:
         pass
 
 
-def _gateway_fetch_many(
-    missing: dict[str, str | dict[str, Any]],
-    timeout_sec: int = 300,
-) -> dict[str, dict[str, Any]] | None:
-    """Fetch each id through the gateway. None means 'no gateway, use the broker'.
-
-    Returns the same row shape as the broker (body stored to Tigris, receipt
-    sealed), so callers keep using read_fetch_result unchanged.
-    """
+def _require_sandbox_gateway() -> tuple[str, str]:
+    """host.fetch talks only to the sandbox gateway. The JSONL broker is gone."""
     base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not base or not api_key:
-        return None
+        raise RuntimeError(
+            "host.fetch requires the sandbox gateway "
+            "(OPENAI_BASE_URL and OPENAI_API_KEY). "
+            "The JSONL broker is not a fetch transport."
+        )
+    return base, api_key
+
+
+def _fetch_spec_url(spec: str | dict[str, Any]) -> str:
+    if isinstance(spec, str):
+        return spec
+    url = spec.get("url")
+    return url if isinstance(url, str) else ""
+
+
+def _gateway_error_row(
+    rid: str,
+    spec: str | dict[str, Any],
+    error: str,
+    status: int | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": rid,
+        "ok": False,
+        "error": error,
+        "url": _fetch_spec_url(spec),
+    }
+    if status is not None:
+        row["status"] = status
+    return row
+
+
+def _gateway_retry_delay_sec(attempt: int) -> float:
+    return min(8.0, _GATEWAY_RETRY_BASE_SEC * (2**attempt))
+
+
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        body = ""
+    if not body:
+        return f"gateway HTTP {exc.code}"
+    return f"gateway HTTP {exc.code}: {body[:300]}"
+
+
+def _gateway_fetch_one(
+    rid: str,
+    spec: str | dict[str, Any],
+    *,
+    base: str,
+    api_key: str,
+    timeout_sec: int,
+) -> dict[str, Any]:
+    """Fetch one id through /host-fetch. Always returns a row; never None.
+
+    Transient gateway hop failures (429/502/timeout/socket) are retried here.
+    After retries the id is recorded as ok=False so a later call does not loop
+    forever, and siblings in the same batch are not discarded.
+    """
     # queue_fetch takes snake_case; the route takes camelCase. Forwarding the
     # spec verbatim silently dropped source_receipt, so every documented POST
     # fetch failed server-side with "requires sourceReceipt".
@@ -406,13 +461,16 @@ def _gateway_fetch_many(
         "source_receipt": "sourceReceipt",
         "content_type": "contentType",
     }
-    def _one(rid: str, spec: Any) -> dict[str, Any] | None:
-        payload: dict[str, Any] = {"id": rid}
-        if isinstance(spec, str):
-            payload["url"] = spec
-        else:
-            for key, value in spec.items():
-                payload[key_map.get(key, key)] = value
+    payload: dict[str, Any] = {"id": rid}
+    if isinstance(spec, str):
+        payload["url"] = spec
+    else:
+        for key, value in spec.items():
+            payload[key_map.get(key, key)] = value
+
+    last_error = "gateway fetch failed"
+    last_status: int | None = None
+    for attempt in range(_GATEWAY_FETCH_ATTEMPTS):
         req = urllib.request.Request(
             f"{base}/host-fetch",
             data=json.dumps(payload).encode("utf-8"),
@@ -429,40 +487,66 @@ def _gateway_fetch_many(
             _touch_host_activity()
         except urllib.error.HTTPError as exc:
             _touch_host_activity()
-            if exc.code == 404:
-                return None  # server predates the route — broker handles it
-            # ok=False is TERMINAL per the fetch contract, and _record_host_result
-            # would persist it. A transient 429/502 must not permanently poison
-            # this id — degrade to the broker, which retries properly.
-            return None
-        except urllib.error.URLError:
+            last_status = exc.code
+            last_error = _http_error_detail(exc)
+            retryable = (
+                exc.code in _GATEWAY_RETRYABLE_STATUS
+                and attempt + 1 < _GATEWAY_FETCH_ATTEMPTS
+            )
+            if retryable:
+                time.sleep(_gateway_retry_delay_sec(attempt))
+                continue
+            return _gateway_error_row(rid, spec, last_error, status=exc.code)
+        except urllib.error.URLError as exc:
             _touch_host_activity()
-            # Socket/DNS failure. The broker path survived these; propagating
-            # here would kill the whole script.
-            return None
+            reason = getattr(exc, "reason", exc)
+            last_error = f"gateway transport: {reason}"
+            last_status = None
+            if attempt + 1 < _GATEWAY_FETCH_ATTEMPTS:
+                time.sleep(_gateway_retry_delay_sec(attempt))
+                continue
+            return _gateway_error_row(rid, spec, last_error)
         if not isinstance(row, dict):
-            return None
+            last_error = "gateway returned a non-object body"
+            last_status = None
+            if attempt + 1 < _GATEWAY_FETCH_ATTEMPTS:
+                time.sleep(_gateway_retry_delay_sec(attempt))
+                continue
+            return _gateway_error_row(rid, spec, last_error)
         row.setdefault("id", rid)
+        row.setdefault("url", _fetch_spec_url(spec))
         return row
+    return _gateway_error_row(rid, spec, last_error, status=last_status)
 
-    # The broker ran these host-side at FETCH_CONCURRENCY, outside the exec
-    # clock. Serially inside the exec, a wide batch can blow the exec timeout.
+
+def _gateway_fetch_many(
+    missing: dict[str, str | dict[str, Any]],
+    timeout_sec: int = 300,
+) -> dict[str, dict[str, Any]]:
+    """Fetch each id through the gateway. Always returns one row per requested id.
+
+    A sibling miss does not discard already-good rows. Transient hop failures
+    are retried per id before an ok=False row is recorded.
+    """
+    base, api_key = _require_sandbox_gateway()
     items = list(missing.items())
-    rows: list[dict[str, Any] | None] = [None] * len(items)
+    rows: list[dict[str, Any]] = [{} for _ in items]
     with ThreadPoolExecutor(max_workers=_GATEWAY_FETCH_CONCURRENCY) as pool:
         futures = {
-            pool.submit(_one, rid, spec): index
+            pool.submit(
+                _gateway_fetch_one,
+                rid,
+                spec,
+                base=base,
+                api_key=api_key,
+                timeout_sec=timeout_sec,
+            ): index
             for index, (rid, spec) in enumerate(items)
         }
         for future in as_completed(futures):
             rows[futures[future]] = future.result()
-    # Any miss means the gateway could not serve this batch; hand the WHOLE batch
-    # to the broker rather than half-filling it.
-    if any(row is None for row in rows):
-        return None
     out: dict[str, dict[str, Any]] = {}
     for (rid, _spec), row in zip(items, rows):
-        assert row is not None
         _record_host_result(row)
         out[rid] = _hydrate_spilled_row(row)
     return out
@@ -472,14 +556,14 @@ def fetch(
     requests: dict[str, str | dict[str, Any]],
     _exit: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    """Fetch URLs and return the results. BLOCKS until the host answers.
+    """Fetch URLs and return the results. BLOCKS until the gateway answers.
 
         inv = fetch({"inventory": url})["inventory"]
         pdfs = fetch({f"pdf_{d}": u for d, u in docs.items()})
         signal.write_rows(parse(pdfs))
 
     Nothing exits and nothing is re-run. Values are a URL, or a dict of
-    queue_fetch kwargs (method/body/headers/source_receipt) minus request_id:
+    method/body/headers/source_receipt minus request_id:
 
         fetch({"submit": {"url": u, "method": "POST", "body": b,
                           "source_receipt": inv["data"]["receipt"]}})
@@ -489,23 +573,14 @@ def fetch(
 
     Two different outcomes, two different responses:
 
-    - ok=False  -> the host TRIED and the fetch failed. Terminal: do NOT re-request
-      that id, the host will not fetch it twice. Inspect the error and move on.
-    - NO ROW AT ALL for an id you asked for -> the host never fulfilled it. That is
-      a platform fault, not your bug. Re-request it with the SAME id and print the
-      missing ids so it is visible.
+    - ok=False  -> the host TRIED and the fetch failed after retries. Terminal:
+      do NOT re-request that id. Inspect the error and move on.
+    - Every requested id has a row. host.fetch does not queue work, does not
+      write host_requests.jsonl, and does not SystemExit.
 
-    ------------------------------------------------------------------
-    BROKER FALLBACK — applies ONLY with no sandbox gateway (local dev).
-    Ignore this section unless a call actually exits your process.
-    ------------------------------------------------------------------
-    Without a gateway this queues the request and exits so the host can fulfill
-    it and re-run the script from the top. In that mode ids must be a pure
-    function of the resource, because the script recomputes them on every round:
-    `int(time.time())`, `uuid4()`, a random suffix, or loop position
-    (`f"p{i}"` over enumerate) all produce a NEW key for data the host already
-    stored, so the batch never drains and nothing announces it.
+    ``_exit`` is accepted for call-site compatibility and is ignored.
     """
+    del _exit
     normalized_requests = {
         rid: _normalize_fetch_spec(spec) for rid, spec in requests.items()
     }
@@ -521,21 +596,8 @@ def fetch(
         return {rid: results[rid] for rid in normalized_requests}
 
     gateway = _gateway_fetch_many(missing)
-    if gateway is not None:
-        results.update(gateway)
-        return {rid: results[rid] for rid in normalized_requests if rid in results}
-
-    for rid, spec in missing.items():
-        if isinstance(spec, str):
-            queue_fetch(rid, spec)
-        else:
-            queue_fetch(rid, **spec)
-    flush_requests()
-    if _exit:
-        # The host fulfills what we queued and re-runs this script from the top;
-        # this call then returns the data instead of queueing again.
-        raise SystemExit(0)
-    return {rid: results[rid] for rid in normalized_requests if rid in results}
+    results.update(gateway)
+    return {rid: results[rid] for rid in normalized_requests}
 
 
 
@@ -1398,7 +1460,7 @@ def search(
 def gateway_fetch_json(url: str, timeout_sec: int = 120) -> dict[str, Any]:
     """
     Small JSON GET via the sandbox LLM gateway /fetch (SSRF-guarded).
-    Use host broker (queue_fetch) for large blobs stored in Tigris.
+    Use host.fetch for document bodies stored in Tigris.
     """
     base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
     api_key = os.environ.get("OPENAI_API_KEY", "")

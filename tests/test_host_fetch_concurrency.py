@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 from nexustrade import host
 
@@ -147,6 +150,137 @@ class HostFetchIdentityTest(unittest.TestCase):
                     }
                 )
         gateway.assert_not_called()
+
+
+class HostFetchGatewayOnlyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.results_path = os.path.join(self.tmp.name, "host_results.jsonl")
+        self.requests_path = os.path.join(self.tmp.name, "host_requests.jsonl")
+        self.path_patch = patch.object(host, "HOST_RESULTS_PATH", self.results_path)
+        self.requests_patch = patch.object(
+            host, "HOST_REQUESTS_PATH", self.requests_path
+        )
+        self.path_patch.start()
+        self.requests_patch.start()
+        self.addCleanup(self.path_patch.stop)
+        self.addCleanup(self.requests_patch.stop)
+        self.env = patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://gateway.example.test/v1",
+                "OPENAI_API_KEY": "sandbox-key",
+            },
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.sleep = patch.object(host.time, "sleep")
+        self.sleep.start()
+        self.addCleanup(self.sleep.stop)
+
+    def recorded_ids(self) -> list[str]:
+        if not os.path.exists(self.results_path):
+            return []
+        ids: list[str] = []
+        with open(self.results_path, encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    ids.append(json.loads(line)["id"])
+        return ids
+
+    def test_no_gateway_raises_and_does_not_write_broker_requests(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": "", "OPENAI_API_KEY": ""}):
+            with self.assertRaisesRegex(RuntimeError, "not a fetch transport"):
+                host.fetch({"pdf_1": "https://example.gov/a.pdf"})
+        self.assertFalse(os.path.exists(self.requests_path))
+
+    def test_one_transient_502_does_not_discard_siblings(self) -> None:
+        attempts = {"a": 0, "b": 0, "c": 0}
+
+        def urlopen(req: Request, timeout: int = 0) -> io.BytesIO:
+            payload = json.loads(req.data.decode("utf-8"))
+            rid = payload["id"]
+            attempts[rid] += 1
+            if rid == "b" and attempts[rid] == 1:
+                raise HTTPError(
+                    req.full_url,
+                    502,
+                    "Bad Gateway",
+                    hdrs=None,
+                    fp=io.BytesIO(b'{"error":{"message":"blip"}}'),
+                )
+            body = json.dumps(
+                {
+                    "id": rid,
+                    "ok": True,
+                    "url": payload["url"],
+                    "status": 200,
+                    "data": {"receipt": f"r-{rid}"},
+                }
+            )
+            return io.BytesIO(body.encode("utf-8"))
+
+        with patch.object(host.urllib.request, "urlopen", side_effect=urlopen):
+            result = host.fetch(
+                {
+                    "a": "https://example.gov/a.pdf",
+                    "b": "https://example.gov/b.pdf",
+                    "c": "https://example.gov/c.pdf",
+                }
+            )
+
+        self.assertTrue(result["a"]["ok"])
+        self.assertTrue(result["b"]["ok"])
+        self.assertTrue(result["c"]["ok"])
+        self.assertEqual(attempts["b"], 2)
+        self.assertEqual(sorted(self.recorded_ids()), ["a", "b", "c"])
+        self.assertFalse(os.path.exists(self.requests_path))
+
+    def test_persistent_502_records_ok_false_and_does_not_exit(self) -> None:
+        def urlopen(req: Request, timeout: int = 0) -> io.BytesIO:
+            raise HTTPError(
+                req.full_url,
+                502,
+                "Bad Gateway",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"message":"down"}}'),
+            )
+
+        with patch.object(host.urllib.request, "urlopen", side_effect=urlopen):
+            result = host.fetch({"pdf_1": "https://example.gov/a.pdf"})
+
+        self.assertFalse(result["pdf_1"]["ok"])
+        self.assertEqual(result["pdf_1"]["status"], 502)
+        self.assertIn("gateway HTTP 502", result["pdf_1"]["error"])
+        self.assertEqual(self.recorded_ids(), ["pdf_1"])
+        self.assertFalse(os.path.exists(self.requests_path))
+
+    def test_transport_error_retries_then_returns_row(self) -> None:
+        calls = {"n": 0}
+
+        def urlopen(req: Request, timeout: int = 0) -> io.BytesIO:
+            calls["n"] += 1
+            if calls["n"] < host._GATEWAY_FETCH_ATTEMPTS:
+                raise URLError("timed out")
+            payload = json.loads(req.data.decode("utf-8"))
+            return io.BytesIO(
+                json.dumps(
+                    {
+                        "id": payload["id"],
+                        "ok": True,
+                        "url": payload["url"],
+                        "status": 200,
+                    }
+                ).encode("utf-8")
+            )
+
+        with patch.object(host.urllib.request, "urlopen", side_effect=urlopen):
+            result = host.fetch({"pdf_1": "https://example.gov/a.pdf"})
+
+        self.assertTrue(result["pdf_1"]["ok"])
+        self.assertEqual(calls["n"], host._GATEWAY_FETCH_ATTEMPTS)
+        self.assertFalse(os.path.exists(self.requests_path))
 
 
 if __name__ == "__main__":
