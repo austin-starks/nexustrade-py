@@ -1431,8 +1431,14 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "lines or page-boundary continuations to their logical row, but never merge two "
     "separately printed rows. Copy literal source text character-for-character when "
     "a string output field represents a printed fact: do not drop leading date digits, "
-    "alter punctuation or thousands separators, or expand an absent identifier from "
-    "the entity's real-world identity. For example, printed date 11/26/13 stays "
+    "alter punctuation, thousands separators, or whitespace inside a printed identifier, "
+    "or expand an absent identifier from the entity's real-world identity. If the same "
+    "printed identifier is visible both as a standalone output field and inside another "
+    "extracted field from that row, those outputs must preserve the same exact token. "
+    "When the caller requests a stock ticker or symbol, return the compact source "
+    "identifier with no inserted internal whitespace; preserve meaningful periods and "
+    "hyphens. GOOGL, BRK.B, and BF-B are well-formed examples; GOOG L is not. "
+    "For example, printed date 11/26/13 stays "
     "11/26/13, printed 1,000 stays 1,000, and an empty ticker or symbol cell stays "
     "null even if the company is recognizable. When a visible source legend defines "
     "an exact code, preserve the raw code in its matching source field and do not "
@@ -1611,7 +1617,6 @@ def _extract_pdf_document_groups(
     result_order: "Sequence[str] | None" = None,
 ) -> dict[str, dict[str, Any]]:
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from nexustrade.host import GatewayChatTransportError
 
     results: dict[str, dict[str, Any]] = dict(initial_results or {})
     ordered_ids = (
@@ -1667,22 +1672,6 @@ def _extract_pdf_document_groups(
             replays[key] = payload
         return replays
 
-    def lookup_bisected_tree(
-        group: list[tuple[str, bytes]],
-    ) -> dict[str, dict[str, Any]] | None:
-        if request_keys_for_group is None or len(group) == 1:
-            return None
-        midpoint = len(group) // 2
-        recovered: dict[str, dict[str, Any]] = {}
-        for child in (group[:midpoint], group[midpoint:]):
-            child_replay = lookup_exact_group(child, exact_keys(child))
-            if child_replay is None:
-                child_replay = lookup_bisected_tree(child)
-            if child_replay is None:
-                return None
-            recovered.update(child_replay)
-        return recovered
-
     def run_group(
         group: list[tuple[str, bytes]],
         group_request_keys: dict[str, str] | None,
@@ -1690,40 +1679,17 @@ def _extract_pdf_document_groups(
         replay = lookup_exact_group(group, group_request_keys)
         if replay is not None:
             return replay, len(replay), 0, len(replay)
-        bisected_replay = lookup_bisected_tree(group)
-        if bisected_replay is not None:
-            return (
-                bisected_replay,
-                len(bisected_replay),
-                0,
-                len(bisected_replay),
-            )
         try:
             extracted = run_exact_group(group, group_request_keys)
         except Exception as exc:
-            if len(group) == 1:
-                key = group[0][0]
-                return {
-                    key: {"document": {}, "rows": [], "error": str(exc)}
-                }, 0, 1, 0
-            if not isinstance(
-                exc, (GatewayChatTransportError, _RowsStructuringError)
-            ):
-                raise
-            midpoint = len(group) // 2
-            left_group = group[:midpoint]
-            right_group = group[midpoint:]
-            left_results, left_completed, left_failed, left_hits = run_group(
-                left_group, exact_keys(left_group)
-            )
-            right_results, right_completed, right_failed, right_hits = run_group(
-                right_group, exact_keys(right_group)
-            )
             return (
-                {**left_results, **right_results},
-                left_completed + right_completed,
-                left_failed + right_failed,
-                left_hits + right_hits,
+                {
+                    key: {"document": {}, "rows": [], "error": str(exc)}
+                    for key, _data in group
+                },
+                0,
+                len(group),
+                0,
             )
         if group_request_keys is not None:
             for key, payload in extracted.items():
@@ -1828,7 +1794,7 @@ def extract_pdfs(
     document_schema: dict[str, Any] | None = None,
     rows_schema: dict[str, Any] | None = None,
     rows_model: str | None = None,
-    rows_retries: int = 1,
+    rows_retries: int = 0,
     rows_include_pdf: bool = True,
     rows_pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
     instructions: str | None = None,
@@ -1837,10 +1803,12 @@ def extract_pdfs(
     """Extract a PDF corpus with one schema-bound multi-document request.
 
     When `rows_schema` is supplied, every eligible PDF shares one Luna request by
-    default. If the real transport or structured-output call cannot accept that
-    corpus, the request is bisected until the failing subset is isolated. Set a
-    positive `documents_per_request` only to intentionally partition the corpus;
-    pass 1 to use the compatibility OCR-plus-one-document path. `instructions`
+    default. By default, a transport or structured-output failure fails that
+    exact logical group visibly; it is not converted into multiple paid model
+    requests. Set `rows_retries` explicitly only when retrying the same peer
+    corpus is desired. Set a positive `documents_per_request` only to
+    intentionally partition the corpus; pass 1 to use the compatibility
+    OCR-plus-one-document path. `instructions`
     supplies concise task semantics, including requested inclusion/exclusion rules;
     the helper remains agnostic to the source domain.
 
@@ -1852,10 +1820,9 @@ def extract_pdfs(
 
     The legacy path retries transient failures per document (max_attempts,
     exponential backoff). The grouped path gives each exact group one transport
-    attempt, then bisects a transport or structuring failure to isolate smaller
-    requests and commits each successful child group immediately. A later
-    remediation in the same compute session can reuse the completed subtree.
-    Permanent request or durable-cache failures are not split or repeated.
+    attempt. Explicit `documents_per_request` and the real aggregate byte ceiling
+    are its only partition boundaries. A later remediation may retry the same
+    logical request; it does not silently change peer context or multiply spend.
 
     Budget exhaustion (HTTP 429) is backpressure, not a crash and never retried:
     scheduling stops, already-running work finishes, and every unstarted document

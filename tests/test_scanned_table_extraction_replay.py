@@ -39,6 +39,18 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             "empty ticker or symbol cell stays null",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
+        self.assertIn(
+            "whitespace inside a printed identifier",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "those outputs must preserve the same exact token",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "GOOGL, BRK.B, and BF-B are well-formed examples; GOOG L is not",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
 
     def test_extracted_rows_preserves_legacy_positional_construction(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -234,7 +246,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 documents_per_request=0,
             )
 
-    def test_schema_batch_bisects_only_when_corpus_exceeds_real_byte_ceiling(
+    def test_schema_batch_partitions_only_at_real_byte_ceiling(
         self,
     ) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -432,11 +444,12 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 max_workers=1,
             )
 
-        self.assertIsNone(result["a"]["error"])
+        self.assertIn("source_id", result["a"]["error"])
         self.assertIn("source_id", result["b"]["error"])
+        self.assertEqual(result["a"]["rows"], [])
         self.assertEqual(result["b"]["rows"], [])
 
-    def test_failed_document_group_is_bisected_until_each_source_succeeds(self) -> None:
+    def test_failed_document_group_does_not_multiply_paid_requests(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
         calls: list[list[str]] = []
@@ -448,18 +461,9 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             del kwargs
             source_ids = [key for key, _data in group]
             calls.append(source_ids)
-            if len(group) > 1:
-                raise host.GatewayChatTransportError(
-                    "group request exceeded its deadline"
-                )
-            source_id = source_ids[0]
-            return {
-                source_id: {
-                    "document": {"source_id": source_id},
-                    "rows": [{"source_id": source_id}],
-                    "error": None,
-                }
-            }
+            raise host.GatewayChatTransportError(
+                "group request exceeded its deadline"
+            )
 
         with (
             mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
@@ -485,74 +489,16 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 extra_fields_by_key=None,
             )
 
-        self.assertEqual(
-            calls,
-            [["a", "b", "c"], ["a"], ["b", "c"], ["b"], ["c"]],
-        )
-        # These rows were produced without the original three-document peer
-        # context, so they cannot be stored under its request keys.
+        self.assertEqual(calls, [["a", "b", "c"]])
         record.assert_not_called()
-        self.assertTrue(all(result[key]["error"] is None for key in ("a", "b", "c")))
-        self.assertEqual(progress.call_args.kwargs["completed"], 3)
-        self.assertEqual(progress.call_args.kwargs["failed"], 0)
+        self.assertTrue(
+            all("exceeded its deadline" in result[key]["error"] for key in result)
+        )
+        self.assertEqual(progress.call_args.kwargs["completed"], 0)
+        self.assertEqual(progress.call_args.kwargs["failed"], 3)
         self.assertTrue(progress.call_args.kwargs["done"])
 
-    def test_bisected_successes_are_committed_under_exact_child_contexts(self) -> None:
-        scanned_table = importlib.import_module("nexustrade.scanned_table")
-        host = importlib.import_module("nexustrade.host")
-
-        def keys_for(group: list[tuple[str, bytes]]) -> dict[str, str]:
-            peers = "-".join(key for key, _data in group)
-            return {key: f"key-{peers}-{key}" for key, _data in group}
-
-        def extract_group(
-            group: list[tuple[str, bytes]],
-            **kwargs: object,
-        ) -> dict[str, dict[str, object]]:
-            del kwargs
-            if len(group) > 1:
-                raise host.GatewayChatTransportError("split me")
-            source_id = group[0][0]
-            return {
-                source_id: {
-                    "document": {},
-                    "rows": [{"source_id": source_id}],
-                    "error": None,
-                }
-            }
-
-        with (
-            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
-            mock.patch.object(scanned_table, "_document_result_record") as record,
-            mock.patch.object(scanned_table, "_document_batch_progress"),
-            mock.patch.object(
-                scanned_table,
-                "_extract_pdf_document_group",
-                side_effect=extract_group,
-            ),
-        ):
-            scanned_table._extract_pdf_document_groups(
-                [("a", b"a"), ("b", b"b"), ("c", b"c")],
-                request_keys=keys_for([("a", b"a"), ("b", b"b"), ("c", b"c")]),
-                request_keys_for_group=keys_for,
-                batch_key="batch",
-                normalized_schema={"type": "object", "properties": {}},
-                rows_model="model",
-                rows_retries=0,
-                rows_pdf_max_bytes=1024,
-                instructions="extract rows",
-                documents_per_request=3,
-                max_workers=1,
-                extra_fields_by_key=None,
-            )
-
-        self.assertEqual(record.call_count, 3)
-        self.assertEqual(
-            {call.kwargs["request_key"] for call in record.call_args_list},
-            {"key-a-a", "key-b-b", "key-c-c"},
-        )
-
-    def test_complete_bisected_replay_skips_parent_extraction(self) -> None:
+    def test_child_cache_entries_do_not_replace_exact_parent_request(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         items = [("a", b"a"), ("b", b"b"), ("c", b"c")]
 
@@ -560,23 +506,31 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             peers = "-".join(key for key, _data in group)
             return {key: f"key-{peers}-{key}" for key, _data in group}
 
-        cached = {
-            "key-a-a": {"document": {}, "rows": [{"source_id": "a"}], "error": None},
-            "key-b-b": {"document": {}, "rows": [{"source_id": "b"}], "error": None},
-            "key-c-c": {"document": {}, "rows": [{"source_id": "c"}], "error": None},
+        extracted = {
+            key: {"document": {}, "rows": [{"source_id": key}], "error": None}
+            for key, _data in items
+        }
+        child_cache = {
+            "key-a-a": {"document": {}, "rows": [], "error": None},
+            "key-b-b": {"document": {}, "rows": [], "error": None},
+            "key-c-c": {"document": {}, "rows": [], "error": None},
         }
 
         with (
             mock.patch.object(
                 scanned_table,
                 "_document_result_lookup",
-                side_effect=lambda key: cached.get(key),
+                side_effect=lambda key: child_cache.get(key),
             ) as lookup,
-            mock.patch.object(scanned_table, "_document_result_record"),
-            mock.patch.object(scanned_table, "_document_batch_progress") as progress,
-            mock.patch.object(scanned_table, "_extract_pdf_document_group") as extract,
+            mock.patch.object(scanned_table, "_document_result_record") as record,
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "_extract_pdf_document_group",
+                return_value=extracted,
+            ) as extract_group,
         ):
-            result = scanned_table._extract_pdf_document_groups(
+            scanned_table._extract_pdf_document_groups(
                 items,
                 request_keys=keys_for(items),
                 request_keys_for_group=keys_for,
@@ -591,10 +545,15 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 extra_fields_by_key=None,
             )
 
-        extract.assert_not_called()
-        self.assertEqual(set(result), {"a", "b", "c"})
-        self.assertEqual(lookup.call_count, 5)
-        self.assertEqual(progress.call_args.kwargs["cache_hits"], 3)
+        self.assertEqual(extract_group.call_count, 1)
+        # Exact-parent lookup stops on its first miss. It never consults the
+        # single-document child entries as substitutes for the parent corpus.
+        self.assertEqual(lookup.call_count, 1)
+        self.assertEqual(record.call_count, 3)
+        self.assertEqual(
+            {call.kwargs["request_key"] for call in record.call_args_list},
+            {"key-a-b-c-a", "key-a-b-c-b", "key-a-b-c-c"},
+        )
 
     def test_partial_child_replay_still_attempts_complete_parent(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -645,7 +604,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             [key for key, _data in extract.call_args.args[0]], ["a", "b"]
         )
 
-    def test_failed_document_group_isolates_only_a_bad_singleton(self) -> None:
+    def test_failed_document_group_preserves_exact_peer_context(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
 
@@ -654,20 +613,9 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             **kwargs: object,
         ) -> dict[str, dict[str, object]]:
             del kwargs
-            if len(group) > 1:
-                raise host.GatewayChatTransportError(
-                    "group request exceeded its deadline"
-                )
-            source_id = group[0][0]
-            if source_id == "bad":
-                raise RuntimeError("source cannot be decoded")
-            return {
-                source_id: {
-                    "document": {"source_id": source_id},
-                    "rows": [{"source_id": source_id}],
-                    "error": None,
-                }
-            }
+            raise host.GatewayChatTransportError(
+                "group request exceeded its deadline"
+            )
 
         with (
             mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
@@ -697,14 +645,12 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 extra_fields_by_key=None,
             )
 
-        # Successful singletons came from a bisected request and are not safe
-        # replays for the original three-document peer context.
         record.assert_not_called()
-        self.assertIsNone(result["good-a"]["error"])
-        self.assertIsNone(result["good-b"]["error"])
-        self.assertIn("source cannot be decoded", result["bad"]["error"])
-        self.assertEqual(progress.call_args.kwargs["completed"], 2)
-        self.assertEqual(progress.call_args.kwargs["failed"], 1)
+        self.assertTrue(
+            all("exceeded its deadline" in result[key]["error"] for key in result)
+        )
+        self.assertEqual(progress.call_args.kwargs["completed"], 0)
+        self.assertEqual(progress.call_args.kwargs["failed"], 3)
         self.assertTrue(progress.call_args.kwargs["done"])
 
     def test_cache_commit_failure_does_not_repeat_paid_extraction(self) -> None:

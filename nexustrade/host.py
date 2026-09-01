@@ -1692,9 +1692,9 @@ def gateway_chat(
     OpenAI-compatible chat completion via the sandbox gateway (/chat/completions).
     A positional mapping is serialized as the user prompt; a positional list is
     treated as an already-formed OpenAI messages array.
-    `max_transport_attempts` lets a higher-level recovery strategy, such as
-    document-group bisection, remain the sole retry owner. `idempotency_key`
-    makes any lower-hop rejoin or replay the same billed logical request.
+    `max_transport_attempts` lets a higher-level operation remain the sole retry
+    owner. `idempotency_key` makes any lower-hop rejoin or replay the same billed
+    logical request.
     Returns the raw OpenAI response object (choices, usage, model, …).
     """
     built_messages = _build_chat_messages(messages, prompt=prompt, system=system)

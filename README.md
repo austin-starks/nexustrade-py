@@ -54,8 +54,10 @@ for source_id, result in extracted.items():
 ```
 
 The helper sends the supplied PDF corpus in one schema-bound request by default
-when it fits OpenAI's combined file-input limit. It partitions only at that real
-byte boundary or after a transport/structured-output failure. Set
+when it fits the gateway's combined file-input limit. It partitions only at that real
+byte boundary. By default, a transport or structured-output failure remains one
+failed logical request; it is not retried as smaller paid model requests. Set
+`rows_retries` explicitly only to retry the same peer corpus. Set
 `documents_per_request` only to intentionally partition a corpus; use `1` for
 the compatibility one-document OCR path. Use
 `inspect_document` only when a concrete ambiguity actually needs visual review.
