@@ -191,7 +191,7 @@ class HostFetchGatewayOnlyTest(unittest.TestCase):
 
     def test_no_gateway_raises_and_does_not_write_broker_requests(self) -> None:
         with patch.dict(os.environ, {"OPENAI_BASE_URL": "", "OPENAI_API_KEY": ""}):
-            with self.assertRaisesRegex(RuntimeError, "not a fetch transport"):
+            with self.assertRaisesRegex(RuntimeError, "requires the sandbox gateway"):
                 host.fetch({"pdf_1": "https://example.gov/a.pdf"})
         self.assertFalse(os.path.exists(self.requests_path))
 
