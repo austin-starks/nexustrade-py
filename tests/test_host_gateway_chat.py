@@ -25,6 +25,20 @@ class _Response:
         return json.dumps(self.payload).encode("utf-8")
 
 
+class _StreamResponse:
+    def __init__(self, lines: list[bytes]) -> None:
+        self.lines = iter(lines)
+
+    def __enter__(self) -> "_StreamResponse":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def readline(self) -> bytes:
+        return next(self.lines, b"")
+
+
 def _http_error(status: int) -> urllib.error.HTTPError:
     return urllib.error.HTTPError(
         "https://gateway.example/chat/completions",
@@ -36,6 +50,125 @@ def _http_error(status: int) -> urllib.error.HTTPError:
 
 
 class GatewayChatRetryTest(unittest.TestCase):
+    def test_streaming_json_ignores_keepalives_and_collects_terminal_usage(self) -> None:
+        captured_body: dict[str, object] = {}
+
+        def fake_urlopen(request: object, **__: object) -> _StreamResponse:
+            nonlocal captured_body
+            data = getattr(request, "data", None)
+            self.assertIsInstance(data, bytes)
+            captured_body = json.loads(data.decode("utf-8"))
+            return _StreamResponse(
+                [
+                    b": connected\n",
+                    b"\n",
+                    b'data: {"id":"r1","model":"test","choices":[{"index":0,"delta":{"content":"{\\\"ok\\\":"}}]}\n',
+                    b"\n",
+                    b": keep-alive\n",
+                    b"\n",
+                    b'data: {"model":"test","choices":[{"index":0,"delta":{"content":"true}"},"finish_reason":"stop"}]}\n',
+                    b"\n",
+                    b'data: {"model":"test","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n',
+                    b"\n",
+                    b"data: [DONE]\n",
+                    b"\n",
+                ]
+            )
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+        ):
+            result = host.gateway_chat_json(
+                "extract the corpus",
+                json_schema={"type": "object"},
+                stream=True,
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertIs(captured_body["stream"], True)
+        self.assertEqual(captured_body["stream_options"], {"include_usage": True})
+
+    def test_streaming_response_without_done_fails_closed(self) -> None:
+        def fake_urlopen(*_: object, **__: object) -> _StreamResponse:
+            return _StreamResponse(
+                [
+                    b'data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n',
+                    b"\n",
+                ]
+            )
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+            self.assertRaisesRegex(host.GatewayChatTransportError, "terminal"),
+        ):
+            host.gateway_chat(prompt="extract this corpus", stream=True)
+
+    def test_streaming_error_frame_preserves_the_gateway_failure(self) -> None:
+        def fake_urlopen(*_: object, **__: object) -> _StreamResponse:
+            return _StreamResponse(
+                [
+                    b": connected\n",
+                    b"\n",
+                    b'data: {"error":{"message":"schema rejected","type":"gateway_error"}}\n',
+                    b"\n",
+                ]
+            )
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+            self.assertRaisesRegex(host.GatewayChatRequestError, "schema rejected"),
+        ):
+            host.gateway_chat(prompt="extract this corpus", stream=True)
+
+    def test_streaming_transport_defaults_to_one_paid_attempt(self) -> None:
+        attempts = 0
+
+        def fake_urlopen(*_: object, **__: object) -> _StreamResponse:
+            nonlocal attempts
+            attempts += 1
+
+            class _TimeoutStream(_StreamResponse):
+                def readline(self) -> bytes:
+                    raise TimeoutError("idle stream")
+
+            return _TimeoutStream([])
+
+        with (
+            patch.dict(
+                host.os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.example",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ),
+            patch.object(host.urllib.request, "urlopen", fake_urlopen),
+            self.assertRaises(host.GatewayChatTransportError),
+        ):
+            host.gateway_chat(prompt="extract this corpus", stream=True)
+
+        self.assertEqual(attempts, 1)
+
     def test_touches_runner_activity_file_without_growing_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             activity_path = os.path.join(directory, "host-activity")

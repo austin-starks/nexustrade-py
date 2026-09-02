@@ -1675,6 +1675,89 @@ def _parse_json_content(content: str) -> Any:
     return json.loads(text)
 
 
+def _read_gateway_chat_stream(response: Any) -> dict[str, Any]:
+    """Collect one OpenAI-compatible SSE chat stream into a response object."""
+    content_parts: list[str] = []
+    response_id: str | None = None
+    model: str | None = None
+    usage: dict[str, Any] | None = None
+    finish_reason: str | None = None
+    saw_done = False
+    event_data: list[str] = []
+
+    def consume_event() -> None:
+        nonlocal response_id, model, usage, finish_reason, saw_done
+        if not event_data:
+            return
+        raw = "\n".join(event_data)
+        event_data.clear()
+        if raw == "[DONE]":
+            saw_done = True
+            return
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("gateway chat stream event is not an object")
+        if isinstance(parsed.get("error"), dict):
+            message = parsed["error"].get("message")
+            raise GatewayChatRequestError(
+                "gateway chat stream failed: "
+                + (str(message) if message else json.dumps(parsed["error"]))
+            )
+        if isinstance(parsed.get("id"), str):
+            response_id = parsed["id"]
+        if isinstance(parsed.get("model"), str):
+            model = parsed["model"]
+        if isinstance(parsed.get("usage"), dict):
+            usage = parsed["usage"]
+        choices = parsed.get("choices")
+        if not isinstance(choices, list):
+            return
+        for choice in choices:
+            if not isinstance(choice, dict) or choice.get("index", 0) != 0:
+                continue
+            delta = choice.get("delta")
+            message = choice.get("message")
+            source = delta if isinstance(delta, dict) else message
+            if isinstance(source, dict) and isinstance(source.get("content"), str):
+                content_parts.append(source["content"])
+            if isinstance(choice.get("finish_reason"), str):
+                finish_reason = choice["finish_reason"]
+
+    while True:
+        line = response.readline()
+        if not line:
+            consume_event()
+            break
+        _touch_host_activity()
+        decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if not decoded:
+            consume_event()
+            continue
+        if decoded.startswith(":"):
+            continue
+        if decoded.startswith("data:"):
+            event_data.append(decoded[5:].lstrip())
+    if not saw_done:
+        raise GatewayChatTransportError(
+            "gateway chat stream ended before the terminal [DONE] event"
+        )
+    return {
+        **({"id": response_id} if response_id else {}),
+        **({"model": model} if model else {}),
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "".join(content_parts),
+                },
+                "finish_reason": finish_reason,
+            }
+        ],
+        **({"usage": usage} if usage is not None else {}),
+    }
+
+
 def gateway_chat(
     messages: list[dict[str, Any]] | Mapping[str, Any] | str | None = None,
     *,
@@ -1683,6 +1766,7 @@ def gateway_chat(
     model: str | None = None,
     temperature: float = 0,
     response_format: dict[str, Any] | None = None,
+    stream: bool = False,
     timeout_sec: int = 180,
     max_transport_attempts: int | None = None,
     idempotency_key: str | None = None,
@@ -1703,13 +1787,20 @@ def gateway_chat(
         "model": model or _default_gateway_model(),
         "temperature": temperature,
         "messages": built_messages,
+        "stream": stream,
     }
+    if stream:
+        body["stream_options"] = {"include_usage": True}
     if response_format is not None:
         body["response_format"] = response_format
     body.update(extra)
     encoded_body = json.dumps(body).encode("utf-8")
+    # A streaming response may fail after emitting partial output. Without a
+    # durable idempotency key, automatically opening another stream can create
+    # a second paid inference. Buffered requests retain the historical bounded
+    # retry default; callers that own a safe keyed streaming retry may opt in.
     attempts = (
-        _GATEWAY_CHAT_MAX_ATTEMPTS
+        (1 if stream else _GATEWAY_CHAT_MAX_ATTEMPTS)
         if max_transport_attempts is None
         else max_transport_attempts
     )
@@ -1737,7 +1828,11 @@ def gateway_chat(
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
+                payload = (
+                    _read_gateway_chat_stream(resp)
+                    if stream
+                    else json.loads(resp.read().decode("utf-8"))
+                )
             _touch_host_activity()
             break
         except urllib.error.HTTPError as exc:

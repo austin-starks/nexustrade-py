@@ -1198,6 +1198,7 @@ def _document_request_key(
     rows_retries: int,
     rows_include_pdf: bool,
     rows_pdf_max_bytes: int,
+    min_rows_per_document: int = 0,
     rows_force_ocr: bool = True,
     rows_schema_name: str = "extract_rows",
     instructions: str | None = None,
@@ -1232,6 +1233,7 @@ def _document_request_key(
         "rows_retries": rows_retries,
         "rows_include_pdf": rows_include_pdf,
         "rows_pdf_max_bytes": rows_pdf_max_bytes,
+        "min_rows_per_document": min_rows_per_document,
         "rows_force_ocr": rows_force_ocr,
         "rows_schema_name": rows_schema_name,
         "instructions_sha256": (
@@ -1285,6 +1287,7 @@ def _document_group_request_keys(
     rows_retries: int,
     rows_include_pdf: bool,
     rows_pdf_max_bytes: int,
+    min_rows_per_document: int,
     instructions: str | None,
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
 ) -> dict[str, str]:
@@ -1303,6 +1306,7 @@ def _document_group_request_keys(
             rows_retries=rows_retries,
             rows_include_pdf=rows_include_pdf,
             rows_pdf_max_bytes=rows_pdf_max_bytes,
+            min_rows_per_document=min_rows_per_document,
             rows_force_ocr=True,
             rows_schema_name="extract_rows",
             instructions=instructions,
@@ -1415,8 +1419,8 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "Complete the caller's schema-bound extraction task from every attached PDF. "
     "The caller instructions define the requested rows and any inclusion or "
     "exclusion semantics. Use the PDF bytes as the authoritative visual source. "
-    "Return a documents object keyed by source_id with exactly one value for every "
-    "supplied source_id and no other key. Keep every source fact attributed to the "
+    "Return a documents array containing exactly one object for every supplied "
+    "source_id and no other source_id. Keep every source fact attributed to the "
     "PDF where it is visible. "
     "When the caller's schema or instructions request a cross-document relationship, "
     "such as an amendment, restatement, or duplicate, compare the attached PDFs to "
@@ -1435,9 +1439,11 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "or expand an absent identifier from the entity's real-world identity. If the same "
     "printed identifier is visible both as a standalone output field and inside another "
     "extracted field from that row, those outputs must preserve the same exact token. "
-    "When the caller requests a stock ticker or symbol, return the compact source "
-    "identifier with no inserted internal whitespace; preserve meaningful periods and "
-    "hyphens. GOOGL, BRK.B, and BF-B are well-formed examples; GOOG L is not. "
+    "When the caller requests a stock ticker or symbol, return the exact source "
+    "identifier. For the common ASCII exchange-symbol grammar, letters and digits may "
+    "be separated by meaningful periods or hyphens: GOOGL, 0700.HK, BRK.B, and BF-B "
+    "are well-formed; GOOG L and visually similar non-ASCII letters are not. Express "
+    "the source's actual grammar in the caller schema when it differs. "
     "For example, printed date 11/26/13 stays "
     "11/26/13, printed 1,000 stays 1,000, and an empty ticker or symbol cell stays "
     "null even if the company is recognizable. When a visible source legend defines "
@@ -1445,24 +1451,52 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "paraphrase or classify it; the caller can map it after extraction. Copy source "
     "facts faithfully, represent absent values as null, "
     "and never invent facts from world knowledge. Return only the strict "
-    "structured response."
+    "structured response. Never emit an all-null placeholder row to satisfy an "
+    "array minimum; every row must represent one actual source record. "
 )
 
 
 def _group_response_schema(
-    normalized_schema: dict[str, Any], source_ids: list[str]
+    normalized_schema: dict[str, Any],
+    source_ids: list[str],
+    *,
+    min_rows_per_document: int = 0,
 ) -> dict[str, Any]:
     normalized_properties = normalized_schema.get("properties")
     if not isinstance(normalized_properties, Mapping):
         raise RowsSchemaError("normalized extraction schema has no properties")
+    if not source_ids:
+        raise RowsSchemaError("group response schema requires at least one source_id")
+    document_properties = dict(normalized_properties)
+    rows_property = document_properties.get("rows")
+    if rows_property is not None:
+        if not isinstance(rows_property, Mapping) or not _schema_has_type(
+            rows_property, "array"
+        ):
+            raise RowsSchemaError(
+                "normalized extraction schema rows property must be an array"
+            )
+        document_properties["rows"] = _array_schema_with_min_items(
+            rows_property,
+            min_rows_per_document,
+        )
+    elif min_rows_per_document > 0:
+        raise RowsSchemaError("min_rows_per_document requires a rows_schema")
+    document_properties = {
+        "source_id": {"type": "string", "enum": source_ids},
+        **document_properties,
+    }
+    # A single repeated item schema is substantially smaller and easier for the
+    # extraction model to execute than one object property per source. The exact
+    # item count plus source-id reconciliation below preserves corpus ownership.
     return _strict_object_schema(
         {
-            "documents": _strict_object_schema(
-                {
-                    source_id: _strict_object_schema(dict(normalized_properties))
-                    for source_id in source_ids
-                }
-            )
+            "documents": {
+                "type": "array",
+                "minItems": len(source_ids),
+                "maxItems": len(source_ids),
+                "items": _strict_object_schema(document_properties),
+            }
         }
     )
 
@@ -1474,6 +1508,7 @@ def _extract_pdf_document_group(
     rows_model: str | None,
     rows_retries: int,
     rows_pdf_max_bytes: int,
+    min_rows_per_document: int = 0,
     instructions: str | None,
     extra_fields_by_key: "Mapping[str, dict[str, Any]] | None",
     idempotency_key: str | None = None,
@@ -1534,9 +1569,18 @@ def _extract_pdf_document_group(
                 system=_EXTRACT_PDF_GROUP_SYSTEM,
                 model=rows_model or os.environ.get("EXTRACT_ROWS_MODEL", "").strip()
                 or DEFAULT_EXTRACT_ROWS_MODEL,
-                json_schema=_group_response_schema(normalized_schema, source_ids),
+                json_schema=_group_response_schema(
+                    normalized_schema,
+                    source_ids,
+                    min_rows_per_document=min_rows_per_document,
+                ),
                 schema_name="extract_pdf_documents",
                 temperature=0,
+                # Stream the single logical corpus request so reverse proxies
+                # receive progress bytes while the provider performs a long
+                # schema-bound extraction. This does not partition or retry the
+                # model call.
+                stream=True,
                 # The NexusTrade-to-NexusGenAI hop owns a 15-minute upstream
                 # bound. Leave response overhead so this client does not abort
                 # first and strand a still-accounting logical request.
@@ -1544,12 +1588,23 @@ def _extract_pdf_document_group(
                 max_transport_attempts=1,
                 idempotency_key=attempt_idempotency_key,
             )
-            if not isinstance(response, dict) or not isinstance(
-                response.get("documents"), dict
-            ):
+            if not isinstance(response, dict):
+                raise RuntimeError("multi-document extraction omitted documents")
+            raw_documents = response.get("documents")
+            if isinstance(raw_documents, list):
+                document_entries = []
+                for raw in raw_documents:
+                    if not isinstance(raw, dict):
+                        raise RuntimeError("multi-document result is not an object")
+                    document_entries.append((raw.get("source_id"), raw))
+            elif isinstance(raw_documents, dict):
+                # Backward-compatible parsing for durable results written before
+                # the compact array response contract.
+                document_entries = list(raw_documents.items())
+            else:
                 raise RuntimeError("multi-document extraction omitted documents")
             grouped: dict[str, dict[str, Any]] = {}
-            for source_id, raw in response["documents"].items():
+            for source_id, raw in document_entries:
                 if not isinstance(raw, dict):
                     raise RuntimeError("multi-document result is not an object")
                 if not isinstance(source_id, str) or source_id not in source_ids:
@@ -1561,6 +1616,10 @@ def _extract_pdf_document_group(
                         f"multi-document extraction duplicated source_id {source_id!r}"
                     )
                 rows = _rows_from_structured_result(raw)
+                has_placeholder_row = any(
+                    not any(value is not None for value in row.values())
+                    for row in rows
+                )
                 extra = (extra_fields_by_key or {}).get(source_id, {})
                 for row_index, row in enumerate(rows):
                     row.update(extra)
@@ -1574,8 +1633,13 @@ def _extract_pdf_document_group(
                     "rows": rows,
                     "markdown": "",
                     "page_audit": [],
-                    "apparent_table_rows": 0,
-                    "needs_review": False,
+                    # The grouped raw-PDF vision path does not run the legacy
+                    # OCR/layout audit. `None` means unmeasured, not zero visible
+                    # rows. A schema-valid empty extraction therefore remains a
+                    # review condition instead of masquerading as confirmed
+                    # evidence that the PDF contains no requested records.
+                    "apparent_table_rows": None,
+                    "needs_review": not rows or has_placeholder_row,
                     "pdf_attached": True,
                     "error": None,
                 }
@@ -1606,6 +1670,7 @@ def _extract_pdf_document_groups(
     rows_model: str | None,
     rows_retries: int,
     rows_pdf_max_bytes: int,
+    min_rows_per_document: int = 0,
     instructions: str | None,
     documents_per_request: int,
     max_workers: int,
@@ -1641,6 +1706,7 @@ def _extract_pdf_document_groups(
             rows_model=rows_model,
             rows_retries=rows_retries,
             rows_pdf_max_bytes=rows_pdf_max_bytes,
+            min_rows_per_document=min_rows_per_document,
             instructions=instructions,
             extra_fields_by_key=extra_fields_by_key,
             idempotency_key=(
@@ -1797,6 +1863,7 @@ def extract_pdfs(
     rows_retries: int = 0,
     rows_include_pdf: bool = True,
     rows_pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
+    min_rows_per_document: int = 0,
     instructions: str | None = None,
     documents_per_request: int | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -1817,6 +1884,12 @@ def extract_pdfs(
     {key: {"rows"|"markdown": ..., "error": str | None}} — one entry per
     input, ALWAYS. A document that fails is reported rather than dropped, so a
     partial batch is visible instead of looking like a smaller-but-clean result.
+
+    `min_rows_per_document` is an optional caller-declared invariant for the
+    selected source class. Set it to 1, for example, only when every selected
+    report is definitionally expected to contain at least one transaction. It
+    constrains the same one-call schema; it does not add a validation call or a
+    retry. Leave it at zero when an empty document is valid.
 
     The legacy path retries transient failures per document (max_attempts,
     exponential backoff). The grouped path gives each exact group one transport
@@ -1853,12 +1926,22 @@ def extract_pdfs(
     # a programming error in the caller's schema, not a per-document outcome, so
     # it raises instead of returning 62 identical `error` entries after paying
     # for 62 OCRs.
+    if (
+        not isinstance(min_rows_per_document, int)
+        or isinstance(min_rows_per_document, bool)
+        or min_rows_per_document < 0
+    ):
+        raise ValueError("min_rows_per_document must be a non-negative integer")
+    if min_rows_per_document > 0 and rows_schema is None:
+        raise ValueError("min_rows_per_document requires rows_schema")
+
     if rows_schema is not None or document_schema is not None:
         if rows_pdf_max_bytes < 1:
             raise ValueError("rows_pdf_max_bytes must be positive")
         normalized_schema = normalize_extraction_schema(
             rows_schema=rows_schema,
             document_schema=document_schema,
+            min_rows=min_rows_per_document,
         )
         document_schema = (
             normalize_document_schema(document_schema)
@@ -1934,6 +2017,7 @@ def extract_pdfs(
                     rows_retries=rows_retries,
                     rows_include_pdf=rows_include_pdf,
                     rows_pdf_max_bytes=rows_pdf_max_bytes,
+                    min_rows_per_document=min_rows_per_document,
                     instructions=instructions,
                     extra_fields_by_key=extra_fields_by_key,
                 )
@@ -1967,6 +2051,7 @@ def extract_pdfs(
             rows_retries=rows_retries,
             rows_include_pdf=rows_include_pdf,
             rows_pdf_max_bytes=rows_pdf_max_bytes,
+            min_rows_per_document=min_rows_per_document,
             rows_force_ocr=True,
             rows_schema_name="extract_rows",
             instructions=instructions,
@@ -1994,6 +2079,7 @@ def extract_pdfs(
             rows_model=rows_model,
             rows_retries=rows_retries,
             rows_pdf_max_bytes=rows_pdf_max_bytes,
+            min_rows_per_document=min_rows_per_document,
             instructions=instructions,
             documents_per_request=effective_documents_per_request,
             max_workers=workers,
@@ -2009,6 +2095,7 @@ def extract_pdfs(
                 rows_retries=rows_retries,
                 rows_include_pdf=rows_include_pdf,
                 rows_pdf_max_bytes=rows_pdf_max_bytes,
+                min_rows_per_document=min_rows_per_document,
                 instructions=instructions,
                 extra_fields_by_key=extra_fields_by_key,
             ),
@@ -2028,6 +2115,7 @@ def extract_pdfs(
                 retries=rows_retries,
                 include_pdf=rows_include_pdf,
                 pdf_max_bytes=rows_pdf_max_bytes,
+                min_rows=min_rows_per_document,
                 instructions=instructions,
                 _durable_replay=False,
             )
@@ -2433,9 +2521,10 @@ def _strict_json_schema(
 
     Strict structured output requires every property name. Source extraction
     cannot also require every observation to be non-null: an absent source value
-    would force the structuring model to fabricate one. Every ordinary property
-    therefore becomes required-but-nullable. `force_required` is reserved for
-    protocol fields such as the non-null `rows` envelope.
+    would force the structuring model to fabricate one. Ordinary properties are
+    therefore required-but-nullable unless a full caller schema explicitly marks
+    them required and asks us to preserve that declaration. `force_required` is
+    reserved for protocol fields such as the non-null `rows` envelope.
     """
     out = dict(schema)
     explicitly_nullable = _schema_allows_null(schema)
@@ -2513,11 +2602,36 @@ def _strict_json_schema(
     return _nullable_schema(out) if explicitly_nullable else out
 
 
-def _rows_envelope(row_schema: dict[str, Any]) -> dict[str, Any]:
-    return _strict_object_schema({"rows": {"type": "array", "items": row_schema}})
+def _array_schema_with_min_items(
+    schema: Mapping[str, Any], requested_minimum: int
+) -> dict[str, Any]:
+    """Preserve a caller's stronger array minimum while applying ours."""
+    existing_minimum = schema.get("minItems", 0)
+    if (
+        not isinstance(existing_minimum, int)
+        or isinstance(existing_minimum, bool)
+        or existing_minimum < 0
+    ):
+        raise RowsSchemaError("array minItems must be a non-negative integer")
+
+    out = dict(schema)
+    effective_minimum = max(existing_minimum, requested_minimum)
+    if effective_minimum > 0:
+        out["minItems"] = effective_minimum
+    return out
 
 
-def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
+def _rows_envelope(
+    row_schema: dict[str, Any], *, min_rows: int = 0
+) -> dict[str, Any]:
+    rows = _array_schema_with_min_items(
+        {"type": "array", "items": row_schema},
+        min_rows,
+    )
+    return _strict_object_schema({"rows": rows})
+
+
+def normalize_rows_schema(rows_schema: Any, *, min_rows: int = 0) -> dict[str, Any]:
     """Canonicalize rows_schema to the strict `{"rows": [...]}` envelope.
 
     `_rows_from_structured_result` needs a `rows` array, but nothing used to say
@@ -2530,13 +2644,16 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
       {"type": "object", "properties":
           {"rows": {"type": "array", ...}}}      - already the envelope
 
-    Every source property becomes required-but-nullable in the provider schema.
-    Strict mode still returns every key, while a source value the document does
-    not provide remains explicit `null` instead of forcing an invented value.
-    The reserved `rows` protocol envelope remains required and non-null.
+    Shorthand source properties become required-but-nullable in the provider
+    schema. A full JSON Schema object's explicitly declared `required` row fields
+    retain their non-null types; its other fields become nullable. Strict mode
+    still returns every key without forcing an invented optional value. The
+    reserved `rows` protocol envelope remains required and non-null.
 
     Anything else raises rather than reaching the provider as an invalid schema.
     """
+    if not isinstance(min_rows, int) or isinstance(min_rows, bool) or min_rows < 0:
+        raise RowsSchemaError("min_rows must be a non-negative integer")
     if not isinstance(rows_schema, Mapping) or not rows_schema:
         raise RowsSchemaError(
             "rows_schema must be a non-empty dict: either {field: 'string'} or a "
@@ -2558,7 +2675,16 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
             rows_property, "array"
         ):
             # `rows` is the extraction protocol, not an optional caller field.
-            return _strict_json_schema(rows_schema, force_required=frozenset({"rows"}))
+            normalized = _strict_json_schema(
+                rows_schema,
+                force_required=frozenset({"rows"}),
+                preserve_declared_required=True,
+            )
+            normalized["properties"]["rows"] = _array_schema_with_min_items(
+                normalized["properties"]["rows"],
+                min_rows,
+            )
+            return normalized
 
         # `rows_schema` describes ONE extracted row. A common caller mistake is
         # to pass a second collection envelope such as {"records": [...]}. It
@@ -2589,7 +2715,13 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
                     "Pass the array's item object as rows_schema, or use the "
                     "reserved JSON Schema `rows` array extraction envelope."
                 )
-        return _rows_envelope(_strict_json_schema(rows_schema))
+        return _rows_envelope(
+            _strict_json_schema(
+                rows_schema,
+                preserve_declared_required=True,
+            ),
+            min_rows=min_rows,
+        )
 
     row_properties: dict[str, Any] = {}
     for field_name, spec in rows_schema.items():
@@ -2614,7 +2746,10 @@ def normalize_rows_schema(rows_schema: Any) -> dict[str, Any]:
             f"schema, got {type(spec).__name__}"
         )
 
-    return _rows_envelope(_strict_json_schema(_strict_object_schema(row_properties)))
+    return _rows_envelope(
+        _strict_json_schema(_strict_object_schema(row_properties)),
+        min_rows=min_rows,
+    )
 
 
 def normalize_document_schema(
@@ -2671,6 +2806,7 @@ def normalize_extraction_schema(
     *,
     rows_schema: Any = None,
     document_schema: Any = None,
+    min_rows: int = 0,
 ) -> dict[str, Any]:
     """Build the strict one-call document plus logical rows response schema."""
     if rows_schema is None and document_schema is None:
@@ -2681,7 +2817,7 @@ def normalize_extraction_schema(
     if document_schema is not None:
         properties["document"] = normalize_document_schema(document_schema)
     if rows_schema is not None:
-        normalized_rows = normalize_rows_schema(rows_schema)
+        normalized_rows = normalize_rows_schema(rows_schema, min_rows=min_rows)
         rows_property = normalized_rows["properties"]["rows"]
         properties["rows"] = rows_property
     return _strict_object_schema(properties)
@@ -2700,6 +2836,7 @@ def extract_rows(
     retries: int = 1,
     include_pdf: bool = True,
     pdf_max_bytes: int = DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES,
+    min_rows: int = 0,
     instructions: str | None = None,
     _durable_replay: bool = True,
 ) -> ExtractedRows:
@@ -2720,11 +2857,17 @@ def extract_rows(
     mode needs is added for you. An uninterpretable schema raises
     `RowsSchemaError` before any OCR or gateway call.
 
-    Schema keys are always present but source observations are nullable:
-    extraction never invents a value merely to satisfy strict structured output.
+    Schema keys are always present. Shorthand and optional source observations
+    are nullable so extraction does not invent values merely to satisfy strict
+    output; a full schema may explicitly declare guaranteed row anchors required.
     `instructions` may define task-specific inclusion, exclusion, and
     interpretation semantics for the complete source record. Mechanical
     calculations and downstream composition can remain ordinary code.
+
+    `min_rows` is a caller-declared source invariant, not an estimate. Set it
+    only when the selected document class guarantees that many logical rows;
+    strict structured output then cannot satisfy the request with an empty
+    shell. Leave it at zero when a valid document may contain no qualifying row.
 
     By default the structuring model receives both the original PDF and cached
     OCR markdown. The PDF resolves visual page boundaries and embedded cells;
@@ -2749,9 +2892,12 @@ def extract_rows(
     normalized_schema = normalize_extraction_schema(
         rows_schema=schema,
         document_schema=document_schema,
+        min_rows=min_rows,
     )
     normalized_rows_schema = (
-        normalize_rows_schema(schema) if schema is not None else None
+        normalize_rows_schema(schema, min_rows=min_rows)
+        if schema is not None
+        else None
     )
     normalized_document_schema = (
         normalize_document_schema(document_schema)
@@ -2790,6 +2936,7 @@ def extract_rows(
             rows_retries=retries,
             rows_include_pdf=include_pdf,
             rows_pdf_max_bytes=pdf_max_bytes,
+            min_rows_per_document=min_rows,
             rows_force_ocr=force_ocr,
             rows_schema_name=schema_name,
             instructions=instructions,

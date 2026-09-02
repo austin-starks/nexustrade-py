@@ -57,7 +57,13 @@ The helper sends the supplied PDF corpus in one schema-bound request by default
 when it fits the gateway's combined file-input limit. It partitions only at that real
 byte boundary. By default, a transport or structured-output failure remains one
 failed logical request; it is not retried as smaller paid model requests. Set
-`rows_retries` explicitly only to retry the same peer corpus. Set
+`min_rows_per_document=1` only when the selected source class guarantees every
+document contains at least one logical row; this constrains the same request and
+prevents a schema-valid empty shell. Omit it when a valid document may be empty.
+In a full JSON Schema row object, explicitly declared `required` fields retain
+their non-null types; undeclared fields are made nullable for strict output. Use
+that standard schema mechanism only for source-guaranteed row anchors.
+Set `rows_retries` explicitly only to retry the same peer corpus. Set
 `documents_per_request` only to intentionally partition a corpus; use `1` for
 the compatibility one-document OCR path. Use
 `inspect_document` only when a concrete ambiguity actually needs visual review.

@@ -6,6 +6,123 @@ from unittest import mock
 
 
 class ScannedTableExtractionReplayTests(unittest.TestCase):
+    def test_group_schema_uses_one_compact_document_item_definition(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        normalized = scanned_table.normalize_rows_schema(
+            {
+                "ticker": {"type": ["string", "null"]},
+                "amount": {"type": ["number", "null"]},
+            }
+        )
+
+        schema = scanned_table._group_response_schema(
+            normalized,
+            ["source-a", "source-b", "source-c"],
+        )
+
+        documents = schema["properties"]["documents"]
+        self.assertEqual(documents["minItems"], 3)
+        self.assertEqual(documents["maxItems"], 3)
+        item = documents["items"]
+        self.assertEqual(
+            item["properties"]["source_id"],
+            {"type": "string", "enum": ["source-a", "source-b", "source-c"]},
+        )
+        self.assertEqual(item["properties"]["rows"], normalized["properties"]["rows"])
+
+    def test_group_schema_enforces_a_caller_declared_document_row_minimum(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        normalized = scanned_table.normalize_rows_schema({"ticker": "string"})
+
+        schema = scanned_table._group_response_schema(
+            normalized,
+            ["source-a", "source-b"],
+            min_rows_per_document=1,
+        )
+
+        self.assertEqual(
+            schema["properties"]["documents"]["items"]["properties"]["rows"]["minItems"],
+            1,
+        )
+
+    def test_group_schema_preserves_a_stronger_caller_row_minimum(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        normalized = scanned_table.normalize_rows_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "rows": {
+                        "type": "array",
+                        "minItems": 5,
+                        "items": {
+                            "type": "object",
+                            "properties": {"ticker": {"type": "string"}},
+                        },
+                    }
+                },
+            },
+            min_rows=1,
+        )
+
+        schema = scanned_table._group_response_schema(
+            normalized,
+            ["source-a"],
+            min_rows_per_document=1,
+        )
+
+        self.assertEqual(
+            schema["properties"]["documents"]["items"]["properties"]["rows"]["minItems"],
+            5,
+        )
+
+    def test_rows_schema_rejects_an_invalid_existing_minimum(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+
+        for invalid_minimum in (True, -1):
+            with self.subTest(invalid_minimum=invalid_minimum):
+                with self.assertRaisesRegex(
+                    scanned_table.RowsSchemaError,
+                    "minItems must be a non-negative integer",
+                ):
+                    scanned_table.normalize_rows_schema(
+                        {
+                            "type": "object",
+                            "properties": {
+                                "rows": {
+                                    "type": "array",
+                                    "minItems": invalid_minimum,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ticker": {"type": "string"}
+                                        },
+                                    },
+                                }
+                            },
+                        }
+                    )
+
+    def test_extract_pdfs_rejects_an_invalid_document_row_minimum(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+
+        with self.assertRaisesRegex(ValueError, "non-negative integer"):
+            scanned_table.extract_pdfs(
+                {"filing": b"pdf"},
+                rows_schema={"ticker": "string"},
+                min_rows_per_document=True,
+            )
+        with self.assertRaisesRegex(ValueError, "requires rows_schema"):
+            scanned_table.extract_pdfs(
+                {"filing": b"pdf"},
+                document_schema={"report_date": "string"},
+                min_rows_per_document=1,
+            )
+        with self.assertRaisesRegex(ValueError, "requires rows_schema"):
+            scanned_table.extract_pdfs(
+                {"filing": b"pdf"},
+                min_rows_per_document=1,
+            )
+
     def test_group_prompt_allows_relationships_without_cross_document_field_copying(
         self,
     ) -> None:
@@ -40,6 +157,10 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
         self.assertIn(
+            "Never emit an all-null placeholder row",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
             "whitespace inside a printed identifier",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
@@ -48,7 +169,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
         self.assertIn(
-            "GOOGL, BRK.B, and BF-B are well-formed examples; GOOG L is not",
+            "GOOGL, 0700.HK, BRK.B, and BF-B are well-formed; GOOG L and visually similar non-ASCII letters are not",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
 
@@ -132,14 +253,19 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             del args
             schema = kwargs["json_schema"]
             source_ids = list(
-                schema["properties"]["documents"]["properties"]
+                schema["properties"]["documents"]["items"]["properties"][
+                    "source_id"
+                ]["enum"]
             )
             calls.append(list(source_ids))
             return {
-                "documents": {
-                    source_id: {"rows": [{"ticker": source_id.upper()}]}
+                "documents": [
+                    {
+                        "source_id": source_id,
+                        "rows": [{"ticker": source_id.upper()}],
+                    }
                     for source_id in source_ids
-                }
+                ]
             }
 
         with (
@@ -171,15 +297,17 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         def structured(*args: object, **kwargs: object) -> dict[str, object]:
             del args
             source_ids = list(
-                kwargs["json_schema"]["properties"]["documents"]["properties"]
+                kwargs["json_schema"]["properties"]["documents"]["items"][
+                    "properties"
+                ]["source_id"]["enum"]
             )
             calls.append(list(source_ids))
             call_options.append(kwargs)
             return {
-                "documents": {
-                    source_id: {"rows": [{"ticker": "ACME"}]}
+                "documents": [
+                    {"source_id": source_id, "rows": [{"ticker": "ACME"}]}
                     for source_id in source_ids
-                }
+                ]
             }
 
         documents = {f"filing-{index}": b"pdf" for index in range(30)}
@@ -203,6 +331,110 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             str(call_options[0]["idempotency_key"]), r"^[a-f0-9]{64}\.0$"
         )
         self.assertEqual(len(result), 30)
+
+    def test_group_response_schema_preserves_string_grammar_constraints(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+        captured_schema: dict[str, object] = {}
+
+        def structured(*args: object, **kwargs: object) -> dict[str, object]:
+            del args
+            captured_schema.update(kwargs["json_schema"])
+            return {
+                "documents": {
+                    "filing": {"rows": [{"ticker": "SUNE"}]},
+                    "second": {"rows": [{"ticker": "ACME"}]},
+                }
+            }
+
+        with (
+            mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(host, "gateway_chat_json", side_effect=structured),
+        ):
+            result = scanned_table.extract_pdfs(
+                {"filing": b"pdf", "second": b"pdf"},
+                rows_schema={
+                    "ticker": {
+                        "type": ["string", "null"],
+                        "description": "Exact ASCII exchange symbol.",
+                        "pattern": r"^[A-Z0-9]+(?:[.-][A-Z0-9]+)*$",
+                    }
+                },
+                min_rows_per_document=1,
+            )
+
+        self.assertEqual(
+            captured_schema["properties"]["documents"]["items"]["properties"]["source_id"],
+            {"type": "string", "enum": ["filing", "second"]},
+        )
+        ticker_schema = captured_schema["properties"]["documents"]["items"][
+            "properties"
+        ]["rows"]["items"]["properties"]["ticker"]
+        self.assertEqual(
+            captured_schema["properties"]["documents"]["items"]["properties"][
+                "rows"
+            ]["minItems"],
+            1,
+        )
+        self.assertIn("pattern", ticker_schema, ticker_schema)
+        self.assertEqual(
+            ticker_schema["pattern"], r"^[A-Z0-9]+(?:[.-][A-Z0-9]+)*$"
+        )
+        self.assertEqual(
+            ticker_schema["description"],
+            "Exact ASCII exchange symbol.",
+        )
+        self.assertEqual(result["filing"]["rows"][0]["ticker"], "SUNE")
+
+    def test_explicit_row_required_fields_remain_non_nullable(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+
+        normalized = scanned_table.normalize_rows_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "transaction_type": {"type": "string"},
+                    "ticker": {"type": "string"},
+                },
+                "required": ["transaction_type"],
+            }
+        )
+        properties = normalized["properties"]["rows"]["items"]["properties"]
+
+        self.assertEqual(properties["transaction_type"]["type"], "string")
+        self.assertEqual(properties["ticker"]["type"], ["string", "null"])
+
+    def test_group_marks_all_null_placeholder_rows_for_review(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        def structured(*args: object, **kwargs: object) -> dict[str, object]:
+            del args, kwargs
+            return {
+                "documents": {
+                    "filing": {"rows": [{"ticker": None}]},
+                    "second": {"rows": [{"ticker": "ACME"}]},
+                }
+            }
+
+        with (
+            mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(host, "gateway_chat_json", side_effect=structured),
+        ):
+            result = scanned_table.extract_pdfs(
+                {"filing": b"pdf", "second": b"pdf"},
+                rows_schema={"ticker": {"type": ["string", "null"]}},
+                min_rows_per_document=1,
+            )
+
+        self.assertTrue(result["filing"]["needs_review"])
+        self.assertFalse(result["second"]["needs_review"])
 
     def test_group_structuring_retry_has_a_distinct_idempotency_key(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -231,6 +463,8 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertEqual(set(result), {"a", "b"})
+        self.assertTrue(result["a"]["needs_review"])
+        self.assertIsNone(result["a"]["apparent_table_rows"])
         self.assertEqual(
             [option["idempotency_key"] for option in options],
             ["group-key.0", "group-key.1"],
@@ -256,14 +490,16 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         def structured(*args: object, **kwargs: object) -> dict[str, object]:
             del args
             source_ids = list(
-                kwargs["json_schema"]["properties"]["documents"]["properties"]
+                kwargs["json_schema"]["properties"]["documents"]["items"][
+                    "properties"
+                ]["source_id"]["enum"]
             )
             calls.append(list(source_ids))
             return {
-                "documents": {
-                    source_id: {"rows": [{"ticker": "ACME"}]}
+                "documents": [
+                    {"source_id": source_id, "rows": [{"ticker": "ACME"}]}
                     for source_id in source_ids
-                }
+                ]
             }
 
         documents = {"a": b"123", "b": b"456", "c": b"789"}
