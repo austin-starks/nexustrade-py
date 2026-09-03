@@ -1139,7 +1139,7 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v10"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v11"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 50 * 1024 * 1024
 GROUP_EXTRACT_GATEWAY_TIMEOUT_SEC = 15 * 60 + 30
 # Keep this aligned with NexusGenAI's decoded attachment-byte ceiling. The
@@ -1791,6 +1791,7 @@ def _extract_pdf_document_group(
                     grouped[source_id] = {
                         "document": document,
                         "rows": rows,
+                        "trusted_metadata": extra,
                         "markdown": "",
                         "page_audit": [],
                         # The grouped raw-PDF vision path does not run the legacy
@@ -2106,7 +2107,9 @@ def extract_pdfs(
     `{"document": {...}, "rows": [...]}`. Pass trusted caller or publisher
     inventory metadata through `extra_fields_by_key`; it is stamped mechanically
     on each document and row in grouped and serial paths instead of being
-    re-extracted from PDF contents.
+    re-extracted from PDF contents. The same mapping is returned separately as
+    `trusted_metadata` so downstream evidence can distinguish it from facts read
+    from the PDF; that receipt does not independently verify the upstream value.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from nexustrade.host import GatewayChatError
@@ -2319,6 +2322,7 @@ def extract_pdfs(
             return {
                 "document": document,
                 "rows": rows,
+                "trusted_metadata": extra,
                 "markdown": extracted.markdown,
                 "page_audit": extracted.page_audit,
                 "apparent_table_rows": extracted.apparent_table_rows,

@@ -713,6 +713,10 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             result["notice-a"]["rows"][0]["publisher_filing_date"],
             "2025-01-05",
         )
+        self.assertEqual(
+            result["notice-a"]["trusted_metadata"],
+            {"publisher_filing_date": "2025-01-05"},
+        )
 
     def test_grouped_schema_request_exposes_only_source_local_trusted_metadata(
         self,
@@ -774,6 +778,14 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         self.assertEqual(
             result["b"]["document"]["publisher_filing_date"],
             "2026-02-06",
+        )
+        self.assertEqual(
+            result["a"]["trusted_metadata"],
+            {"publisher_filing_date": "2025-01-05"},
+        )
+        self.assertEqual(
+            result["b"]["trusted_metadata"],
+            {"publisher_filing_date": "2026-02-06"},
         )
 
     def test_schema_batch_preserves_valid_results_when_one_document_is_missing(
