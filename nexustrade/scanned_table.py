@@ -1799,8 +1799,7 @@ def _extract_pdf_document_group(
                         # review condition instead of masquerading as confirmed
                         # evidence that the PDF contains no requested records.
                         "apparent_table_rows": None,
-                        "needs_review": has_placeholder_row
-                        or (min_rows_per_document > 0 and not rows),
+                        "needs_review": has_placeholder_row or not rows,
                         "pdf_attached": True,
                         "error": None,
                     }

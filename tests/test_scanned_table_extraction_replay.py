@@ -522,7 +522,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertEqual(set(result), {"a", "b"})
-        self.assertFalse(result["a"]["needs_review"])
+        self.assertTrue(result["a"]["needs_review"])
         self.assertIsNone(result["a"]["apparent_table_rows"])
         self.assertEqual(
             [option["idempotency_key"] for option in options],
@@ -804,7 +804,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertIsNone(result["a"]["error"])
-        self.assertFalse(result["a"]["needs_review"])
+        self.assertTrue(result["a"]["needs_review"])
         self.assertIn("source_id", result["b"]["error"])
         self.assertEqual(result["a"]["rows"], [])
         self.assertEqual(result["b"]["rows"], [])
