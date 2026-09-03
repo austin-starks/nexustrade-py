@@ -7,6 +7,45 @@ from unittest import mock
 
 
 class ScannedTableExtractionReplayTests(unittest.TestCase):
+    def test_combined_pdf_metadata_is_stable_for_the_same_source_corpus(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        first = (
+            b"%PDF-1.7\n<</CreationDate(D:20260903083904-05'00')>>\ntrailer\n"
+            b"/ID[<00112233445566778899AABBCCDDEEFF>"
+            b"<00112233445566778899AABBCCDDEEFF>]>>\n%%EOF"
+        )
+        second = (
+            b"%PDF-1.7\n<</CreationDate(D:20260903083905-05'00')>>\ntrailer\n"
+            b"/ID[<FFEEDDCCBBAA99887766554433221100>"
+            b"<FFEEDDCCBBAA99887766554433221100>]>>\n%%EOF"
+        )
+        group = [("source-a", b"one"), ("source-b", b"two")]
+
+        stabilized_first = scanned_table._stabilize_combined_pdf_metadata(first, group)
+        stabilized_second = scanned_table._stabilize_combined_pdf_metadata(second, group)
+
+        self.assertEqual(stabilized_first, stabilized_second)
+        self.assertEqual(len(stabilized_first), len(first))
+
+    def test_combined_pdf_id_changes_when_the_source_corpus_changes(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        serialized = (
+            b"%PDF-1.7\n<</CreationDate(D:20260903083904Z)>>\ntrailer\n"
+            b"/ID[<00112233445566778899AABBCCDDEEFF>"
+            b"<00112233445566778899AABBCCDDEEFF>]>>\n%%EOF"
+        )
+
+        first = scanned_table._stabilize_combined_pdf_metadata(
+            serialized,
+            [("source-a", b"one")],
+        )
+        second = scanned_table._stabilize_combined_pdf_metadata(
+            serialized,
+            [("source-a", b"changed")],
+        )
+
+        self.assertNotEqual(first, second)
+
     def test_group_schema_uses_one_compact_document_item_definition(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         normalized = scanned_table.normalize_rows_schema(

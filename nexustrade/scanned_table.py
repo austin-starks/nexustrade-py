@@ -1276,6 +1276,56 @@ def _document_group_context_key(group: list[tuple[str, bytes]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_PDFIUM_TRAILER_ID_RE = re.compile(
+    rb"/ID\[<[0-9A-Fa-f]{32}><[0-9A-Fa-f]{32}>\]"
+)
+_PDFIUM_CREATION_DATE_RE = re.compile(
+    rb"/CreationDate\(D:\d{14}(Z|[+-]\d{2}'\d{2}')\)"
+)
+
+
+def _stabilize_combined_pdf_metadata(
+    pdf_bytes: bytes,
+    group: list[tuple[str, bytes]],
+) -> bytes:
+    """Replace PDFium's volatile metadata with corpus-stable values.
+
+    PDFium writes the current second into ``CreationDate`` and a fresh 16-byte
+    trailer ID every time it saves an otherwise identical imported-page
+    document. The gateway request body includes the resulting PDF bytes, while
+    its durable idempotency key describes the stable source corpus. Leaving
+    either volatile value in place makes a legitimate retry look like a
+    different request under the same key.
+
+    Both replacements preserve the emitted token lengths, so object and
+    cross-reference offsets remain unchanged. Fail closed if PDFium changes the
+    serialization shape rather than silently returning unstable bytes.
+    """
+    def stable_creation_date(match: re.Match[bytes]) -> bytes:
+        timezone = b"Z" if match.group(1) == b"Z" else b"+00'00'"
+        return b"/CreationDate(D:20000101000000" + timezone + b")"
+
+    stabilized, date_replacements = _PDFIUM_CREATION_DATE_RE.subn(
+        stable_creation_date,
+        pdf_bytes,
+    )
+    if date_replacements != 1:
+        raise RuntimeError(
+            "combined PDF serialization did not contain exactly one PDFium creation date"
+        )
+    stable_id = _document_group_context_key(group)[:32].upper().encode("ascii")
+    replacement = b"/ID[<" + stable_id + b"><" + stable_id + b">]"
+    stabilized, id_replacements = _PDFIUM_TRAILER_ID_RE.subn(
+        replacement,
+        stabilized,
+    )
+    if id_replacements != 1:
+        raise RuntimeError(
+            "combined PDF serialization did not contain exactly one PDFium trailer ID"
+        )
+    return stabilized
+
+
 def _document_group_request_keys(
     group: list[tuple[str, bytes]],
     *,
@@ -1503,7 +1553,10 @@ def _combine_pdf_group(
                 source.close()
         output = io.BytesIO()
         combined.save(output)
-        return output.getvalue(), source_mapping
+        return (
+            _stabilize_combined_pdf_metadata(output.getvalue(), group),
+            source_mapping,
+        )
     finally:
         combined.close()
 
