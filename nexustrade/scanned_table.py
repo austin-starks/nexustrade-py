@@ -1931,6 +1931,11 @@ def extract_pdfs(
     supplies concise task semantics, including requested inclusion/exclusion rules;
     the helper remains agnostic to the source domain.
 
+    Keep `rows_include_pdf=True` for the grouped raw-PDF path. Setting it to
+    `False` deliberately selects the OCR-first compatibility path and is not an
+    equivalent performance option; use it only after an observed source or
+    provider limitation requires OCR-only structuring.
+
     `documents` may contain PDF bytes or successful `host.fetch` result objects;
     fetch receipts are hydrated internally. Returns
     {key: {"rows"|"markdown": ..., "error": str | None}} — one entry per
