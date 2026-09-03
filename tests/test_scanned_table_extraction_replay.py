@@ -655,7 +655,9 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             "2025-01-05",
         )
 
-    def test_schema_batch_rejects_missing_document_groups(self) -> None:
+    def test_schema_batch_preserves_valid_results_when_one_document_is_missing(
+        self,
+    ) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
 
@@ -680,10 +682,81 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 max_workers=1,
             )
 
-        self.assertIn("source_id", result["a"]["error"])
+        self.assertIsNone(result["a"]["error"])
+        self.assertTrue(result["a"]["needs_review"])
         self.assertIn("source_id", result["b"]["error"])
         self.assertEqual(result["a"]["rows"], [])
         self.assertEqual(result["b"]["rows"], [])
+
+    def test_schema_batch_collapses_identical_duplicate_without_losing_valid_results(
+        self,
+    ) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+        duplicated = {"source_id": "a", "rows": [{"ticker": "AAA"}]}
+
+        with mock.patch.object(
+            host,
+            "gateway_chat_json",
+            return_value={
+                "documents": [
+                    duplicated,
+                    dict(duplicated),
+                    {"source_id": "b", "rows": [{"ticker": "BBB"}]},
+                ]
+            },
+        ):
+            result = scanned_table._extract_pdf_document_group(
+                [("a", b"a"), ("b", b"b")],
+                normalized_schema=scanned_table.normalize_rows_schema(
+                    {"ticker": "string"}
+                ),
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                extra_fields_by_key=None,
+            )
+
+        self.assertIsNone(result["a"]["error"])
+        self.assertEqual(result["a"]["rows"][0]["ticker"], "AAA")
+        self.assertIsNone(result["b"]["error"])
+        self.assertEqual(result["b"]["rows"][0]["ticker"], "BBB")
+
+    def test_schema_batch_isolates_conflicting_duplicate_and_missing_ids(self) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        with mock.patch.object(
+            host,
+            "gateway_chat_json",
+            return_value={
+                "documents": [
+                    {"source_id": "a", "rows": [{"ticker": "AAA"}]},
+                    {"source_id": "a", "rows": [{"ticker": "DIFFERENT"}]},
+                    {"source_id": "b", "rows": [{"ticker": "BBB"}]},
+                    {"source_id": "unknown", "rows": [{"ticker": "NOPE"}]},
+                ]
+            },
+        ):
+            result = scanned_table._extract_pdf_document_group(
+                [("a", b"a"), ("b", b"b"), ("c", b"c")],
+                normalized_schema=scanned_table.normalize_rows_schema(
+                    {"ticker": "string"}
+                ),
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                extra_fields_by_key=None,
+            )
+
+        self.assertIn("conflicting duplicate", result["a"]["error"])
+        self.assertEqual(result["a"]["rows"], [])
+        self.assertIsNone(result["b"]["error"])
+        self.assertEqual(result["b"]["rows"][0]["ticker"], "BBB")
+        self.assertIn("omitted source_id", result["c"]["error"])
+        self.assertEqual(result["c"]["rows"], [])
 
     def test_failed_document_group_does_not_multiply_paid_requests(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")

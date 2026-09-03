@@ -1603,52 +1603,96 @@ def _extract_pdf_document_group(
                 document_entries = list(raw_documents.items())
             else:
                 raise RuntimeError("multi-document extraction omitted documents")
-            grouped: dict[str, dict[str, Any]] = {}
+            raw_by_source_id: dict[str, dict[str, Any]] = {}
+            conflicting_source_ids: set[str] = set()
             for source_id, raw in document_entries:
-                if not isinstance(raw, dict):
-                    raise RuntimeError("multi-document result is not an object")
                 if not isinstance(source_id, str) or source_id not in source_ids:
-                    raise RuntimeError(
-                        f"multi-document extraction returned unknown source_id {source_id!r}"
+                    # An unattributable extra result cannot invalidate the valid,
+                    # requested document results returned alongside it. Any
+                    # requested id displaced by it is surfaced as missing below.
+                    continue
+                if not isinstance(raw, dict):
+                    conflicting_source_ids.add(source_id)
+                    continue
+                previous = raw_by_source_id.get(source_id)
+                if previous is None:
+                    raw_by_source_id[source_id] = raw
+                elif previous != raw:
+                    # Never choose silently between conflicting model outputs for
+                    # the same source. Byte-equivalent duplicates are harmless.
+                    conflicting_source_ids.add(source_id)
+
+            grouped: dict[str, dict[str, Any]] = {}
+            for source_id in source_ids:
+                raw = raw_by_source_id.get(source_id)
+                if source_id in conflicting_source_ids:
+                    grouped[source_id] = {
+                        "document": {},
+                        "rows": [],
+                        "needs_review": True,
+                        "error": (
+                            "multi-document extraction returned conflicting duplicate "
+                            f"results for source_id {source_id!r}"
+                        ),
+                    }
+                    continue
+                if raw is None:
+                    grouped[source_id] = {
+                        "document": {},
+                        "rows": [],
+                        "needs_review": True,
+                        "error": (
+                            "multi-document extraction omitted source_id "
+                            f"{source_id!r}"
+                        ),
+                    }
+                    continue
+                try:
+                    rows = _rows_from_structured_result(raw)
+                    has_placeholder_row = any(
+                        not any(value is not None for value in row.values())
+                        for row in rows
                     )
-                if source_id in grouped:
-                    raise RuntimeError(
-                        f"multi-document extraction duplicated source_id {source_id!r}"
-                    )
-                rows = _rows_from_structured_result(raw)
-                has_placeholder_row = any(
-                    not any(value is not None for value in row.values())
-                    for row in rows
-                )
-                extra = (extra_fields_by_key or {}).get(source_id, {})
-                for row_index, row in enumerate(rows):
-                    row.update(extra)
-                    row["source_id"] = source_id
-                    row["_source_row_index"] = row_index
-                document = _document_from_structured_result(raw)
-                document.update(extra)
-                document["source_id"] = source_id
-                grouped[source_id] = {
-                    "document": document,
-                    "rows": rows,
-                    "markdown": "",
-                    "page_audit": [],
-                    # The grouped raw-PDF vision path does not run the legacy
-                    # OCR/layout audit. `None` means unmeasured, not zero visible
-                    # rows. A schema-valid empty extraction therefore remains a
-                    # review condition instead of masquerading as confirmed
-                    # evidence that the PDF contains no requested records.
-                    "apparent_table_rows": None,
-                    "needs_review": not rows or has_placeholder_row,
-                    "pdf_attached": True,
-                    "error": None,
-                }
-            missing = [source_id for source_id in source_ids if source_id not in grouped]
-            if missing:
-                raise RuntimeError(
-                    "multi-document extraction omitted source_id(s): "
-                    + ", ".join(missing)
-                )
+                    extra = (extra_fields_by_key or {}).get(source_id, {})
+                    for row_index, row in enumerate(rows):
+                        row.update(extra)
+                        row["source_id"] = source_id
+                        row["_source_row_index"] = row_index
+                    document = _document_from_structured_result(raw)
+                    document.update(extra)
+                    document["source_id"] = source_id
+                    grouped[source_id] = {
+                        "document": document,
+                        "rows": rows,
+                        "markdown": "",
+                        "page_audit": [],
+                        # The grouped raw-PDF vision path does not run the legacy
+                        # OCR/layout audit. `None` means unmeasured, not zero visible
+                        # rows. A schema-valid empty extraction therefore remains a
+                        # review condition instead of masquerading as confirmed
+                        # evidence that the PDF contains no requested records.
+                        "apparent_table_rows": None,
+                        "needs_review": not rows or has_placeholder_row,
+                        "pdf_attached": True,
+                        "error": None,
+                    }
+                except Exception as exc:
+                    grouped[source_id] = {
+                        "document": {},
+                        "rows": [],
+                        "needs_review": True,
+                        "error": (
+                            "multi-document extraction returned an invalid result for "
+                            f"source_id {source_id!r}: {exc}"
+                        ),
+                    }
+            local_errors = [
+                payload["error"]
+                for payload in grouped.values()
+                if payload.get("error") is not None
+            ]
+            if local_errors and attempt + 1 < attempts:
+                raise RuntimeError(str(local_errors[0]))
             return grouped
         except GatewayChatError:
             raise
@@ -1767,7 +1811,15 @@ def _extract_pdf_document_groups(
                     total=total_documents,
                     track_progress=False,
                 )
-        return extracted, len(extracted), 0, 0
+        extracted_completed = sum(
+            payload.get("error") is None for payload in extracted.values()
+        )
+        return (
+            extracted,
+            extracted_completed,
+            len(extracted) - extracted_completed,
+            0,
+        )
 
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(groups) or 1))) as pool:
         futures = {
