@@ -1139,12 +1139,13 @@ def _mistral_document_markdown(pdf_bytes: bytes, *, page_count: int) -> str:
 
 
 
-DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v9"
+DOCUMENT_EXTRACTION_PROTOCOL_VERSION = "document-extractions/v10"
 DEFAULT_EXTRACT_ROWS_PDF_MAX_BYTES = 50 * 1024 * 1024
 GROUP_EXTRACT_GATEWAY_TIMEOUT_SEC = 15 * 60 + 30
 # Keep this aligned with NexusGenAI's decoded attachment-byte ceiling. The
 # gateway accepts any number of files that fit inside this real payload bound.
 DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES = 50 * 1024 * 1024
+DEFAULT_COMBINED_PDF_MIN_DOCUMENTS = 20
 
 
 def _gateway_json(
@@ -1416,21 +1417,23 @@ def _document_batch_progress(
 
 
 _EXTRACT_PDF_GROUP_SYSTEM = (
-    "Complete the caller's schema-bound extraction task from every attached PDF. "
+    "Complete the caller's schema-bound extraction task from every mapped PDF source. "
     "The caller instructions define the requested rows and any inclusion or "
     "exclusion semantics. Use the PDF bytes as the authoritative visual source. "
     "Return a documents array containing exactly one object for every supplied "
     "source_id and no other source_id. Keep every source fact attributed to the "
-    "PDF where it is visible. "
+    "mapped source range where it is visible. "
     "When the caller's schema or instructions request a cross-document relationship, "
-    "such as an amendment, restatement, or duplicate, compare the attached PDFs to "
+    "such as an amendment, restatement, or duplicate, compare the mapped sources to "
     "identify that relationship. Never copy, reuse, or complete a source-local field "
-    "from another attachment, even when rows look similar. "
-    "Before returning, verify every non-null row field against that same attachment. "
+    "from another source range, even when rows look similar. "
+    "Before returning, verify every non-null row field against that same source range. "
     "Map source fields by their visible role and the declared output field meaning. "
     "When a document has distinct entity, asset, description, note, or transaction "
     "columns, keep those roles distinct; never place one column's text into a "
-    "different semantic field merely because the names are similar. "
+    "different semantic field merely because the names are similar. When visibly "
+    "printed text uses ASCII, emit ASCII and never substitute a visually similar "
+    "Unicode character. "
     "Preserve source row order and repeated complete rows. Join wrapped "
     "lines or page-boundary continuations to their logical row, but never merge two "
     "separately printed rows. Copy literal source text character-for-character when "
@@ -1454,6 +1457,46 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "structured response. Never emit an all-null placeholder row to satisfy an "
     "array minimum; every row must represent one actual source record. "
 )
+
+
+def _combine_pdf_group(
+    group: list[tuple[str, bytes]],
+) -> tuple[bytes, list[dict[str, Any]]]:
+    """Combine a large corpus and return hard one-based source page ranges."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:
+        raise RuntimeError(
+            "large grouped PDF extraction requires the nexustrade documents extra"
+        ) from exc
+
+    combined = pdfium.PdfDocument.new()
+    source_mapping: list[dict[str, Any]] = []
+    next_page = 1
+    try:
+        for source_id, pdf_bytes in group:
+            source = pdfium.PdfDocument(pdf_bytes)
+            try:
+                page_count = len(source)
+                if page_count < 1:
+                    raise RuntimeError(f"PDF source {source_id!r} has no pages")
+                source_mapping.append(
+                    {
+                        "attachment": "combined-corpus.pdf",
+                        "source_id": source_id,
+                        "start_page": next_page,
+                        "end_page": next_page + page_count - 1,
+                    }
+                )
+                combined.import_pages(source)
+                next_page += page_count
+            finally:
+                source.close()
+        output = io.BytesIO()
+        combined.save(output)
+        return output.getvalue(), source_mapping
+    finally:
+        combined.close()
 
 
 def _group_response_schema(
@@ -1535,10 +1578,35 @@ def _extract_pdf_document_group(
             f"{DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES})"
         )
     source_ids = [key for key, _ in group]
-    mapping = [
-        {"attachment": f"source-{index + 1}.pdf", "source_id": key}
-        for index, (key, _) in enumerate(group)
-    ]
+    combine_group = len(group) >= DEFAULT_COMBINED_PDF_MIN_DOCUMENTS
+    if combine_group:
+        combined_pdf, mapping = _combine_pdf_group(group)
+        if len(combined_pdf) > DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES:
+            raise GatewayChatTransportError(
+                "combined PDF corpus exceeds the gateway's aggregate attachment-byte "
+                f"limit ({len(combined_pdf)} > "
+                f"{DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES})"
+            )
+        attachments = [
+            gateway_file_part(
+                combined_pdf,
+                filename="combined-corpus.pdf",
+                mime_type="application/pdf",
+            )
+        ]
+    else:
+        mapping = [
+            {"attachment": f"source-{index + 1}.pdf", "source_id": key}
+            for index, (key, _) in enumerate(group)
+        ]
+        attachments = [
+            gateway_file_part(
+                data,
+                filename=f"source-{index + 1}.pdf",
+                mime_type="application/pdf",
+            )
+            for index, (_, data) in enumerate(group)
+        ]
     prompt_parts = [
         "# Source mapping",
         json.dumps(mapping, ensure_ascii=False),
@@ -1549,14 +1617,6 @@ def _extract_pdf_document_group(
         prompt_parts.extend(
             ["# Task instructions", "Return every logical source-table row."]
         )
-    attachments = [
-        gateway_file_part(
-            data,
-            filename=f"source-{index + 1}.pdf",
-            mime_type="application/pdf",
-        )
-        for index, (_, data) in enumerate(group)
-    ]
     attempts = max(1, rows_retries + 1)
     last_error: Exception | None = None
     for attempt in range(attempts):
@@ -1672,7 +1732,8 @@ def _extract_pdf_document_group(
                         # review condition instead of masquerading as confirmed
                         # evidence that the PDF contains no requested records.
                         "apparent_table_rows": None,
-                        "needs_review": not rows or has_placeholder_row,
+                        "needs_review": has_placeholder_row
+                        or (min_rows_per_document > 0 and not rows),
                         "pdf_attached": True,
                         "error": None,
                     }
@@ -1941,6 +2002,11 @@ def extract_pdfs(
     {key: {"rows"|"markdown": ..., "error": str | None}} — one entry per
     input, ALWAYS. A document that fails is reported rather than dropped, so a
     partial batch is visible instead of looking like a smaller-but-clean result.
+
+    Large eligible groups are page-preservingly combined into one PDF attachment.
+    The model receives an exact one-based page range for every source id and must
+    still return one result per original document. This reduces attachment-boundary
+    attribution errors without changing the caller's document or result shape.
 
     `min_rows_per_document` is an optional caller-declared invariant for the
     selected source class. Set it to 1, for example, only when every selected

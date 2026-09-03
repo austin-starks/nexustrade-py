@@ -129,15 +129,15 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         scanned_table = importlib.import_module("nexustrade.scanned_table")
 
         self.assertIn(
-            "compare the attached PDFs to identify that relationship",
+            "compare the mapped sources to identify that relationship",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
         self.assertIn(
-            "Never copy, reuse, or complete a source-local field from another attachment",
+            "Never copy, reuse, or complete a source-local field from another source range",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
         self.assertIn(
-            "verify every non-null row field against that same attachment",
+            "verify every non-null row field against that same source range",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
         self.assertIn(
@@ -311,11 +311,25 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             }
 
         documents = {f"filing-{index}": b"pdf" for index in range(30)}
+        combined_mapping = [
+            {
+                "attachment": "combined-corpus.pdf",
+                "source_id": source_id,
+                "start_page": index + 1,
+                "end_page": index + 1,
+            }
+            for index, source_id in enumerate(documents)
+        ]
         with (
             mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
             mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
             mock.patch.object(scanned_table, "_document_result_record"),
             mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(
+                scanned_table,
+                "_combine_pdf_group",
+                return_value=(b"combined-pdf", combined_mapping),
+            ) as combine_pdf_group,
             mock.patch.object(host, "gateway_chat_json", side_effect=structured),
         ):
             result = scanned_table.extract_pdfs(
@@ -325,6 +339,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertEqual(calls, [list(documents)])
+        combine_pdf_group.assert_called_once()
         self.assertEqual(call_options[0]["timeout_sec"], 930)
         self.assertEqual(call_options[0]["max_transport_attempts"], 1)
         self.assertRegex(
@@ -463,7 +478,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertEqual(set(result), {"a", "b"})
-        self.assertTrue(result["a"]["needs_review"])
+        self.assertFalse(result["a"]["needs_review"])
         self.assertIsNone(result["a"]["apparent_table_rows"])
         self.assertEqual(
             [option["idempotency_key"] for option in options],
@@ -683,7 +698,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertIsNone(result["a"]["error"])
-        self.assertTrue(result["a"]["needs_review"])
+        self.assertFalse(result["a"]["needs_review"])
         self.assertIn("source_id", result["b"]["error"])
         self.assertEqual(result["a"]["rows"], [])
         self.assertEqual(result["b"]["rows"], [])
