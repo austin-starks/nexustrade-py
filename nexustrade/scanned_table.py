@@ -1423,6 +1423,11 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "Return a documents array containing exactly one object for every supplied "
     "source_id and no other source_id. Keep every source fact attributed to the "
     "mapped source range where it is visible. "
+    "A source mapping may include trusted_metadata supplied mechanically by the "
+    "publisher inventory. Use only that source's metadata to disambiguate its "
+    "range and to re-check source-local consistency or chronology. Do not copy "
+    "trusted metadata into an extracted PDF field, and never borrow metadata or "
+    "visible facts across source ranges. "
     "When the caller's schema or instructions request a cross-document relationship, "
     "such as an amendment, restatement, or duplicate, compare the mapped sources to "
     "identify that relationship. Never copy, reuse, or complete a source-local field "
@@ -1443,7 +1448,11 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
     "printed identifier is visible both as a standalone output field and inside another "
     "extracted field from that row, those outputs must preserve the same exact token. "
     "When the caller requests a stock ticker or symbol, return the exact source "
-    "identifier. For the common ASCII exchange-symbol grammar, letters and digits may "
+    "identifier from the document's ticker field or the exchange-symbol role attached "
+    "to the asset label. Parenthesized prose, quantities, footnotes, locations, and "
+    "other tokens outside that role are never tickers; return null when the source "
+    "does not print a ticker in that role. For the common ASCII exchange-symbol "
+    "grammar, letters and digits may "
     "be separated by meaningful periods or hyphens: GOOGL, 0700.HK, BRK.B, and BF-B "
     "are well-formed; GOOG L and visually similar non-ASCII letters are not. Express "
     "the source's actual grammar in the caller schema when it differs. "
@@ -1607,6 +1616,11 @@ def _extract_pdf_document_group(
             )
             for index, (_, data) in enumerate(group)
         ]
+    for source in mapping:
+        source_id = source["source_id"]
+        trusted_metadata = (extra_fields_by_key or {}).get(source_id)
+        if trusted_metadata:
+            source["trusted_metadata"] = trusted_metadata
     prompt_parts = [
         "# Source mapping",
         json.dumps(mapping, ensure_ascii=False),

@@ -1,4 +1,5 @@
 import importlib
+import json
 import threading
 import time
 import unittest
@@ -170,6 +171,10 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         )
         self.assertIn(
             "GOOGL, 0700.HK, BRK.B, and BF-B are well-formed; GOOG L and visually similar non-ASCII letters are not",
+            scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
+        )
+        self.assertIn(
+            "Parenthesized prose, quantities, footnotes, locations",
             scanned_table._EXTRACT_PDF_GROUP_SYSTEM,
         )
 
@@ -668,6 +673,68 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
         self.assertEqual(
             result["notice-a"]["rows"][0]["publisher_filing_date"],
             "2025-01-05",
+        )
+
+    def test_grouped_schema_request_exposes_only_source_local_trusted_metadata(
+        self,
+    ) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        with mock.patch.object(
+            host,
+            "gateway_chat_json",
+            return_value={
+                "documents": [
+                    {"source_id": "a", "rows": []},
+                    {"source_id": "b", "rows": []},
+                ]
+            },
+        ) as gateway_chat_json:
+            result = scanned_table._extract_pdf_document_group(
+                [("a", b"a"), ("b", b"b")],
+                normalized_schema=scanned_table.normalize_rows_schema(
+                    {"event_date": "string"}
+                ),
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                extra_fields_by_key={
+                    "a": {"publisher_filing_date": "2025-01-05"},
+                    "b": {"publisher_filing_date": "2026-02-06"},
+                },
+            )
+
+        messages = gateway_chat_json.call_args.args[0]
+        prompt = messages[0]["content"][0]["text"]
+        mapping = json.loads(prompt.split("# Source mapping\n", 1)[1].split("\n\n", 1)[0])
+        self.assertEqual(
+            mapping,
+            [
+                {
+                    "attachment": "source-1.pdf",
+                    "source_id": "a",
+                    "trusted_metadata": {
+                        "publisher_filing_date": "2025-01-05"
+                    },
+                },
+                {
+                    "attachment": "source-2.pdf",
+                    "source_id": "b",
+                    "trusted_metadata": {
+                        "publisher_filing_date": "2026-02-06"
+                    },
+                },
+            ],
+        )
+        self.assertEqual(
+            result["a"]["document"]["publisher_filing_date"],
+            "2025-01-05",
+        )
+        self.assertEqual(
+            result["b"]["document"]["publisher_filing_date"],
+            "2026-02-06",
         )
 
     def test_schema_batch_preserves_valid_results_when_one_document_is_missing(
