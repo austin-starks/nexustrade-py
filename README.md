@@ -597,6 +597,7 @@ candidates = nt.sec.fact_candidates(
         "cash_taxes_paid",
         "cash_interest_paid",
         "research_and_development",
+        "stock_based_compensation",
         "diluted_shares",
         "depreciation_and_amortization",
         "capital_expenditures",
