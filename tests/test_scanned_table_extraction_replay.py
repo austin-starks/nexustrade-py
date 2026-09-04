@@ -718,6 +718,63 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             {"publisher_filing_date": "2025-01-05"},
         )
 
+    def test_trusted_metadata_enriches_missing_values_but_rejects_conflicts(
+        self,
+    ) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+
+        enriched = scanned_table.inject_extra_fields(
+            {"publisher_filing_date": None, "ticker": "ABC"},
+            {"publisher_filing_date": "2025-01-05"},
+        )
+        self.assertEqual(enriched["publisher_filing_date"], "2025-01-05")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "trusted metadata conflicts with extracted field 'publisher_filing_date'",
+        ):
+            scanned_table.inject_extra_fields(
+                {"publisher_filing_date": "2025-01-04"},
+                {"publisher_filing_date": "2025-01-05"},
+            )
+
+    def test_grouped_schema_marks_trusted_metadata_collision_for_review(
+        self,
+    ) -> None:
+        scanned_table = importlib.import_module("nexustrade.scanned_table")
+        host = importlib.import_module("nexustrade.host")
+
+        with mock.patch.object(
+            host,
+            "gateway_chat_json",
+            return_value={
+                "documents": [
+                    {
+                        "source_id": "a",
+                        "document": {"publisher_filing_date": "2025-01-04"},
+                        "rows": [{"event_date": "2025-01-02"}],
+                    }
+                ]
+            },
+        ):
+            result = scanned_table._extract_pdf_document_group(
+                [("a", b"a")],
+                normalized_schema=scanned_table.normalize_rows_schema(
+                    {"event_date": "string"}
+                ),
+                rows_model="model",
+                rows_retries=0,
+                rows_pdf_max_bytes=1024,
+                instructions="extract rows",
+                extra_fields_by_key={
+                    "a": {"publisher_filing_date": "2025-01-05"}
+                },
+            )
+
+        self.assertTrue(result["a"]["needs_review"])
+        self.assertEqual(result["a"]["rows"], [])
+        self.assertIn("trusted metadata conflicts", result["a"]["error"])
+
     def test_grouped_schema_request_exposes_only_source_local_trusted_metadata(
         self,
     ) -> None:

@@ -336,15 +336,25 @@ def inject_extra_fields(
     row: dict[str, Any],
     extra_fields: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Stamp caller-supplied constants (doc id, source url, filing date) onto a row.
+    """Enrich extracted facts with caller-supplied trusted metadata.
 
-    Extracted values win: document-level metadata never overwrites what is on the page.
+    A trusted field may fill a missing extracted value, but it may not silently replace
+    a conflicting non-null value. A collision means the caller and document extraction
+    disagree about the role or value and must remain reviewable.
     """
     if not extra_fields:
         return row
     for key, value in extra_fields.items():
-        if value is not None:
-            row.setdefault(header_to_snake_case(str(key)), value)
+        if value is None:
+            continue
+        normalized_key = header_to_snake_case(str(key))
+        extracted_value = row.get(normalized_key)
+        if extracted_value is not None and extracted_value != value:
+            raise ValueError(
+                "trusted metadata conflicts with extracted field "
+                f"{normalized_key!r}"
+            )
+        row[normalized_key] = value
     return row
 
 
@@ -1782,11 +1792,11 @@ def _extract_pdf_document_group(
                     )
                     extra = (extra_fields_by_key or {}).get(source_id, {})
                     for row_index, row in enumerate(rows):
-                        row.update(extra)
+                        inject_extra_fields(row, extra)
                         row["source_id"] = source_id
                         row["_source_row_index"] = row_index
                     document = _document_from_structured_result(raw)
-                    document.update(extra)
+                    inject_extra_fields(document, extra)
                     document["source_id"] = source_id
                     grouped[source_id] = {
                         "document": document,
@@ -2110,6 +2120,8 @@ def extract_pdfs(
     re-extracted from PDF contents. The same mapping is returned separately as
     `trusted_metadata` so downstream evidence can distinguish it from facts read
     from the PDF; that receipt does not independently verify the upstream value.
+    A trusted field fills a missing value, but a conflicting non-null extracted
+    value marks that document as failed review instead of being overwritten.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from nexustrade.host import GatewayChatError
@@ -2312,10 +2324,11 @@ def extract_pdfs(
                 _durable_replay=False,
             )
             extra = (extra_fields_by_key or {}).get(key, {})
-            document = {**extracted.document, **extra, "source_id": key}
+            document = inject_extra_fields(dict(extracted.document), extra)
+            document["source_id"] = key
             rows: list[dict[str, Any]] = []
             for row_index, extracted_row in enumerate(extracted.rows):
-                row = {**extracted_row, **extra}
+                row = inject_extra_fields(dict(extracted_row), extra)
                 row["source_id"] = key
                 row["_source_row_index"] = row_index
                 rows.append(row)
