@@ -280,11 +280,131 @@ def probability_weighted_value(
 
 
 def margin_of_safety(intrinsic_value: Number, market_price: Number) -> float:
-    """Return (intrinsic value - price) / intrinsic value."""
+    """Return the intrinsic-value discount: (intrinsic - price) / intrinsic.
+
+    This is retained for compatibility. Prefer the explicitly named price
+    comparison helpers in new analysis so a negative discount is not mislabeled
+    as the positive premium paid above intrinsic value.
+    """
+    return price_discount_to_intrinsic_value(intrinsic_value, market_price)
+
+
+def price_discount_to_intrinsic_value(
+    intrinsic_value: Number, market_price: Number
+) -> float:
+    """Return (intrinsic - price) / intrinsic; positive means price is cheaper."""
     intrinsic = _finite("intrinsic_value", intrinsic_value)
     if intrinsic <= 0.0:
         raise ValueError("intrinsic_value must be positive")
     return (intrinsic - _finite("market_price", market_price)) / intrinsic
+
+
+def price_upside_to_intrinsic_value(
+    intrinsic_value: Number, market_price: Number
+) -> float:
+    """Return (intrinsic - price) / price; positive means upside from price."""
+    price = _finite("market_price", market_price)
+    if price <= 0.0:
+        raise ValueError("market_price must be positive")
+    return (_finite("intrinsic_value", intrinsic_value) - price) / price
+
+
+def price_premium_to_intrinsic_value(
+    market_price: Number, intrinsic_value: Number
+) -> float:
+    """Return (price - intrinsic) / intrinsic; positive means price is dearer."""
+    intrinsic = _finite("intrinsic_value", intrinsic_value)
+    if intrinsic <= 0.0:
+        raise ValueError("intrinsic_value must be positive")
+    return (_finite("market_price", market_price) - intrinsic) / intrinsic
+
+
+def cash_flow_after_equity_compensation(
+    reported_cash_flow: Number,
+    stock_based_compensation: Number,
+) -> float:
+    """Deduct SBC from a cash-flow measure that added it back as non-cash.
+
+    This is an analyst adjustment, not GAAP cash flow. Keep the reported and
+    adjusted series side by side in user-facing work.
+    """
+    compensation = _finite("stock_based_compensation", stock_based_compensation)
+    if compensation < 0.0:
+        raise ValueError("stock_based_compensation must be non-negative")
+    return _finite("reported_cash_flow", reported_cash_flow) - compensation
+
+
+def capitalize_operating_expense(
+    expense_history: Sequence[Number],
+    amortization_years: int,
+) -> dict[str, float]:
+    """Straight-line capitalize a current operating expense such as R&D.
+
+    `expense_history` is chronological and ends with the current period. A
+    current-period outlay enters the asset immediately and starts amortizing in
+    the next period. The returned operating-income adjustment is current expense
+    less amortization. Classification and useful-life choice remain the analyst's.
+    """
+    if isinstance(amortization_years, bool) or not isinstance(amortization_years, int):
+        raise ValueError("amortization_years must be a positive integer")
+    if amortization_years <= 0:
+        raise ValueError("amortization_years must be a positive integer")
+    expenses = [
+        _finite(f"expense_history[{index}]", value)
+        for index, value in enumerate(expense_history)
+    ]
+    if not expenses:
+        raise ValueError("expense_history must contain at least one period")
+    if any(value < 0.0 for value in expenses):
+        raise ValueError("expense_history must be non-negative")
+    current_expense = expenses[-1]
+    prior_vintages = list(reversed(expenses[:-1]))[:amortization_years]
+    current_amortization = sum(prior_vintages) / amortization_years
+    unamortized_asset = current_expense + sum(
+        expense * (amortization_years - age) / amortization_years
+        for age, expense in enumerate(prior_vintages, start=1)
+    )
+    return {
+        "current_expense": current_expense,
+        "current_amortization": current_amortization,
+        "unamortized_asset": unamortized_asset,
+        "operating_income_adjustment": current_expense - current_amortization,
+    }
+
+
+def gordon_growth_terminal_value_from_nopat(
+    final_forecast_nopat: Number,
+    discount_rate: Number,
+    perpetual_growth_rate: Number,
+    return_on_new_invested_capital: Number,
+) -> dict[str, float]:
+    """Return a Gordon terminal value with explicit steady-state reinvestment.
+
+    Growth requires reinvestment: reinvestment rate = g / return on new invested
+    capital. The terminal cash flow is next-period NOPAT after that reinvestment.
+    """
+    discount = _rate("discount_rate", discount_rate)
+    growth = _rate("perpetual_growth_rate", perpetual_growth_rate)
+    if discount <= growth:
+        raise ValueError("discount_rate must exceed perpetual_growth_rate")
+    ronic = _finite(
+        "return_on_new_invested_capital", return_on_new_invested_capital
+    )
+    if ronic <= 0.0:
+        raise ValueError("return_on_new_invested_capital must be positive")
+    terminal_reinvestment_rate = growth / ronic
+    if terminal_reinvestment_rate < 0.0 or terminal_reinvestment_rate > 1.0:
+        raise ValueError("terminal reinvestment rate must be between 0 and 1")
+    next_period_nopat = _finite("final_forecast_nopat", final_forecast_nopat) * (
+        1.0 + growth
+    )
+    terminal_fcff = next_period_nopat * (1.0 - terminal_reinvestment_rate)
+    return {
+        "reinvestment_rate": terminal_reinvestment_rate,
+        "next_period_nopat": next_period_nopat,
+        "terminal_fcff": terminal_fcff,
+        "terminal_value": terminal_fcff / (discount - growth),
+    }
 
 
 def internal_rate_of_return(cash_flows: Sequence[Number]) -> float:
@@ -466,6 +586,8 @@ def equity_return_case(
 __all__ = [
     "capm_cost_of_equity",
     "change_in_operating_nwc",
+    "cash_flow_after_equity_compensation",
+    "capitalize_operating_expense",
     "enterprise_to_equity_value",
     "enterprise_value_from_fcff",
     "economic_value_added",
@@ -473,6 +595,7 @@ __all__ = [
     "fcff",
     "fcff_valuation_case",
     "gordon_growth_terminal_value",
+    "gordon_growth_terminal_value_from_nopat",
     "internal_rate_of_return",
     "incremental_return_on_invested_capital",
     "invested_capital_from_operations",
@@ -482,6 +605,9 @@ __all__ = [
     "operating_nwc",
     "operating_period_metrics",
     "per_share_value",
+    "price_discount_to_intrinsic_value",
+    "price_premium_to_intrinsic_value",
+    "price_upside_to_intrinsic_value",
     "present_value_cash_flows",
     "probability_weighted_value",
     "reinvestment_rate",

@@ -70,9 +70,43 @@ class FinanceSdkTests(unittest.TestCase):
             108.0,
         )
         self.assertEqual(nt.finance.margin_of_safety(125.0, 100.0), 0.2)
+        self.assertEqual(
+            nt.finance.price_discount_to_intrinsic_value(125.0, 100.0), 0.2
+        )
+        self.assertEqual(
+            nt.finance.price_upside_to_intrinsic_value(125.0, 100.0), 0.25
+        )
+        self.assertEqual(
+            nt.finance.price_premium_to_intrinsic_value(125.0, 100.0), 0.25
+        )
         self.assertAlmostEqual(
             nt.finance.internal_rate_of_return([-100.0, 0.0, 121.0]), 0.1
         )
+
+    def test_analyst_adjustments_are_explicit_and_reproducible(self) -> None:
+        self.assertEqual(
+            nt.finance.cash_flow_after_equity_compensation(100.0, 12.0), 88.0
+        )
+        capitalized = nt.finance.capitalize_operating_expense(
+            [60.0, 70.0, 80.0, 90.0], amortization_years=3
+        )
+        self.assertEqual(capitalized["current_expense"], 90.0)
+        self.assertEqual(capitalized["current_amortization"], 70.0)
+        self.assertAlmostEqual(
+            capitalized["unamortized_asset"], 90.0 + 80.0 * 2 / 3 + 70.0 / 3
+        )
+        self.assertEqual(capitalized["operating_income_adjustment"], 20.0)
+
+        terminal = nt.finance.gordon_growth_terminal_value_from_nopat(
+            final_forecast_nopat=100.0,
+            discount_rate=0.09,
+            perpetual_growth_rate=0.03,
+            return_on_new_invested_capital=0.15,
+        )
+        self.assertAlmostEqual(terminal["reinvestment_rate"], 0.2)
+        self.assertAlmostEqual(terminal["next_period_nopat"], 103.0)
+        self.assertAlmostEqual(terminal["terminal_fcff"], 82.4)
+        self.assertAlmostEqual(terminal["terminal_value"], 82.4 / 0.06)
 
     def test_invalid_inputs_fail_instead_of_becoming_zero(self) -> None:
         with self.assertRaisesRegex(ValueError, "tax_rate"):
@@ -91,6 +125,14 @@ class FinanceSdkTests(unittest.TestCase):
             nt.finance.probability_weighted_value([1.0, 2.0], [0.4, 0.5])
         with self.assertRaisesRegex(ValueError, "conventional"):
             nt.finance.internal_rate_of_return([-100.0, 150.0, -60.0])
+        with self.assertRaisesRegex(ValueError, "stock_based_compensation"):
+            nt.finance.cash_flow_after_equity_compensation(100.0, -1.0)
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            nt.finance.capitalize_operating_expense([10.0], amortization_years=0)
+        with self.assertRaisesRegex(ValueError, "between 0 and 1"):
+            nt.finance.gordon_growth_terminal_value_from_nopat(
+                100.0, 0.09, 0.05, 0.04
+            )
 
     def test_operating_period_metrics_reconciles_the_full_bridge(self) -> None:
         result = nt.finance.operating_period_metrics(
