@@ -108,6 +108,30 @@ class FinanceSdkTests(unittest.TestCase):
         self.assertAlmostEqual(terminal["terminal_fcff"], 82.4)
         self.assertAlmostEqual(terminal["terminal_value"], 82.4 / 0.06)
 
+    def test_irr_accepts_an_initial_investment_phase(self) -> None:
+        for cash_flows, expected in (
+            ([-100.0, -10.0, 132.0], 0.1),
+            ([-100.0, -10.0, 72.0], -0.2),
+            ([-100.0, -10.0, 0.0, 145.2], 0.1),
+        ):
+            with self.subTest(cash_flows=cash_flows):
+                actual = nt.finance.internal_rate_of_return(cash_flows)
+                self.assertAlmostEqual(actual, expected)
+                self.assertAlmostEqual(
+                    sum(value / (1.0 + actual) ** period
+                        for period, value in enumerate(cash_flows)),
+                    0.0,
+                )
+
+    def test_irr_rejects_outflows_after_inflows_start(self) -> None:
+        for cash_flows in (
+            [-100.0, -10.0, 180.0, -30.0],
+            [-100.0, 150.0, 0.0, -60.0, 10.0],
+        ):
+            with self.subTest(cash_flows=cash_flows):
+                with self.assertRaisesRegex(ValueError, "conventional"):
+                    nt.finance.internal_rate_of_return(cash_flows)
+
     def test_invalid_inputs_fail_instead_of_becoming_zero(self) -> None:
         with self.assertRaisesRegex(ValueError, "tax_rate"):
             nt.finance.nopat(100.0, 1.1)

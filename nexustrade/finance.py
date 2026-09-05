@@ -408,18 +408,25 @@ def gordon_growth_terminal_value_from_nopat(
 
 
 def internal_rate_of_return(cash_flows: Sequence[Number]) -> float:
-    """Solve a unique conventional IRR for an initial outflow and later inflows."""
+    """Solve a unique IRR for initial outflows followed only by inflows or zeros."""
     values = [
         _finite(f"cash_flows[{index}]", value)
         for index, value in enumerate(cash_flows)
     ]
-    if len(values) < 2 or values[0] >= 0.0 or any(value < 0.0 for value in values[1:]):
+    if len(values) < 2 or values[0] >= 0.0:
         raise ValueError(
-            "cash_flows must be conventional: one initial outflow followed by "
+            "cash_flows must be conventional and begin with an initial outflow"
+        )
+    first_inflow = next(
+        (index for index, value in enumerate(values) if value > 0.0), None
+    )
+    if first_inflow is None:
+        raise ValueError("cash_flows must include at least one positive future flow")
+    if any(value < 0.0 for value in values[first_inflow + 1:]):
+        raise ValueError(
+            "cash_flows must be conventional: initial outflows followed by "
             "non-negative flows"
         )
-    if not any(value > 0.0 for value in values[1:]):
-        raise ValueError("cash_flows must include at least one positive future flow")
 
     def npv(rate: float) -> float:
         return sum(
