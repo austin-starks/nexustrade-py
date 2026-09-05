@@ -6,6 +6,7 @@ import unittest
 from types import ModuleType
 from unittest import mock
 
+import nexustrade as nt
 from nexustrade import scanned_table
 
 
@@ -18,6 +19,66 @@ SCHEMA = {
     "required": ["quality", "facts"],
     "additionalProperties": False,
 }
+
+
+class WebPagePreparationTests(unittest.TestCase):
+    def test_public_helper_preserves_table_text_and_separates_metadata(self) -> None:
+        html = """<html><head><meta name="description" content="Metadata only">
+        <script>private noise</script></head><body><nav>Navigation</nav>
+        <main><p>Research &amp; development</p><div hidden>Hidden amount 999</div>
+        <table><tr><th>Period</th><th>2030</th><th>2031</th></tr>
+        <tr><td>Cash spending</td><td>12&#160;million</td><td>14 million</td></tr>
+        </table></main><footer>Footer noise</footer></body></html>"""
+        with mock.patch("nexustrade.host.gateway_chat_json") as chat:
+            result = nt.prepare_web_pages({"company": html})
+        chat.assert_not_called()
+        self.assertIsNone(result["company"]["error"])
+        page = result["company"]["document"]
+        self.assertEqual(page["description"], "Metadata only")
+        self.assertEqual(
+            " ".join(page["visible_text"].split()),
+            "Research & development Period 2030 2031 Cash spending 12 million 14 million",
+        )
+
+    def test_rejects_over_budget_text_instead_of_splicing_passages(self) -> None:
+        result = scanned_table.prepare_web_pages(
+            {"long": "<body><p>0123456789</p></body>", "fits": "<body><p>12345678</p></body>"},
+            max_chars_per_document=8,
+        )
+        self.assertEqual(result["long"]["document"], {})
+        self.assertIn("character limit", result["long"]["error"])
+        self.assertEqual(result["fits"]["document"]["visible_text"], "12345678")
+
+    def test_accepts_staged_receipts_and_keeps_body_failures_source_local(self) -> None:
+        good = {"ok": True, "data": {"contentType": "text/html", "url": "https://example.test/page"}}
+        bad = {"ok": True, "data": {"contentType": "text/html"}}
+        tigris = ModuleType("nexustrade.tigris")
+        tigris.read_fetch_result = mock.Mock(side_effect=[
+            b"<html><body><article>Actual text &amp; facts.</article></body></html>",
+            RuntimeError("private transport details"),
+        ])
+        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}):
+            result = scanned_table.prepare_web_pages({"good": good, "bad": bad})
+        self.assertEqual(result["good"]["document"]["visible_text"], "Actual text & facts.")
+        self.assertEqual(result["good"]["document"]["url"], "https://example.test/page")
+        self.assertEqual(result["bad"], {"document": {}, "error": "page body could not be read"})
+
+    def test_rejects_non_html_and_unsuccessful_receipts(self) -> None:
+        result = scanned_table.prepare_web_pages({
+            "pdf": {"ok": True, "data": {"contentType": "application/pdf"}},
+            "failed": {"ok": False},
+        })
+        self.assertIn("not HTML", result["pdf"]["error"])
+        self.assertIn("not successful", result["failed"]["error"])
+
+    def test_validates_limits_and_source_identity(self) -> None:
+        for limit in (0, -1, True, 1.5):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                scanned_table.prepare_web_pages({}, max_chars_per_document=limit)
+        with self.assertRaises(ValueError):
+            scanned_table.prepare_web_pages({1: "<p>A</p>", "1": "<p>B</p>"})
+        with self.assertRaises(TypeError):
+            scanned_table.prepare_web_pages([])
 
 
 class WebPageExtractionTests(unittest.TestCase):

@@ -119,6 +119,13 @@ strict Luna extraction, and returns one result or explicit error per source id.
 The schema describes one page result; do not include the host-owned `source_id`
 field.
 
+For deterministic source-text inspection and report excerpts, use
+`nt.prepare_web_pages(fetch_results)`. It uses the same HTML projection as
+extraction and host quote verification, with no model call. Select contiguous
+quotes from each result's `document.visible_text`; metadata is separate and must
+not be prepended to a quote. An over-budget page returns an explicit error rather
+than joined head/tail text. Do not rebuild HTML text with regex.
+
 For a material semantic decision that already has a positive condition,
 proposed outcome, reason, and record-local RFC 6901 citations, use
 `nt.verify_semantic_citations(...)` before trusting the proposal. The host

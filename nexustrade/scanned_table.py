@@ -3369,6 +3369,7 @@ def _prepare_web_page(
     value: str | bytes | Mapping[str, Any],
     *,
     max_chars: int,
+    truncate: bool = True,
 ) -> tuple[dict[str, Any] | None, str | None, bytes | None]:
     url: str | None = None
     content_type = "text/html"
@@ -3435,6 +3436,8 @@ def _prepare_web_page(
         visible_text = max(scoped_text, key=len) if scoped_text else parser.text("body")
     except Exception as exc:  # keep malformed HTML source-local
         return None, f"HTML parsing failed: {exc}", None
+    if not truncate and len(visible_text) > max_chars:
+        return None, f"visible text exceeds character limit ({max_chars})", None
     prepared: dict[str, Any] = {
         "source_id": source_id,
         "url": url,
@@ -3444,6 +3447,45 @@ def _prepare_web_page(
         "visible_text": _bounded_web_text(visible_text, max_chars),
     }
     return prepared, None, raw
+
+
+def prepare_web_pages(
+    pages: Mapping[str, str | bytes | Mapping[str, Any]],
+    *,
+    max_chars_per_document: int = 1_000_000,
+) -> dict[str, dict[str, Any]]:
+    """Read canonical HTML text without a model call.
+
+    Accept the same inputs as ``extract_web_pages``. Each source returns a
+    ``document`` containing complete ``visible_text`` and separate publisher
+    metadata, or an explicit ``error``. Over-budget pages are rejected rather
+    than spliced or truncated. Select report source quotes from ``visible_text``;
+    do not concatenate it with metadata or join separate passages.
+    """
+    if not isinstance(pages, Mapping):
+        raise TypeError("pages must be a mapping from source_id to page input")
+    if (
+        isinstance(max_chars_per_document, bool)
+        or not isinstance(max_chars_per_document, int)
+        or max_chars_per_document < 1
+    ):
+        raise ValueError("max_chars_per_document must be a positive integer")
+    source_ids = [str(source_id) for source_id in pages]
+    if len(set(source_ids)) != len(source_ids):
+        raise ValueError("page source ids must remain unique after string conversion")
+    results: dict[str, dict[str, Any]] = {}
+    for source_id, value in zip(source_ids, pages.values()):
+        try:
+            document, error, _ = _prepare_web_page(
+                source_id, value, max_chars=max_chars_per_document, truncate=False
+            )
+        except Exception:
+            document, error = None, "page body could not be read"
+        results[source_id] = {
+            "document": document or {},
+            "error": error,
+        }
+    return results
 
 
 def _web_response_schema(

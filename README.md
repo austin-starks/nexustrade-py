@@ -36,6 +36,17 @@ sandboxes. Agent-facing helpers such as `nexustrade.host`,
 `nexustrade.tigris` therefore have one canonical implementation. Host-backed
 operations still require the short-lived environment supplied by a compute run.
 
+Use `nt.prepare_web_pages(pages, max_chars_per_document=1_000_000)` for
+deterministic HTML inspection without a model call. `pages` maps source IDs to
+HTML strings/bytes, `{"html": ..., "url": ...}` objects, or successful
+`host.fetch` result rows. Each result has `document` and `error`; successful
+documents contain complete `visible_text` plus separate title, description and
+publication hints. The helper removes hidden content and page chrome and decodes
+HTML entities using the same parser as `extract_web_pages` and host evidence
+verification. Select contiguous report quotes from `document["visible_text"]`;
+do not concatenate metadata or separate passages. Over-budget text returns an
+explicit error, so a partial source is never presented as complete.
+
 For document-derived computation, keep extraction and interpretation separate.
 `extract_rows`/`extract_pdfs` preserve source observations. A corpus can recover
 document-level facts and logical rows in one schema-bound pass:
