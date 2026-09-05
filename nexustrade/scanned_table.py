@@ -3364,6 +3364,12 @@ def _decode_web_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _supported_web_content_type(content_type: str) -> bool:
+    return content_type.split(";", 1)[0].strip().lower() in {
+        "text/html", "application/xhtml+xml", "text/markdown",
+    }
+
+
 def _prepare_web_page(
     source_id: str,
     value: str | bytes | Mapping[str, Any],
@@ -3405,8 +3411,8 @@ def _prepare_web_page(
                 if isinstance(candidate, str) and candidate.strip():
                     url = candidate
                     break
-            if "html" not in content_type.lower():
-                return None, f"fetch result is not HTML ({content_type})", None
+            if not _supported_web_content_type(content_type):
+                return None, f"fetch result is not HTML or Markdown ({content_type})", None
             from nexustrade.tigris import read_fetch_result
 
             raw = read_fetch_result(dict(value))
@@ -3415,25 +3421,31 @@ def _prepare_web_page(
     else:
         return None, f"unsupported page input {type(value).__name__}", None
 
-    if "html" not in content_type.lower():
-        return None, f"page is not HTML ({content_type})", None
+    if not _supported_web_content_type(content_type):
+        return None, f"page is not HTML or Markdown ({content_type})", None
     try:
-        parser = _WebTextParser()
-        parser.feed(_decode_web_bytes(raw))
-        parser.close()
-        title = parser.meta.get("og:title") or parser.text("title") or None
-        description = parser.meta.get("og:description") or parser.meta.get(
-            "description"
-        )
-        published_at_hint = (
-            parser.meta.get("article:published_time") or parser.time_hint
-        )
-        scoped_text = [
-            text
-            for text in (parser.text("article"), parser.text("main"))
-            if text
-        ]
-        visible_text = max(scoped_text, key=len) if scoped_text else parser.text("body")
+        if content_type.split(";", 1)[0].strip().lower() == "text/markdown":
+            # The fetcher may supply rendered Markdown instead of origin HTML.
+            # Preserve those exact source bytes, including literal angle brackets.
+            visible_text = _decode_web_bytes(raw)
+            title = description = published_at_hint = None
+        else:
+            parser = _WebTextParser()
+            parser.feed(_decode_web_bytes(raw))
+            parser.close()
+            title = parser.meta.get("og:title") or parser.text("title") or None
+            description = parser.meta.get("og:description") or parser.meta.get(
+                "description"
+            )
+            published_at_hint = (
+                parser.meta.get("article:published_time") or parser.time_hint
+            )
+            scoped_text = [
+                text
+                for text in (parser.text("article"), parser.text("main"))
+                if text
+            ]
+            visible_text = max(scoped_text, key=len) if scoped_text else parser.text("body")
     except Exception as exc:  # keep malformed HTML source-local
         return None, f"HTML parsing failed: {exc}", None
     if not truncate and len(visible_text) > max_chars:
@@ -3441,6 +3453,7 @@ def _prepare_web_page(
     prepared: dict[str, Any] = {
         "source_id": source_id,
         "url": url,
+        "content_type": content_type,
         "title": title,
         "description": description,
         "published_at_hint": published_at_hint,
@@ -3454,7 +3467,7 @@ def prepare_web_pages(
     *,
     max_chars_per_document: int = 1_000_000,
 ) -> dict[str, dict[str, Any]]:
-    """Read canonical HTML text without a model call.
+    """Read canonical HTML or explicitly typed Markdown without a model call.
 
     Accept the same inputs as ``extract_web_pages``. Each source returns a
     ``document`` containing complete ``visible_text`` and separate publisher
@@ -3674,13 +3687,15 @@ def extract_web_pages(
     max_workers: int = 2,
     retries: int = 1,
 ) -> dict[str, dict[str, Any]]:
-    """Turn fetched HTML pages into one strict typed object per source.
+    """Turn fetched HTML or Markdown pages into one strict typed object per source.
 
     ``pages`` may contain HTML strings/bytes, ``{"html": ..., "url": ...}``
     objects, or complete result rows returned by ``host.read_results()`` after
     ``host.fetch``. Fetch bodies remain in Tigris and enter this bounded helper,
     not the OpenCode transcript. ``schema`` describes ONE per-page object;
     ``source_id`` is added and checked by the host.
+    Markdown receipts retain their exact text and content type, including any
+    rendered-fetch marker; they do not acquire inferred HTML publisher metadata.
 
     Each page gets an isolated GPT-5.6 Luna request by default so one dense page
     cannot consume another page's output attention. Increase

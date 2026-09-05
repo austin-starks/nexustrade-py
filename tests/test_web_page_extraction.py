@@ -80,6 +80,38 @@ class WebPagePreparationTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             scanned_table.prepare_web_pages([])
 
+    def test_rendered_markdown_preserves_source_text_and_receipt_identity(self) -> None:
+        content_type = "text/markdown; charset=utf-8; x-fetch-via=firecrawl"
+        receipt = {"ok": True, "data": {
+            "contentType": content_type, "status": 403,
+            "url": "https://example.test/old", "finalUrl": "https://example.test/report",
+        }}
+        markdown = "# Report\n\n| Period | Amount |\n|---|---|\n| 2030 | <5 & >2 |\n"
+        tigris = ModuleType("nexustrade.tigris")
+        tigris.read_fetch_result = mock.Mock(return_value=markdown.encode())
+        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}), mock.patch(
+            "nexustrade.host.gateway_chat_json"
+        ) as chat:
+            result = nt.prepare_web_pages({"rendered": receipt})
+        chat.assert_not_called()
+        tigris.read_fetch_result.assert_called_once_with(receipt)
+        page = result["rendered"]["document"]
+        self.assertIsNone(result["rendered"]["error"])
+        self.assertEqual(page["visible_text"], markdown)
+        self.assertEqual(page["content_type"], content_type)
+        self.assertEqual(page["url"], "https://example.test/report")
+        for key in ("title", "description", "published_at_hint"):
+            self.assertIsNone(page[key])
+
+    def test_markdown_limits_apply_without_html_projection(self) -> None:
+        receipt = {"ok": True, "data": {"contentType": "Text/Markdown; charset=UTF-8"}}
+        tigris = ModuleType("nexustrade.tigris")
+        tigris.read_fetch_result = mock.Mock(return_value=b"<amount>12345</amount>")
+        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}):
+            result = nt.prepare_web_pages({"rendered": receipt}, max_chars_per_document=8)
+        self.assertIn("character limit", result["rendered"]["error"])
+        self.assertEqual(result["rendered"]["document"], {})
+
 
 class WebPageExtractionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -273,6 +305,31 @@ class WebPageExtractionTests(unittest.TestCase):
             )
         self.assertIn("not HTML", result["filing"]["error"])
         chat.assert_not_called()
+
+    def test_mixed_web_formats_keep_markdown_content_and_reject_pdf(self) -> None:
+        receipt = {"ok": True, "data": {
+            "contentType": "text/markdown; charset=utf-8; x-fetch-via=firecrawl",
+            "status": 403, "url": "https://example.test/bulletin",
+        }}
+        markdown = "# Maintenance\n\nPressure must remain <5 bar."
+        tigris = ModuleType("nexustrade.tigris")
+        tigris.read_fetch_result = mock.Mock(return_value=markdown.encode())
+        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}), mock.patch(
+            "nexustrade.host.gateway_chat_json", side_effect=self._response
+        ) as chat:
+            result = scanned_table.extract_web_pages(
+                {"rendered": receipt, "html": "<main>Other notice</main>",
+                 "pdf": {"ok": True, "data": {"contentType": "application/pdf"}}},
+                instructions="Extract source facts.", schema=SCHEMA, max_workers=1,
+            )
+        self.assertEqual(chat.call_count, 2)
+        pages = [json.loads(call.kwargs["prompt"])["documents"][0]
+                 for call in chat.call_args_list]
+        rendered = next(page for page in pages if page["source_id"] == "rendered")
+        self.assertEqual(rendered["visible_text"], markdown)
+        self.assertEqual(rendered["content_type"], receipt["data"]["contentType"])
+        self.assertIsNone(result["rendered"]["error"])
+        self.assertIn("not HTML", result["pdf"]["error"])
 
     def test_batches_pages_and_keeps_one_result_per_source(self) -> None:
         pages = {

@@ -47,6 +47,11 @@ verification. Select contiguous report quotes from `document["visible_text"]`;
 do not concatenate metadata or separate passages. Over-budget text returns an
 explicit error, so a partial source is never presented as complete.
 
+Both web helpers also accept successful fetch receipts typed `text/markdown`,
+including rendered fallback responses. These preserve the returned Markdown
+verbatim in `visible_text` and retain `content_type`; publisher metadata remains
+unset. Rendered text is evidence from that fetch response, not original HTML.
+
 For document-derived computation, keep extraction and interpretation separate.
 `extract_rows`/`extract_pdfs` preserve source observations. A corpus can recover
 document-level facts and logical rows in one schema-bound pass:

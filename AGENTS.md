@@ -119,6 +119,11 @@ strict Luna extraction, and returns one result or explicit error per source id.
 The schema describes one page result; do not include the host-owned `source_id`
 field.
 
+Successful Markdown fetch receipts use the same web helpers, including rendered
+fallbacks. Their `document.visible_text` preserves the returned Markdown and
+`content_type` identifies the representation. Do not treat it as origin HTML or
+infer publisher metadata from the URL.
+
 For deterministic source-text inspection and report excerpts, use
 `nt.prepare_web_pages(fetch_results)`. It uses the same HTML projection as
 extraction and host quote verification, with no model call. Select contiguous
