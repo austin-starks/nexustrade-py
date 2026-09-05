@@ -6,6 +6,62 @@ import nexustrade as nt
 
 
 class FinanceSdkTests(unittest.TestCase):
+    def test_composed_forecast_preserves_expenses_and_terminal_timing(self) -> None:
+        p = nt.finance.operating_forecast_period(
+            operating_income=90, tax_rate=0.2, depreciation_and_amortization=15,
+            capital_expenditures=25, current_operating_nwc=14, prior_operating_nwc=10,
+            prior_invested_capital=200, cost_of_capital=0.1,
+        )
+        self.assertEqual(p['nopat'], 72)
+        self.assertEqual(p['fcff'], 58)
+        self.assertEqual(p['current_invested_capital'], 214)
+        self.assertAlmostEqual(p['roic'], 72/207)
+        terminal = nt.finance.gordon_growth_terminal_value_from_nopat(72, 0.1, 0.02, 0.2)
+        v = nt.finance.fcff_valuation_case(
+            forecast_fcff=[p['fcff']], discount_rate=0.1,
+            terminal_value=terminal['terminal_value'], cash_and_non_operating_assets=30,
+            debt_and_debt_like_liabilities=20, diluted_shares=10,
+        )
+        expected = ((58 + (72*1.02*(1-0.02/0.2)/(0.1-0.02)))/1.1 + 10)/10
+        self.assertAlmostEqual(v['per_share_value'], expected)
+        with self.assertRaises(ValueError):
+            nt.finance.operating_forecast_period(
+                operating_income=90, tax_rate=0.2, depreciation_and_amortization=None,
+                capital_expenditures=25, current_operating_nwc=14, prior_operating_nwc=10,
+                prior_invested_capital=200, cost_of_capital=0.1,
+            )
+
+    def test_terminal_choice_is_unambiguous_and_zero_is_valid(self) -> None:
+        inputs = dict(forecast_fcff=[10, 20], discount_rate=0.1,
+                      cash_and_non_operating_assets=0, debt_and_debt_like_liabilities=0,
+                      diluted_shares=2)
+        zero = nt.finance.fcff_valuation_case(**inputs, terminal_value=0)
+        self.assertAlmostEqual(zero['per_share_value'], (10/1.1+20/1.1**2)/2)
+        for extra in ({}, {'terminal_value': 30, 'perpetual_growth_rate': 0.02}, {'terminal_value': float('nan')}):
+            with self.assertRaises(ValueError):
+                nt.finance.fcff_valuation_case(**inputs, **extra)
+
+    def test_cash_investment_and_noncash_capital_changes_are_distinct(self) -> None:
+        inputs = dict(operating_income=30, tax_rate=0.2, depreciation_and_amortization=10,
+                      capital_expenditures=10, current_operating_nwc=5, prior_operating_nwc=5,
+                      prior_invested_capital=100, cost_of_capital=0.1)
+        cash = nt.finance.operating_forecast_period(**inputs, additional_cash_investment=100)
+        noncash = nt.finance.operating_forecast_period(**inputs, noncash_invested_capital_changes=100)
+        self.assertEqual(cash['current_invested_capital'], noncash['current_invested_capital'])
+        self.assertEqual(cash['net_investment'], 100)
+        self.assertEqual(cash['fcff'], -76)
+        self.assertEqual(noncash['net_investment'], 0)
+        self.assertEqual(noncash['fcff'], 24)
+        self.assertEqual(cash['nopat'] - cash['net_investment'], cash['fcff'])
+
+    def test_forecast_remainder_exposes_decline_without_passing_judgment(self) -> None:
+        result = nt.finance.forecast_remainder(125, 80, prior_comparable_remainder=90)
+        self.assertEqual(result['remaining_forecast'], 45)
+        self.assertEqual(result['remaining_growth'], -0.5)
+        self.assertEqual(nt.finance.forecast_remainder(30, 50)['remaining_forecast'], -20)
+        for prior in (0, -10):
+            self.assertIsNone(nt.finance.forecast_remainder(30, 50, prior_comparable_remainder=prior)['remaining_growth'])
+
     def test_accounting_bridge(self) -> None:
         operating_nwc = nt.finance.operating_nwc(40.0, 25.0)
         prior_operating_nwc = nt.finance.operating_nwc(34.0, 24.0)

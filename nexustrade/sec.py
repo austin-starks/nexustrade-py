@@ -5,8 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import Any, Literal
 
 from nexustrade import host
@@ -129,6 +131,47 @@ def _run(
     return data
 
 
+def resolved_fact(
+    payload: Mapping[str, Any], *, role: FactRole, period_end: str,
+    accession: str | None = None,
+) -> dict[str, Any]:
+    """Select a complete reconciliation with its original filing provenance.
+
+    Pass the frozen fact_candidates response. This does not sum unreconciled NWC
+    components or infer absence from a normalized statement null. Incomplete,
+    cumulative and ambiguous rows fail with their status so the caller can inspect
+    the original evidence and exact filing; they never become numeric zero.
+    """
+    if role not in FACT_ROLES:
+        raise ValueError(f"unsupported SEC fact role: {role!r}")
+    rows = [r for r in payload.get("reconciliation", []) if isinstance(r, Mapping)
+            and r.get("role") == role and r.get("period_end") == period_end
+            and (accession is None or r.get("accession") == accession)]
+    if len(rows) != 1:
+        raise ValueError(f"{role} at {period_end}: expected one reconciliation, found {len(rows)}; select accession explicitly")
+    row = rows[0]
+    complete = ((row.get("status"), row.get("confidence")) in {
+        ("direct", "direct_filing_fact"),
+        ("components", "derived_from_complete_components"),
+    })
+    value = row.get("value")
+    if not complete or isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value):
+        raise ValueError(f"{role} at {period_end}: unresolved {row.get('status')}/{row.get('confidence')}: {row.get('note', '')}")
+    ids = row.get("selected_candidate_ids")
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError("resolved fact requires unique selected candidate IDs")
+    candidates = []
+    for candidate_id in ids:
+        matches = [c for c in payload.get("candidates", []) if isinstance(c, Mapping) and c.get("id") == candidate_id]
+        if len(matches) != 1:
+            raise ValueError(f"missing or duplicate selected candidate: {candidate_id}")
+        candidate = matches[0]
+        if any(candidate.get(k) != row.get(k) for k in ("role", "period_end", "accession")):
+            raise ValueError(f"selected candidate identity mismatch: {candidate_id}")
+        candidates.append(deepcopy(dict(candidate)))
+    return {**deepcopy(dict(row)), "candidates": candidates}
+
+
 def statement(
     *,
     ticker: str,
@@ -194,5 +237,6 @@ __all__ = [
     "FACT_ROLES",
     "FactRole",
     "fact_candidates",
+    "resolved_fact",
     "statement",
 ]

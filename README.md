@@ -915,6 +915,29 @@ is, live included.
 See **[AGENTS.md](AGENTS.md)** — the conventions, invariants, and recipes an
 agent needs to write correct NexusTrade strategies on the first pass.
 
+## Reproducible research models
+
+The compute helpers keep evidence and arithmetic separate from investment judgment:
+
+- `nt.sec.resolved_fact(...)` selects a complete fact reconciliation with its
+  filing provenance. Partial, ambiguous, and cumulative inputs remain unresolved.
+- `nt.finance.operating_forecast_period(...)` calculates FCFF and rolls invested
+  capital from the same operating inputs. Equity compensation stays expensed;
+  additional cash investment and noncash capital changes are separate.
+- `nt.finance.fcff_valuation_case(..., terminal_value=...)` accepts an end-of-forecast
+  terminal enterprise value, including the NOPAT/RONIC helper's output. Supply
+  either this value or `perpetual_growth_rate`, never both.
+- `nt.finance.forecast_remainder(...)` exposes the remaining-period forecast
+  implied by actuals to date. Align additive flows, fiscal periods and units.
+- `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
+  to the current model when `report.write(inputs=inputs, model=model)` runs.
+  The host authors report prose from the resulting JSON.
+
+For explicit citation linkage, pass `source_aliases={fetch_id: bibliography_id}`
+to `report.write` (or `{}` when the namespaces intentionally match). This checks
+references without rewriting durable fetch IDs. The host still verifies excerpts
+against fetched bodies; a valid reference does not prove a claim is supported.
+
 ## License
 
 MIT

@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from unittest.mock import patch
 from urllib.request import Request
 
@@ -13,6 +14,35 @@ from nexustrade import host
 
 
 class SecSdkTests(unittest.TestCase):
+    def test_resolved_facts_preserve_provenance_and_refuse_incomplete_values(self) -> None:
+        identity = dict(role='depreciation_and_amortization', period_end='2024-06-30', accession='synthetic-A')
+        row = {**identity, 'status': 'components', 'confidence': 'derived_from_complete_components',
+               'value': 12, 'selected_candidate_ids': ['dep', 'amort'], 'note': 'Complete split facts'}
+        payload = {'reconciliation': [row], 'candidates': [
+            {**identity, 'id': 'dep', 'value': 9, 'source_filing_url': 'https://example.test/a'},
+            {**identity, 'id': 'amort', 'value': 3, 'source_filing_url': 'https://example.test/a'},
+        ]}
+        result = nt.sec.resolved_fact(payload, role=identity['role'], period_end=identity['period_end'])
+        self.assertEqual(result['value'], 12)
+        self.assertEqual(result['confidence'], row['confidence'])
+        result['candidates'][0]['value'] = 99
+        self.assertEqual(payload['candidates'][0]['value'], 9)
+        for status, confidence in [('partial_components', 'incomplete'), ('unavailable', 'incomplete'),
+                                   ('ambiguous', 'ambiguous'), ('components', 'component_facts_no_total'),
+                                   ('cumulative_ytd', 'direct_filing_fact')]:
+            bad = deepcopy(payload)
+            bad['reconciliation'][0].update(status=status, confidence=confidence)
+            with self.assertRaisesRegex(ValueError, 'unresolved'):
+                nt.sec.resolved_fact(bad, role=identity['role'], period_end=identity['period_end'])
+        bad = deepcopy(payload)
+        bad['candidates'][0]['accession'] = 'other-filing'
+        with self.assertRaisesRegex(ValueError, 'identity mismatch'):
+            nt.sec.resolved_fact(bad, role=identity['role'], period_end=identity['period_end'])
+        bad = deepcopy(payload)
+        bad['reconciliation'].append(deepcopy(row))
+        with self.assertRaisesRegex(ValueError, 'expected one'):
+            nt.sec.resolved_fact(bad, role=identity['role'], period_end=identity['period_end'])
+
     def setUp(self) -> None:
         host._pending_requests.clear()
         self.tmp = tempfile.TemporaryDirectory()

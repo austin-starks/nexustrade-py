@@ -513,24 +513,33 @@ def fcff_valuation_case(
     *,
     forecast_fcff: Sequence[Number],
     discount_rate: Number,
-    perpetual_growth_rate: Number,
+    perpetual_growth_rate: Number | None = None,
+    terminal_value: Number | None = None,
     cash_and_non_operating_assets: Number,
     debt_and_debt_like_liabilities: Number,
     diluted_shares: Number,
     other_senior_claims: Number = 0.0,
     market_price: Number | None = None,
 ) -> dict[str, float]:
-    """Return an internally consistent FCFF-to-per-share valuation bridge."""
+    """Value FCFF with either perpetual growth or an explicit terminal EV.
+
+    ``terminal_value`` is undiscounted enterprise value at the end of the final
+    forecast period, including values from gordon_growth_terminal_value_from_nopat.
+    Supply exactly one terminal construction. Existing growth-only calls retain
+    their behavior.
+    """
     values = [
         _finite(f"forecast_fcff[{index}]", value)
         for index, value in enumerate(forecast_fcff)
     ]
     if not values:
         raise ValueError("forecast_fcff must contain at least one period")
-    terminal = gordon_growth_terminal_value(
-        values[-1],
-        discount_rate,
-        perpetual_growth_rate,
+    if (perpetual_growth_rate is None) == (terminal_value is None):
+        raise ValueError("supply exactly one of perpetual_growth_rate or terminal_value")
+    terminal = (
+        _finite("terminal_value", terminal_value)
+        if terminal_value is not None
+        else gordon_growth_terminal_value(values[-1], discount_rate, perpetual_growth_rate)
     )
     enterprise = enterprise_value_from_fcff(values, discount_rate, terminal)
     equity = enterprise_to_equity_value(
@@ -549,6 +558,78 @@ def fcff_valuation_case(
     if market_price is not None:
         result["margin_of_safety"] = margin_of_safety(per_share, market_price)
     return result
+
+
+def forecast_remainder(
+    full_period_forecast: Number,
+    actual_to_date: Number,
+    *,
+    prior_comparable_remainder: Number | None = None,
+) -> dict[str, float | None]:
+    """Expose the implied remainder of a forecast for an additive flow.
+
+    The caller must align currency, units, fiscal periods and flow definitions.
+    Do not use this for balances, ratios, or overlapping quarterly/YTD amounts.
+    No change threshold is imposed. A nonpositive comparator has no growth rate;
+    the absolute change remains available for review.
+    """
+    forecast = _finite("full_period_forecast", full_period_forecast)
+    actual = _finite("actual_to_date", actual_to_date)
+    remainder = forecast - actual
+    prior = (None if prior_comparable_remainder is None else
+             _finite("prior_comparable_remainder", prior_comparable_remainder))
+    return {
+        "full_period_forecast": forecast,
+        "actual_to_date": actual,
+        "remaining_forecast": remainder,
+        "prior_comparable_remainder": prior,
+        "remaining_change": None if prior is None else remainder - prior,
+        "remaining_growth": None if prior is None or prior <= 0 else remainder / prior - 1,
+    }
+
+
+def operating_forecast_period(
+    *,
+    operating_income: Number,
+    tax_rate: Number,
+    depreciation_and_amortization: Number,
+    capital_expenditures: Number,
+    current_operating_nwc: Number,
+    prior_operating_nwc: Number,
+    prior_invested_capital: Number,
+    cost_of_capital: Number,
+    additional_cash_investment: Number = 0.0,
+    noncash_invested_capital_changes: Number = 0.0,
+) -> dict[str, float]:
+    """Roll invested capital and calculate FCFF/ROIC from the same primitives.
+
+    Operating income retains equity compensation expense; fixed current diluted
+    shares are not payment for future grants. Do not add SBC to this bridge or
+    deduct it from net investment. Additional cash investment (e.g. acquisitions)
+    consumes FCFF and increases capital; noncash changes affect capital only.
+    Model these separately, not as residuals fitted to a target ROIC. Do not
+    include investments already counted in capex or working capital again.
+    """
+    investment = net_investment(capital_expenditures, depreciation_and_amortization,
+                                change_in_operating_nwc(current_operating_nwc, prior_operating_nwc))
+    cash_investment = _finite("additional_cash_investment", additional_cash_investment)
+    noncash = _finite("noncash_invested_capital_changes", noncash_invested_capital_changes)
+    investment += cash_investment
+    current_capital = _finite("prior_invested_capital", prior_invested_capital) + investment + noncash
+    metrics = operating_period_metrics(
+        operating_income=operating_income, tax_rate=tax_rate,
+        depreciation_and_amortization=depreciation_and_amortization,
+        capital_expenditures=capital_expenditures,
+        current_operating_nwc=current_operating_nwc, prior_operating_nwc=prior_operating_nwc,
+        current_invested_capital=current_capital, prior_invested_capital=prior_invested_capital,
+        cost_of_capital=cost_of_capital,
+    )
+    return {**metrics, "current_invested_capital": current_capital,
+            "fcff": metrics["fcff"] - cash_investment,
+            "net_investment": investment,
+            "reinvestment_rate": reinvestment_rate(investment, metrics["nopat"]),
+            "additional_cash_investment": cash_investment,
+            "noncash_invested_capital_changes": noncash}
 
 
 def equity_return_case(
@@ -601,6 +682,7 @@ __all__ = [
     "equity_return_case",
     "fcff",
     "fcff_valuation_case",
+    "forecast_remainder",
     "gordon_growth_terminal_value",
     "gordon_growth_terminal_value_from_nopat",
     "internal_rate_of_return",
@@ -611,6 +693,7 @@ __all__ = [
     "net_investment",
     "operating_nwc",
     "operating_period_metrics",
+    "operating_forecast_period",
     "per_share_value",
     "price_discount_to_intrinsic_value",
     "price_premium_to_intrinsic_value",

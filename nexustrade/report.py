@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
 
@@ -87,10 +88,78 @@ def _save_image(
     return dest_name, caption
 
 
+@dataclass(frozen=True)
+class _ModelReference:
+    path: tuple[str | int, ...]
+
+
+def ref(*path: str | int) -> _ModelReference:
+    """Reference a model field in structured findings, tables, or source records.
+
+    Example: ref('scenarios', 'base', 'per_share'). Pass the current model to
+    write(inputs=..., model=...). References resolve at write time; the host gets
+    ordinary JSON, never templates or OpenCode-authored report prose.
+    """
+    if not path or any(isinstance(p, bool) or not isinstance(p, (str, int)) for p in path):
+        raise ValueError("model reference requires string keys or nonnegative list indices")
+    if any(isinstance(p, int) and p < 0 for p in path):
+        raise ValueError("model reference indices must be nonnegative")
+    return _ModelReference(path)
+
+
+def _resolve(value: Any, model: Mapping[str, Any] | None) -> Any:
+    if isinstance(value, _ModelReference):
+        if model is None:
+            raise ValueError("model references require a plain model object")
+        target: Any = model
+        for part in value.path:
+            if isinstance(target, Mapping) and isinstance(part, str) and part in target:
+                target = target[part]
+            elif isinstance(target, (list, tuple)) and isinstance(part, int) and 0 <= part < len(target):
+                target = target[part]
+            else:
+                raise ValueError(f"unresolved model reference: {value.path!r}")
+        # The model contains data, not another template/reference graph.
+        return _resolve(target, None)
+    if isinstance(value, Mapping):
+        return {key: _resolve(item, model) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_resolve(item, model) for item in value]
+    return value
+
+
+def validate_source_references(payload: Mapping[str, Any], *, aliases: Mapping[str, str]) -> None:
+    """Check explicit source registries; durable body verification stays host-owned.
+
+    ``aliases`` maps durable fetch IDs to bibliography IDs; pass {} when the
+    namespaces deliberately coincide. This validates linkage, not source truth,
+    and never rewrites sourceExcerpts IDs needed by the host receipt verifier.
+    """
+    sources = payload.get("sources", [])
+    if not isinstance(sources, list):
+        raise ValueError("source registry must be a list")
+    ids = [s["id"] for s in sources if isinstance(s, Mapping) and "id" in s]
+    if any(not isinstance(i, str) or not i.strip() for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError("source registry IDs must be unique nonempty strings")
+    known = set(ids)
+    if any(not isinstance(k, str) or not k or not isinstance(v, str) or v not in known for k, v in aliases.items()):
+        raise ValueError("source aliases must map fetch IDs to registered bibliography IDs")
+    def resolves(source_id: Any) -> bool:
+        return isinstance(source_id, str) and aliases.get(source_id, source_id) in known
+    for excerpt in payload.get("sourceExcerpts", []):
+        if not isinstance(excerpt, Mapping) or not resolves(excerpt.get("sourceId")):
+            raise ValueError("source excerpt does not resolve to the source registry")
+    for item in payload.get("fetch_reconciliation", []):
+        if isinstance(item, Mapping) and item.get("used") is True and not resolves(item.get("id")):
+            raise ValueError("used fetch record does not resolve to the source registry")
+
+
 def write_inputs(
     payload: Mapping[str, Any],
     *,
     path: str = DEFAULT_INPUTS_PATH,
+    model: Mapping[str, Any] | None = None,
+    source_aliases: Mapping[str, str] | None = None,
 ) -> str:
     """
     Write structured report inputs for the host-side Sandbox Report Generator prompt.
@@ -100,6 +169,10 @@ def write_inputs(
 
     The host authors the report. Legacy `draftMarkdown` is discarded so stale
     prose cannot replace structured research and calculation outputs.
+    Pass model= to resolve report.ref fields at write time. Optional source_aliases
+    maps durable fetch IDs to bibliography IDs and validates explicit linkage;
+    {} checks an intentionally shared namespace. Legacy calls leave receipt
+    verification to the host. This does not verify the content of source claims.
 
     Optional insight slots (relationship reports):
       regimes — [{label, start, end, r?, p?, n?, ...}] peri-break / regime stats
@@ -111,8 +184,10 @@ def write_inputs(
     `images` should be [{fileName, caption}, ...] matching files under DEFAULT_IMAGES_DIR.
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    inputs = dict(payload)
+    inputs = _resolve(dict(payload), model)
     inputs.pop("draftMarkdown", None)
+    if source_aliases is not None:
+        validate_source_references(inputs, aliases=source_aliases)
     Path(path).write_text(json.dumps(inputs, indent=2, default=str) + "\n", encoding="utf-8")
     return path
 
@@ -124,6 +199,8 @@ def write(
     *,
     title: str | None = None,
     inputs: Mapping[str, Any] | None = None,
+    model: Mapping[str, Any] | None = None,
+    source_aliases: Mapping[str, str] | None = None,
     markdown_path: str = DEFAULT_MARKDOWN_PATH,
     images_dir: str = DEFAULT_IMAGES_DIR,
     code_dir: str = DEFAULT_CODE_DIR,
@@ -163,7 +240,7 @@ def write(
             payload["title"] = title
         if image_meta and "images" not in payload:
             payload["images"] = image_meta
-        write_inputs(payload, path=inputs_path)
+        write_inputs(payload, path=inputs_path, model=model, source_aliases=source_aliases)
 
     markdown_file.parent.mkdir(parents=True, exist_ok=True)
     markdown_file.write_text((body.rstrip() + "\n") if body else "", encoding="utf-8")
