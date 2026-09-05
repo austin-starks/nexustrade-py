@@ -655,7 +655,11 @@ per_share = nt.finance.per_share_value(equity_value, diluted_shares)
 Other helpers cover CAPM cost of equity, WACC, probability-weighted values,
 margin of safety, invested capital, net investment, ROIC, incremental ROIC,
 reinvestment rate, EVA, and conventional IRR. Build one model object from these
-results and render every repeated report value from that object.
+results. For a compute report, pass that object with research findings, exact
+source identities, method requirements, and assumptions to
+`nexustrade.report.write(inputs=analysis_outputs, images=chart_files)`.
+The host Report Generator authors the report, and the same generated document
+is graded and delivered. Optional local Markdown exports are not report inputs.
 
 ## Lake SQL
 

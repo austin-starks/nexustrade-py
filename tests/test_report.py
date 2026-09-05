@@ -7,15 +7,15 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
-    def test_write_embeds_draft_markdown_in_canonical_inputs(self):
+    def test_local_markdown_does_not_enter_host_report_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)
             inputs_path = tmp_path / "report_inputs.json"
             markdown_path = tmp_path / "output.md"
 
             report.write(
-                "# Alphabet\n\nA source-backed investment conclusion.",
-                inputs={"title": "Alphabet", "statistics": {"irr": 0.12}},
+                "# Study\n\nAn obsolete conclusion.",
+                inputs={"title": "Study", "statistics": {"effect": 0.12}},
                 inputs_path=str(inputs_path),
                 markdown_path=str(markdown_path),
                 images_dir=str(tmp_path / "images"),
@@ -25,8 +25,34 @@ class ReportWriteTests(unittest.TestCase):
 
             payload = json.loads(inputs_path.read_text(encoding="utf-8"))
             markdown = markdown_path.read_text(encoding="utf-8")
-            self.assertEqual(payload["draftMarkdown"], markdown.strip())
-            self.assertEqual(payload["statistics"], {"irr": 0.12})
+            self.assertNotIn("draftMarkdown", payload)
+            self.assertIn("An obsolete conclusion.", markdown)
+            self.assertEqual(payload["statistics"], {"effect": 0.12})
+
+    def test_structured_refresh_does_not_resurrect_previous_markdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            markdown = root / "output.md"
+            markdown.write_text("# Stale\n\nOld result 900.")
+            report.write(
+                inputs={"statistics": {"effect": 7}, "draftMarkdown": "legacy prose"},
+                inputs_path=str(root / "report_inputs.json"),
+                markdown_path=str(markdown),
+                images_dir=str(root / "images"),
+                code_dir=str(root / "code"),
+                code_paths=[],
+            )
+            payload = json.loads((root / "report_inputs.json").read_text())
+            self.assertEqual(payload, {"statistics": {"effect": 7}})
+            self.assertNotIn("Old result", markdown.read_text())
+
+    def test_write_inputs_removes_legacy_prose_without_mutating_caller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = {"draftMarkdown": "legacy", "findings": [{"effect": 7}]}
+            target = Path(directory) / "inputs.json"
+            report.write_inputs(payload, path=str(target))
+            self.assertEqual(json.loads(target.read_text()), {"findings": [{"effect": 7}]})
+            self.assertEqual(payload["draftMarkdown"], "legacy")
 
     def test_write_inputs_does_not_require_a_draft(self):
         with tempfile.TemporaryDirectory() as directory:

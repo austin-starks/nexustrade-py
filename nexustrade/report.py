@@ -2,8 +2,8 @@
 
 Deep Research pattern:
 1. Compute stats + save plots in the sandbox
-2. Call `report.write(..., inputs={...})` with structured JSON and optional draft markdown
-3. The draft markdown is embedded in report_inputs.json and mirrored to output.md
+2. Call `report.write(inputs={...})` with structured research and calculation outputs
+3. report_inputs.json carries the evidence; optional local Markdown is not an authoring input
 4. `sandbox_finish(kind=\"report\")` — host calls NexusGenAI **Sandbox Report Generator**
    on report_inputs.json, embeds CDN images, appends code appendix, uploads PDF
 """
@@ -98,8 +98,8 @@ def write_inputs(
     Required-ish keys (all optional but recommended):
       title, request, sources, methodology, statistics, images, findings, caveats
 
-    `draftMarkdown` is reserved for `write(markdown=..., inputs=...)`, which keeps
-    the authored draft in the same canonical handoff graded and consumed by the host.
+    The host authors the report. Legacy `draftMarkdown` is discarded so stale
+    prose cannot replace structured research and calculation outputs.
 
     Optional insight slots (relationship reports):
       regimes — [{label, start, end, r?, p?, n?, ...}] peri-break / regime stats
@@ -111,7 +111,9 @@ def write_inputs(
     `images` should be [{fileName, caption}, ...] matching files under DEFAULT_IMAGES_DIR.
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(dict(payload), indent=2, default=str) + "\n", encoding="utf-8")
+    inputs = dict(payload)
+    inputs.pop("draftMarkdown", None)
+    Path(path).write_text(json.dumps(inputs, indent=2, default=str) + "\n", encoding="utf-8")
     return path
 
 
@@ -130,9 +132,10 @@ def write(
     """
     Materialize report artifacts for sandbox_finish(kind=\"report\").
 
-    Pass `inputs=` for structured facts. When `markdown` is also supplied, it is
-    embedded as `draftMarkdown` in the same canonical JSON consumed by grading and
-    the host Report Generator. output.md remains only a compatibility copy.
+    Pass `inputs=` for structured evidence, calculations, and research findings.
+    The host Report Generator authors the document that is graded and delivered.
+    Optional `markdown` is a local compatibility export only; it never enters
+    report_inputs.json and is never recovered from an earlier output.md.
     """
     _ensure_dirs(images_dir, code_dir)
 
@@ -143,12 +146,6 @@ def write(
 
     body = (markdown or "").strip()
     markdown_file = Path(markdown_path)
-    if not body and markdown_file.is_file():
-        # Structured report refreshes commonly update inputs/images after an
-        # operator has already authored a fallback. Omitting `markdown=` means
-        # "leave that fallback alone", never "erase it".
-        body = markdown_file.read_text(encoding="utf-8").strip()
-    has_authored_draft = bool(body)
     if not body and title:
         body = f"# {title.strip()}\n\n_Report will be authored by Sandbox Report Generator._\n"
     elif title and body and not body.lstrip().startswith("#"):
@@ -166,8 +163,6 @@ def write(
             payload["title"] = title
         if image_meta and "images" not in payload:
             payload["images"] = image_meta
-        if has_authored_draft:
-            payload["draftMarkdown"] = body
         write_inputs(payload, path=inputs_path)
 
     markdown_file.parent.mkdir(parents=True, exist_ok=True)
