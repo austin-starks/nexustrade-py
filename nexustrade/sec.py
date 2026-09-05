@@ -49,6 +49,14 @@ FACT_ROLES: tuple[FactRole, ...] = (
 _TICKER_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9.-]{0,14}$")
 _MAX_PERIODS = 40
 
+# The host may expose the same annual filing as both FY and a derived Q4 row.
+# These duration fields differ legitimately; its balance/ownership provenance does not.
+_STATEMENT_DURATION_FIELDS = frozenset({
+    "cadence", "fiscal_period", "period_start", "total_revenue", "gross_profit",
+    "operating_income", "net_income", "depreciation_and_amortization", "ebitda",
+    "operating_cash_flow", "capital_expenditures", "free_cash_flow", "derived_fields",
+})
+
 
 def _normalized_ticker(ticker: str) -> str:
     value = ticker.strip().upper() if isinstance(ticker, str) else ""
@@ -197,6 +205,77 @@ def statement(
     )
 
 
+def latest_statement(
+    *payloads: Mapping[str, Any], as_of: str,
+    required_fields: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Select the newest supplied statement snapshot available by a cutoff.
+
+    Combine annual and quarterly ``statement`` responses for one issuer/ticker.
+    Select period end first, then amendment availability; retain all provenance.
+    For matching FY/derived-Q4 views of one filing, return the annual view.
+    Required missing fields on the newest row raise instead of silently falling
+    back to an older annual balance. This does not adjust ownership claims or
+    mix balances from different dates, and cannot discover an unfetched filing.
+    """
+    if as_of is None:
+        raise ValueError("as_of is required")
+    day = dt.date.fromisoformat(_validated_as_of(as_of))
+    cutoff = dt.datetime.combine(day, dt.time.max, tzinfo=dt.timezone.utc)
+    if isinstance(required_fields, str) or not all(isinstance(k, str) and k for k in required_fields):
+        raise ValueError("required_fields must contain field names")
+    candidates: list[tuple[dt.date, dt.datetime, Mapping[str, Any]]] = []
+    identities: set[tuple[str, str]] = set()
+    for payload in payloads:
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            raise ValueError("latest_statement requires statement responses with rows")
+        for row in rows:
+            if not isinstance(row, Mapping) or not row.get("cik") or not isinstance(row.get("ticker"), str):
+                raise ValueError("statement row requires issuer and ticker identity")
+            identities.add((str(row["cik"]), row["ticker"]))
+            period_end = _validated_as_of(row.get("period_end"))
+            available_at = row.get("available_at")
+            if period_end is None or not isinstance(available_at, str):
+                raise ValueError("statement row requires period_end and available_at")
+            try:
+                available = dt.datetime.fromisoformat(available_at.replace("Z", "+00:00"))
+            except ValueError as error:
+                raise ValueError("invalid statement available_at") from error
+            if available.tzinfo is None:
+                raise ValueError("statement available_at must include its timezone")
+            period = dt.date.fromisoformat(period_end)
+            if period <= day and available <= cutoff:
+                candidates.append((period, available, row))
+    if len(identities) > 1:
+        raise ValueError("latest_statement cannot combine different issuer/ticker identities")
+    if not candidates:
+        raise ValueError("no supplied statement was available by as_of")
+    newest = max((period, available) for period, available, _ in candidates)
+    selected = [row for period, available, row in candidates if (period, available) == newest]
+    if any(row != selected[0] for row in selected[1:]):
+        by_cadence: dict[str, Mapping[str, Any]] = {}
+        for candidate in selected:
+            cadence = candidate.get("cadence")
+            if cadence not in ("annual", "quarterly") or (
+                cadence in by_cadence and candidate != by_cadence[cadence]
+            ):
+                raise ValueError("conflicting latest statements; resolve the filing evidence")
+            by_cadence[cadence] = candidate
+        snapshots = [{k: v for k, v in candidate.items() if k not in _STATEMENT_DURATION_FIELDS}
+                     for candidate in by_cadence.values()]
+        if (set(by_cadence) != {"annual", "quarterly"} or not selected[0].get("accession") or
+            any(snapshot != snapshots[0] for snapshot in snapshots[1:])):
+            raise ValueError("conflicting latest statements; resolve the filing evidence")
+        selected = [by_cadence["annual"]]
+    row = selected[0]
+    for key in required_fields:
+        value = row.get(key)
+        if value is None or value == "" or isinstance(value, (float, int)) and not math.isfinite(value):
+            raise ValueError(f"latest statement is missing required field: {key}; reconcile the current filing")
+    return deepcopy(dict(row))
+
+
 def fact_candidates(
     *,
     ticker: str,
@@ -237,6 +316,7 @@ __all__ = [
     "FACT_ROLES",
     "FactRole",
     "fact_candidates",
+    "latest_statement",
     "resolved_fact",
     "statement",
 ]

@@ -14,6 +14,51 @@ from nexustrade import host
 
 
 class SecSdkTests(unittest.TestCase):
+    def test_latest_statement_uses_current_period_and_available_amendment(self) -> None:
+        annual = dict(cik=999997, ticker="SYNTHETIC", period_end="2023-12-31",
+                      available_at="2024-02-01T12:00:00Z", cash=80, accession="annual")
+        interim = dict(annual, period_end="2024-03-31", available_at="2024-05-01T12:00:00Z",
+                       cash=100, accession="interim", shares_outstanding_class="ordinary",
+                       shares_outstanding_as_of="2024-03-31")
+        amended = dict(interim, available_at="2024-06-01T12:00:00Z", cash=105, accession="amended")
+        # A later-published amendment of an older period is not a newer snapshot.
+        old_amended = dict(annual, available_at="2024-06-10T12:00:00Z", cash=85)
+        payloads = [{"rows": [old_amended, annual]}, {"rows": [amended, interim]}]
+        selected = nt.sec.latest_statement(*payloads, as_of="2024-05-15", required_fields=["cash"])
+        self.assertEqual(selected["cash"], 100)
+        self.assertEqual(selected["shares_outstanding_as_of"], "2024-03-31")
+        self.assertEqual(nt.sec.latest_statement(*payloads, as_of="2024-06-15")["cash"], 105)
+        selected["cash"] = 999
+        self.assertEqual(interim["cash"], 100)
+        self.assertEqual(nt.sec.latest_statement(*payloads, as_of="2024-04-01")["cash"], 80)
+
+    def test_latest_statement_rejects_missing_current_values_conflicts_and_mixed_issuers(self) -> None:
+        row = dict(cik=999997, ticker="SYNTHETIC", period_end="2024-03-31",
+                   available_at="2024-05-01T12:00:00Z", cash=None)
+        older = dict(row, period_end="2023-12-31", cash=10)
+        with self.assertRaisesRegex(ValueError, "missing required field"):
+            nt.sec.latest_statement({"rows": [row, older]}, as_of="2024-06-01", required_fields=["cash"])
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            nt.sec.latest_statement({"rows": [row, dict(row, cash=12)]}, as_of="2024-06-01")
+        with self.assertRaisesRegex(ValueError, "different issuer"):
+            nt.sec.latest_statement({"rows": [row, dict(row, cik=999998)]}, as_of="2024-06-01")
+        with self.assertRaisesRegex(ValueError, "no supplied statement"):
+            nt.sec.latest_statement({"rows": [row]}, as_of="2024-04-01")
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            nt.sec.latest_statement({"rows": [dict(row, available_at="2024-05-01T12:00:00")]}, as_of="2024-06-01")
+        self.assertEqual(nt.sec.latest_statement({"rows": [row, deepcopy(row)]}, as_of="2024-06-01"), row)
+
+    def test_latest_statement_resolves_annual_and_derived_q4_views_of_the_same_filing(self) -> None:
+        annual = dict(cik=999997, ticker="SYNTHETIC", accession="same-filing", cadence="annual",
+                      period_end="2023-12-31", available_at="2024-02-01T12:00:00Z", cash=80,
+                      period_start="2023-01-01", fiscal_period="FY", total_revenue=400)
+        q4 = dict(annual, cadence="quarterly", period_start="2023-10-01", fiscal_period="Q4", total_revenue=110)
+        self.assertEqual(nt.sec.latest_statement({"rows": [q4]}, {"rows": [annual]}, as_of="2024-03-01"), annual)
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            nt.sec.latest_statement({"rows": [annual, dict(q4, cash=90)]}, as_of="2024-03-01")
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            nt.sec.latest_statement({"rows": [annual, dict(annual, total_revenue=999), q4]}, as_of="2024-03-01")
+
     def test_resolved_facts_preserve_provenance_and_refuse_incomplete_values(self) -> None:
         identity = dict(role='depreciation_and_amortization', period_end='2024-06-30', accession='synthetic-A')
         row = {**identity, 'status': 'components', 'confidence': 'derived_from_complete_components',

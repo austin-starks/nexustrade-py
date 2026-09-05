@@ -921,6 +921,12 @@ The compute helpers keep evidence and arithmetic separate from investment judgme
 
 - `nt.sec.resolved_fact(...)` selects a complete fact reconciliation with its
   filing provenance. Partial, ambiguous, and cumulative inputs remain unresolved.
+- `nt.sec.latest_statement(annual, quarterly, as_of="2026-06-30",
+  required_fields=["cash", "long_term_debt"])` selects the latest supplied period
+  and publicly available amendment, retaining filing and share provenance. A
+  missing current field raises instead of falling back to an older balance.
+  Fetch both cadences first; this helper cannot discover an unfetched filing.
+  Matching annual/derived-Q4 views of one filing resolve to the annual row.
 - `nt.finance.operating_forecast_period(...)` calculates FCFF and rolls invested
   capital from the same operating inputs. Equity compensation stays expensed;
   additional cash investment and noncash capital changes are separate.
