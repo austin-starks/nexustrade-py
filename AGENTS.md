@@ -392,3 +392,10 @@ If you are editing this repository rather than consuming it:
 ```bash
 PYTHONPATH=. python3 -m unittest discover -s tests -t .
 ```
+
+For valuations inside a fiscal year, use only cash flows remaining after the
+valuation date. The finance PV, enterprise-value, FCFF-case and IRR helpers accept
+`valuation_date` and `cash_flow_dates` (ISO dates, future payments only, Actual/365).
+Discount terminal value on the final payment date. Reconcile first-period revenue,
+profit, capex and cash-flow assumptions to available actuals with
+`forecast_remainder`; a revenue-only check does not validate capital spending.

@@ -938,6 +938,12 @@ The compute helpers keep evidence and arithmetic separate from investment judgme
 - `nt.finance.fcff_valuation_case(..., terminal_value=...)` accepts an end-of-forecast
   terminal enterprise value, including the NOPAT/RONIC helper's output. Supply
   either this value or `perpetual_growth_rate`, never both.
+- Dated DCF/IRR: `present_value_cash_flows`, `enterprise_value_from_fcff`,
+  `fcff_valuation_case` and `internal_rate_of_return` accept `valuation_date`
+  and `cash_flow_dates` as ISO calendar dates. Dates cover future payments only
+  (exclude IRR's initial outlay), use Actual/365, and place terminal value at the
+  last payment. Supply remaining-period amounts, excluding elapsed cash flows;
+  the helper cannot infer the current-year stub from a full-year forecast.
 - `nt.finance.forecast_remainder(...)` exposes the remaining-period forecast
   implied by actuals to date. Align additive flows, fiscal periods and units.
 - `report.ref("scenarios", "base", "per_share_value")` binds a structured finding

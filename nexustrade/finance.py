@@ -10,8 +10,32 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from datetime import date
 
 Number = int | float
+
+
+def _flow_periods(
+    count: int, valuation_date: str | None, cash_flow_dates: Sequence[str] | None,
+) -> list[float]:
+    """Return annual exponents; dated flows use Actual/365 from valuation."""
+    if valuation_date is None and cash_flow_dates is None:
+        return [float(i) for i in range(1, count + 1)]
+    if valuation_date is None or cash_flow_dates is None:
+        raise ValueError("supply valuation_date and cash_flow_dates together")
+    if isinstance(cash_flow_dates, (str, bytes)) or len(cash_flow_dates) != count:
+        raise ValueError("cash_flow_dates must align one-to-one with cash flows")
+    try:
+        start = date.fromisoformat(valuation_date)
+        dates = [date.fromisoformat(value) for value in cash_flow_dates]
+    except (TypeError, ValueError) as error:
+        raise ValueError("valuation and cash-flow dates must be ISO calendar dates") from error
+    previous = start
+    for payment in dates:
+        if payment <= previous:
+            raise ValueError("cash_flow_dates must increase strictly after valuation_date")
+        previous = payment
+    return [(payment - start).days / 365.0 for payment in dates]
 
 
 def _finite(name: str, value: Number) -> float:
@@ -184,16 +208,25 @@ def wacc(
 def present_value_cash_flows(
     cash_flows: Sequence[Number],
     discount_rate: Number,
+    *,
+    valuation_date: str | None = None,
+    cash_flow_dates: Sequence[str] | None = None,
 ) -> float:
-    """Discount period-1-through-period-N cash flows to time zero."""
+    """Discount future cash flows; optional dates use Actual/365 annual rates.
+
+    Dated amounts must contain only cash flows remaining after valuation. This
+    helper does not infer or subtract elapsed cash flows from full-year totals.
+    Without dates, preserve the period-1-through-period-N convention.
+    """
     rate = _rate("discount_rate", discount_rate)
     values = [
         _finite(f"cash_flows[{index}]", value)
         for index, value in enumerate(cash_flows)
     ]
+    periods = _flow_periods(len(values), valuation_date, cash_flow_dates)
     return sum(
         value / (1.0 + rate) ** period
-        for period, value in enumerate(values, start=1)
+        for period, value in zip(periods, values)
     )
 
 
@@ -215,6 +248,9 @@ def enterprise_value_from_fcff(
     forecast_fcff: Sequence[Number],
     discount_rate: Number,
     terminal_value: Number,
+    *,
+    valuation_date: str | None = None,
+    cash_flow_dates: Sequence[str] | None = None,
 ) -> float:
     """Return time-zero enterprise value from forecast FCFF and terminal value."""
     rate = _rate("discount_rate", discount_rate)
@@ -224,9 +260,11 @@ def enterprise_value_from_fcff(
     ]
     if not values:
         raise ValueError("forecast_fcff must contain at least one period")
-    return present_value_cash_flows(values, rate) + _finite(
+    periods = _flow_periods(len(values), valuation_date, cash_flow_dates)
+    return present_value_cash_flows(values, rate, valuation_date=valuation_date,
+                                   cash_flow_dates=cash_flow_dates) + _finite(
         "terminal_value", terminal_value
-    ) / (1.0 + rate) ** len(values)
+    ) / (1.0 + rate) ** periods[-1]
 
 
 def enterprise_to_equity_value(
@@ -407,8 +445,15 @@ def gordon_growth_terminal_value_from_nopat(
     }
 
 
-def internal_rate_of_return(cash_flows: Sequence[Number]) -> float:
-    """Solve a unique IRR for initial outflows followed only by inflows or zeros."""
+def internal_rate_of_return(
+    cash_flows: Sequence[Number], *, valuation_date: str | None = None,
+    cash_flow_dates: Sequence[str] | None = None,
+) -> float:
+    """Solve conventional IRR; optional dates describe flows AFTER initial outlay.
+
+    The initial outlay occurs on valuation_date. Supply len(cash_flows)-1 future
+    dates, using the same dates as the valuation. Annualization is Actual/365.
+    """
     values = [
         _finite(f"cash_flows[{index}]", value)
         for index, value in enumerate(cash_flows)
@@ -428,10 +473,12 @@ def internal_rate_of_return(cash_flows: Sequence[Number]) -> float:
             "non-negative flows"
         )
 
+    periods = [0.0, *_flow_periods(len(values) - 1, valuation_date, cash_flow_dates)]
+
     def npv(rate: float) -> float:
         return sum(
             value / (1.0 + rate) ** period
-            for period, value in enumerate(values)
+            for period, value in zip(periods, values)
         )
 
     low = -0.999999999
@@ -520,13 +567,17 @@ def fcff_valuation_case(
     diluted_shares: Number,
     other_senior_claims: Number = 0.0,
     market_price: Number | None = None,
+    valuation_date: str | None = None,
+    cash_flow_dates: Sequence[str] | None = None,
 ) -> dict[str, float]:
     """Value FCFF with either perpetual growth or an explicit terminal EV.
 
     ``terminal_value`` is undiscounted enterprise value at the end of the final
     forecast period, including values from gordon_growth_terminal_value_from_nopat.
     Supply exactly one terminal construction. Existing growth-only calls retain
-    their behavior.
+    their behavior. Growth-based terminal value requires a normalized full-year
+    final FCFF; if the last flow is a stub, supply a separately modeled explicit
+    terminal_value instead of growing the stub into a perpetuity.
     """
     values = [
         _finite(f"forecast_fcff[{index}]", value)
@@ -541,7 +592,9 @@ def fcff_valuation_case(
         if terminal_value is not None
         else gordon_growth_terminal_value(values[-1], discount_rate, perpetual_growth_rate)
     )
-    enterprise = enterprise_value_from_fcff(values, discount_rate, terminal)
+    enterprise = enterprise_value_from_fcff(values, discount_rate, terminal,
+                                          valuation_date=valuation_date,
+                                          cash_flow_dates=cash_flow_dates)
     equity = enterprise_to_equity_value(
         enterprise,
         cash_and_non_operating_assets,

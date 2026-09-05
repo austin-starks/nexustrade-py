@@ -6,6 +6,42 @@ import nexustrade as nt
 
 
 class FinanceSdkTests(unittest.TestCase):
+    def test_dated_valuation_and_irr_share_the_remaining_cash_flow_timeline(self) -> None:
+        # A midyear valuation: only the remaining 30 is future cash, not the
+        # full-year 100 that includes 70 already earned before the valuation.
+        remainder = nt.finance.forecast_remainder(100, 70)['remaining_forecast']
+        dates = ['2027-12-31', '2028-12-31']
+        timing = dict(valuation_date='2027-06-30', cash_flow_dates=dates)
+        terminal = 500
+        expected = 30 / 1.1**(184/365) + 620 / 1.1**(550/365)
+        result = nt.finance.fcff_valuation_case(
+            forecast_fcff=[remainder, 120], discount_rate=0.1,
+            terminal_value=terminal, cash_and_non_operating_assets=40,
+            debt_and_debt_like_liabilities=20, diluted_shares=10, **timing,
+        )
+        self.assertAlmostEqual(result['enterprise_value'], expected)
+        self.assertAlmostEqual(result['per_share_value'], (expected + 20)/10)
+        self.assertAlmostEqual(nt.finance.internal_rate_of_return(
+            [-expected, remainder, 620], **timing), 0.1)
+        self.assertNotAlmostEqual(expected, nt.finance.enterprise_value_from_fcff(
+            [100, 120], 0.1, terminal))
+
+    def test_dated_cash_flows_reject_elapsed_misaligned_and_ambiguous_dates(self) -> None:
+        for timing in (
+            dict(valuation_date='2027-06-30'),
+            dict(cash_flow_dates=['2027-12-31']),
+            dict(valuation_date='2027-06-30', cash_flow_dates=[]),
+            dict(valuation_date='2027-06-30', cash_flow_dates=['2027-06-30']),
+            dict(valuation_date='2027-06-30', cash_flow_dates=['2026-12-31']),
+            dict(valuation_date='2027-06-30', cash_flow_dates=['bad-date']),
+        ):
+            with self.subTest(timing=timing), self.assertRaises(ValueError):
+                nt.finance.present_value_cash_flows([10], 0.1, **timing)
+        for dates in (['2028-12-31', '2027-12-31'], ['2027-12-31'] * 2):
+            with self.assertRaises(ValueError):
+                nt.finance.internal_rate_of_return([-100, 60, 60],
+                    valuation_date='2027-06-30', cash_flow_dates=dates)
+
     def test_composed_forecast_preserves_expenses_and_terminal_timing(self) -> None:
         p = nt.finance.operating_forecast_period(
             operating_income=90, tax_rate=0.2, depreciation_and_amortization=15,
