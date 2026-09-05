@@ -32,6 +32,25 @@ class _WebTextParser(HTMLParser):
     _HIDDEN = frozenset(
         {"script", "style", "noscript", "svg", "template", "footer", "nav"}
     )
+    _VOID = frozenset(
+        {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+         "meta", "param", "source", "track", "wbr"}
+    )
+
+    @staticmethod
+    def _display_none(style: str) -> bool:
+        display = ""
+        important = False
+        for declaration in style.split(";"):
+            name, separator, value = declaration.partition(":")
+            if not separator or name.strip().lower() != "display":
+                continue
+            priority = re.search(r"!\s*important\s*$", value, re.IGNORECASE)
+            if important and not priority:
+                continue
+            important = priority is not None
+            display = value[:priority.start()] if priority else value
+        return display.strip().lower() == "none"
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -51,6 +70,7 @@ class _WebTextParser(HTMLParser):
         }
         self.meta: dict[str, str] = {}
         self.time_hint: str | None = None
+        self.elements: list[tuple[str, bool]] = []
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -67,9 +87,17 @@ class _WebTextParser(HTMLParser):
                 self.meta[key] = attributes["content"]
         elif tag == "time" and self.time_hint is None:
             self.time_hint = attributes.get("datetime")
-        if tag in self._HIDDEN:
+        if tag in self._VOID:
+            return
+        hidden = (
+            tag in self._HIDDEN
+            or any(name.lower() == "hidden" for name, _ in attrs)
+            or self._display_none(attributes.get("style", ""))
+        )
+        self.elements.append((tag, hidden))
+        if hidden:
             self.depth["hidden"] += 1
-        if tag in self.depth:
+        if tag in self.parts or tag == "header":
             self.depth[tag] += 1
 
     def handle_startendtag(
@@ -80,10 +108,16 @@ class _WebTextParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        if tag in self._HIDDEN and self.depth["hidden"] > 0:
-            self.depth["hidden"] -= 1
-        if tag in self.depth and self.depth[tag] > 0:
-            self.depth[tag] -= 1
+        for index in range(len(self.elements) - 1, -1, -1):
+            if self.elements[index][0] == tag:
+                # Tolerate omitted child closing tags without leaking hidden state.
+                for closed_tag, hidden in self.elements[index:]:
+                    if hidden:
+                        self.depth["hidden"] -= 1
+                    if closed_tag in self.parts or closed_tag == "header":
+                        self.depth[closed_tag] -= 1
+                del self.elements[index:]
+                break
 
     def handle_data(self, data: str) -> None:
         if self.depth["hidden"] > 0:

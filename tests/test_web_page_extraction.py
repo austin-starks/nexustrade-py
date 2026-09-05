@@ -114,6 +114,57 @@ class WebPageExtractionTests(unittest.TestCase):
         self.assertNotIn("Global account links", page["visible_text"])
         self.assertNotIn("Cookie preferences", page["visible_text"])
 
+    def test_hidden_metadata_does_not_displace_table_from_text_budget(self) -> None:
+        html = (
+            "<html><body><div style='display: none'>"
+            + "machine context metadata " * 200
+            + "</div><table><tr><th>Reservoir</th><th>Capacity</th></tr>"
+            + "<tr><td>North</td><td>81 percent</td></tr></table>"
+            + "<p>Ordinary explanatory appendix. </p>" * 100
+            + "</body></html>"
+        )
+        with mock.patch(
+            "nexustrade.host.gateway_chat_json", side_effect=self._response
+        ) as chat:
+            scanned_table.extract_web_pages(
+                {"capacity": html},
+                instructions="Extract the reported reservoir capacity.",
+                schema=SCHEMA,
+                max_chars_per_document=400,
+                max_workers=1,
+            )
+        page = json.loads(chat.call_args.kwargs["prompt"])["documents"][0]
+        self.assertIn("North 81 percent", page["visible_text"])
+        self.assertNotIn("machine context metadata", page["visible_text"])
+
+    def test_nested_hidden_elements_and_void_tags_do_not_hide_later_content(self) -> None:
+        html = """<html><body><main>
+          <div style="DISPLAY : none !important; color: red">
+            <div>private layout copy</div><br><img src="unused">more hidden text
+          </div>
+          <div hidden><span>collapsed content</span></div>
+          <div hidden="">empty hidden attribute</div>
+          <input hidden><p>Visible table follows.</p>
+          <div aria-hidden="true">Visually present text</div>
+          <div style="display: block">Visible nested <span>value</span></div>
+          <div style="display:none; display:block">Restored display</div>
+          <div style="display:none!important;display:block">Still hidden</div>
+          <div style="display:none;display:grid !important">Visible grid</div>
+        </main></body></html>"""
+        with mock.patch(
+            "nexustrade.host.gateway_chat_json", side_effect=self._response
+        ) as chat:
+            scanned_table.extract_web_pages(
+                {"notice": html}, instructions="Extract visible content.",
+                schema=SCHEMA, max_workers=1,
+            )
+        page = json.loads(chat.call_args.kwargs["prompt"])["documents"][0]
+        self.assertEqual(
+            page["visible_text"],
+            "Visible table follows. Visually present text Visible nested value "
+            "Restored display Visible grid",
+        )
+
     def test_reads_successful_host_fetch_receipt(self) -> None:
         receipt = {
             "id": "safety-bulletin",
