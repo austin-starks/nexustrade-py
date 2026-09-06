@@ -7,6 +7,54 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_optional_reference_map_refreshes_value_and_provenance_together(self):
+        model = {'facts': {'flow': {'value': 12, 'sourceId': 'fetch:one', 'status': 'derived',
+                                   'definition': 'FCFF', 'period_end': '2027-12-31'}}}
+        payload = {'statistics': {'fcff': report.ref('facts', 'flow', 'value', provenance_path=('facts', 'flow'))}}
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            for value, source in ((12, 'fetch:one'), (18, 'fetch:two')):
+                model['facts']['flow'].update(value=value, sourceId=source)
+                report.write_inputs(payload, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+                data = json.loads(target.read_text())
+                self.assertEqual(data['statistics']['fcff'], value)
+                self.assertEqual(data['modelReferences'], [{
+                    'inputPath': ['statistics', 'fcff'], 'modelPath': ['facts', 'flow', 'value'],
+                    'modelSource': '/work/out/model.json', 'provenancePath': ['facts', 'flow'],
+                    'provenance': model['facts']['flow'],
+                }])
+            original = target.read_bytes()
+            with self.assertRaises(ValueError):
+                report.write_inputs({'x': report.ref('facts', 'flow', 'value', provenance_path=('absent',))},
+                                    model=model, preserve_references=True, path=str(target))
+            self.assertEqual(target.read_bytes(), original)
+            with self.assertRaises(ValueError):
+                report.write_inputs({'modelReferences': []}, preserve_references=True, path=str(target))
+            report.write_inputs(payload, model=model, path=str(target))
+            self.assertNotIn('modelReferences', json.loads(target.read_text()))
+            report.write(inputs=payload, model=model, preserve_references=True,
+                         model_source='/work/out/model.json', inputs_path=str(target),
+                         markdown_path=str(Path(directory) / 'output.md'),
+                         images_dir=str(Path(directory) / 'images'),
+                         code_dir=str(Path(directory) / 'code'), code_paths=[])
+            self.assertEqual(json.loads(target.read_text())['modelReferences'][0]['modelSource'],
+                             '/work/out/model.json')
+
+    def test_reference_metadata_must_be_an_object_and_cannot_reintroduce_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = str(Path(directory) / 'inputs.json')
+            for metadata in (None, 7, ['not', 'metadata']):
+                with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                    report.write_inputs({'x': report.ref('value', provenance_path=('metadata',))},
+                                        model={'value': 2, 'metadata': metadata},
+                                        preserve_references=True, path=target)
+            report.write_inputs({'draftMarkdown': report.ref('missing'), 'values': [report.ref('value')]},
+                                model={'value': 2}, preserve_references=True, path=target)
+            output = json.loads(Path(target).read_text())
+            self.assertNotIn('draftMarkdown', output)
+            self.assertEqual(output['modelReferences'], [{'inputPath': ['values', 0], 'modelPath': ['value']}])
+
     def test_current_model_drives_repeated_values_and_sources(self):
         model = {'case': {'value': 72}, 'sources': [{'id': 'filing', 'url': 'https://example.test/filing'}]}
         payload = {'statistics': report.ref('case'),

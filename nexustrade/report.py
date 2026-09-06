@@ -91,23 +91,33 @@ def _save_image(
 @dataclass(frozen=True)
 class _ModelReference:
     path: tuple[str | int, ...]
+    provenance_path: tuple[str | int, ...] | None = None
 
 
-def ref(*path: str | int) -> _ModelReference:
+def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) -> _ModelReference:
     """Reference a model field in structured findings, tables, or source records.
 
     Example: ref('scenarios', 'base', 'per_share'). Pass the current model to
     write(inputs=..., model=...). References resolve at write time; the host gets
-    ordinary JSON, never templates or OpenCode-authored report prose.
+    ordinary JSON, never templates or OpenCode-authored report prose. Optional
+    provenance_path points to current model metadata (source IDs, status, dates,
+    definition). With preserve_references=True it survives in modelReferences.
     """
     if not path or any(isinstance(p, bool) or not isinstance(p, (str, int)) for p in path):
         raise ValueError("model reference requires string keys or nonnegative list indices")
     if any(isinstance(p, int) and p < 0 for p in path):
         raise ValueError("model reference indices must be nonnegative")
-    return _ModelReference(path)
+    metadata_path = None
+    if provenance_path is not None:
+        if isinstance(provenance_path, (str, bytes)):
+            raise ValueError("provenance_path must be a sequence of model keys")
+        metadata_path = ref(*provenance_path).path
+    return _ModelReference(path, metadata_path)
 
 
-def _resolve(value: Any, model: Mapping[str, Any] | None) -> Any:
+def _resolve(value: Any, model: Mapping[str, Any] | None, *,
+             references: list[dict[str, Any]] | None = None,
+             input_path: tuple[str | int, ...] = (), model_source: str | None = None) -> Any:
     if isinstance(value, _ModelReference):
         if model is None:
             raise ValueError("model references require a plain model object")
@@ -120,11 +130,26 @@ def _resolve(value: Any, model: Mapping[str, Any] | None) -> Any:
             else:
                 raise ValueError(f"unresolved model reference: {value.path!r}")
         # The model contains data, not another template/reference graph.
-        return _resolve(target, None)
+        resolved = _resolve(target, None)
+        if references is not None:
+            record: dict[str, Any] = {"inputPath": list(input_path), "modelPath": list(value.path)}
+            if model_source is not None:
+                record["modelSource"] = model_source
+            if value.provenance_path is not None:
+                provenance = _resolve(_ModelReference(value.provenance_path), model)
+                if not isinstance(provenance, Mapping):
+                    raise ValueError("provenance_path must resolve to a metadata object")
+                record.update(provenancePath=list(value.provenance_path), provenance=provenance)
+            references.append(record)
+        return resolved
     if isinstance(value, Mapping):
-        return {key: _resolve(item, model) for key, item in value.items()}
+        return {key: _resolve(item, model, references=references,
+                             input_path=(*input_path, key), model_source=model_source)
+                for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_resolve(item, model) for item in value]
+        return [_resolve(item, model, references=references,
+                         input_path=(*input_path, index), model_source=model_source)
+                for index, item in enumerate(value)]
     return value
 
 
@@ -160,6 +185,8 @@ def write_inputs(
     path: str = DEFAULT_INPUTS_PATH,
     model: Mapping[str, Any] | None = None,
     source_aliases: Mapping[str, str] | None = None,
+    preserve_references: bool = False,
+    model_source: str | None = None,
 ) -> str:
     """
     Write structured report inputs for the host-side Sandbox Report Generator prompt.
@@ -173,6 +200,12 @@ def write_inputs(
     maps durable fetch IDs to bibliography IDs and validates explicit linkage;
     {} checks an intentionally shared namespace. Legacy calls leave receipt
     verification to the host. This does not verify the content of source claims.
+    preserve_references adds modelReferences linking output paths to current model
+    paths and optional provenance objects. Supply model_source with the actual
+    model artifact path when file-backed; without it paths refer only to this
+    in-memory model argument. The map is executor-declared lineage, never proof
+    of source authority. A supplied modelReferences map cannot replace fresh
+    references in this mode.
 
     Optional insight slots (relationship reports):
       regimes — [{label, start, end, r?, p?, n?, ...}] peri-break / regime stats
@@ -184,8 +217,16 @@ def write_inputs(
     `images` should be [{fileName, caption}, ...] matching files under DEFAULT_IMAGES_DIR.
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    inputs = _resolve(dict(payload), model)
-    inputs.pop("draftMarkdown", None)
+    if model_source is not None and (not isinstance(model_source, str) or not model_source.strip()):
+        raise ValueError("model_source must be a nonempty artifact path")
+    if preserve_references and "modelReferences" in payload:
+        raise ValueError("modelReferences is generated from current references; remove the supplied map")
+    structured = dict(payload)
+    structured.pop("draftMarkdown", None)
+    references: list[dict[str, Any]] | None = [] if preserve_references else None
+    inputs = _resolve(structured, model, references=references, model_source=model_source)
+    if references is not None:
+        inputs["modelReferences"] = references
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)
     Path(path).write_text(json.dumps(inputs, indent=2, default=str) + "\n", encoding="utf-8")
@@ -201,6 +242,8 @@ def write(
     inputs: Mapping[str, Any] | None = None,
     model: Mapping[str, Any] | None = None,
     source_aliases: Mapping[str, str] | None = None,
+    preserve_references: bool = False,
+    model_source: str | None = None,
     markdown_path: str = DEFAULT_MARKDOWN_PATH,
     images_dir: str = DEFAULT_IMAGES_DIR,
     code_dir: str = DEFAULT_CODE_DIR,
@@ -240,7 +283,8 @@ def write(
             payload["title"] = title
         if image_meta and "images" not in payload:
             payload["images"] = image_meta
-        write_inputs(payload, path=inputs_path, model=model, source_aliases=source_aliases)
+        write_inputs(payload, path=inputs_path, model=model, source_aliases=source_aliases,
+                     preserve_references=preserve_references, model_source=model_source)
 
     markdown_file.parent.mkdir(parents=True, exist_ok=True)
     markdown_file.write_text((body.rstrip() + "\n") if body else "", encoding="utf-8")

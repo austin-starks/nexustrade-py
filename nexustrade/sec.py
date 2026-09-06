@@ -149,6 +149,10 @@ def resolved_fact(
     components or infer absence from a normalized statement null. Incomplete,
     cumulative and ambiguous rows fail with their status so the caller can inspect
     the original evidence and exact filing; they never become numeric zero.
+    Keep the returned object in the model, not only its value. A report.ref to
+    its value with provenance_path pointing to the whole object can preserve the
+    selected candidate IDs, filing identity and resolution status in the report
+    handoff. This does not establish a new accounting definition or period.
     """
     if role not in FACT_ROLES:
         raise ValueError(f"unsupported SEC fact role: {role!r}")

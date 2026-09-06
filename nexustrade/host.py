@@ -1468,6 +1468,7 @@ def search(
     request_id: str | None = None,
     prefer_machine_readable: bool = True,
     _exit: bool = True,
+    allow_broker_fallback: bool = True,
 ) -> dict[str, Any]:
     """Discover candidate URLs. Blocks and returns on the call via the gateway;
     falls back to the host broker (queue + exit + re-run) when none is present.
@@ -1485,6 +1486,10 @@ def search(
     request_id only when you need a stable alias; never use time/uuid/loop index.
 
     Returns the host `data` payload: {"candidates": [...], "query": "...", ...}.
+    Parallel investigators should set allow_broker_fallback=False: if gateway
+    work is still pending or unavailable, raise without replacing the shared
+    broker queue or exiting the process. Return that unresolved query to the
+    primary executor. Successful calls still append shared durable result rows.
     """
     q = query.strip() if isinstance(query, str) else ""
     if not q:
@@ -1500,6 +1505,11 @@ def search(
             _record_host_result({"id": rid, "ok": True, "data": gateway})
             return gateway
     if result is None:
+        if not allow_broker_fallback:
+            raise RuntimeError(
+                f"search({q!r}) is pending or the gateway is unavailable; broker fallback disabled. "
+                "Return the unresolved query to the primary executor; do not infer source absence."
+            )
         queue_search(rid, q, prefer_machine_readable=prefer_machine_readable)
         flush_requests()
         if _exit:

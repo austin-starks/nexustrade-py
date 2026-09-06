@@ -924,6 +924,12 @@ agent needs to write correct NexusTrade strategies on the first pass.
 
 The compute helpers keep evidence and arithmetic separate from investment judgment:
 
+Native research investigators may call `host.search(query,
+allow_broker_fallback=False)`. Pending or unavailable gateway work then raises
+explicitly without replacing the primary executor's broker queue or exiting.
+Return the unresolved query to the primary executor; it is not source absence.
+Successful research calls still append shared durable receipt/cache rows.
+
 - `nt.sec.resolved_fact(...)` selects a complete fact reconciliation with its
   filing provenance. Partial, ambiguous, and cumulative inputs remain unresolved.
 - `nt.sec.latest_statement(annual, quarterly, as_of="2026-06-30",
@@ -946,6 +952,12 @@ The compute helpers keep evidence and arithmetic separate from investment judgme
   the helper cannot infer the current-year stub from a full-year forecast.
 - `nt.finance.forecast_remainder(...)` exposes the remaining-period forecast
   implied by actuals to date. Align additive flows, fiscal periods and units.
+- Optional `period_flow(...)` and `remaining_period_flow(...)` retain inclusive
+  operating dates, information cutoff, units, accounting definition, and declared
+  provenance. The composer rejects overlaps and incompatible definitions/units.
+  An uncovered elapsed interval or missing amount returns `value=None`, never an
+  automatic proration. A model estimate can fill an interval explicitly; its
+  provenance stays attached. The raw numeric primitives remain available.
 - `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
   to the current model when `report.write(inputs=inputs, model=model)` runs.
   The host authors report prose from the resulting JSON.
@@ -954,6 +966,48 @@ For explicit citation linkage, pass `source_aliases={fetch_id: bibliography_id}`
 to `report.write` (or `{}` when the namespaces intentionally match). This checks
 references without rewriting durable fetch IDs. The host still verifies excerpts
 against fetched bodies; a valid reference does not prove a claim is supported.
+
+For example, a September valuation cannot subtract only first-half operations
+from a full-year flow and value the entire second half as future cash:
+
+```python
+from nexustrade import finance, report
+
+basis = dict(as_of="2027-09-04", unit="USD billions",
+             definition="NOPAT plus D&A less capex less change in operating NWC")
+annual = finance.period_flow(100, period_start="2027-01-01", period_end="2027-12-31",
+                             status="forecast", **basis)
+h1 = finance.period_flow(60, period_start="2027-01-01", period_end="2027-06-30",
+                         status="derived", provenance={"sourceId": "filing-h1"}, **basis)
+remaining = finance.remaining_period_flow(annual, [h1], valuation_date="2027-09-04")
+assert remaining["value"] is None
+assert remaining["missing_intervals"] == [
+    {"period_start": "2027-07-01", "period_end": "2027-09-04"}
+]
+# Obtain or explicitly model that interval on the same accounting basis before
+# using the remainder as a dated cash flow. No amount is estimated by this helper.
+```
+
+Keep whole `sec.resolved_fact` results in the model, including selected candidates,
+filing identity, and status. Optional durable references serialize those records
+alongside current values rather than discarding source meaning:
+
+```python
+model = {"remaining_fcff": remaining}  # Save this same model to model.json.
+inputs = {"statistics": {"remaining_fcff": report.ref(
+    "remaining_fcff", "value", provenance_path=("remaining_fcff",)
+)}}
+report.write_inputs(inputs, model=model, preserve_references=True,
+                    model_source="/work/out/model.json")
+```
+
+`modelReferences` contains `inputPath`, `modelPath`, optional `modelSource`, and
+the current `provenancePath`/`provenance` object. It refreshes when the model changes.
+Paths are arrays of object keys/list indices. Supply the actual artifact path for
+a file-backed model; without `model_source`, paths identify only the in-memory
+model argument. This is executor-declared lineage, **not independently verified
+source authority**. The host must still check source support and accounting
+meaning. Omitting `preserve_references` keeps legacy JSON output unchanged.
 
 ## License
 

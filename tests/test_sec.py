@@ -10,7 +10,7 @@ from unittest.mock import patch
 from urllib.request import Request
 
 import nexustrade as nt
-from nexustrade import host
+from nexustrade import host, report
 
 
 class SecSdkTests(unittest.TestCase):
@@ -70,6 +70,16 @@ class SecSdkTests(unittest.TestCase):
         result = nt.sec.resolved_fact(payload, role=identity['role'], period_end=identity['period_end'])
         self.assertEqual(result['value'], 12)
         self.assertEqual(result['confidence'], row['confidence'])
+        report_path = os.path.join(self.tmp.name, 'report-inputs.json')
+        report.write_inputs({'statistics': {'da': report.ref('da', 'value', provenance_path=('da',))}},
+                            model={'da': result}, preserve_references=True, path=report_path)
+        with open(report_path, encoding='utf-8') as written:
+            handoff = json.load(written)
+        self.assertEqual(handoff['statistics']['da'], 12)
+        lineage = handoff['modelReferences'][0]['provenance']
+        self.assertEqual(lineage['status'], 'components')
+        self.assertEqual(lineage['selected_candidate_ids'], ['dep', 'amort'])
+        self.assertEqual(lineage['candidates'][0]['source_filing_url'], 'https://example.test/a')
         result['candidates'][0]['value'] = 99
         self.assertEqual(payload['candidates'][0]['value'], 9)
         for status, confidence in [('partial_components', 'incomplete'), ('unavailable', 'incomplete'),

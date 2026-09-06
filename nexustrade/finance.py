@@ -9,8 +9,10 @@ of silently substituting zero.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from datetime import date
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from datetime import date, timedelta
+from typing import Any
 
 Number = int | float
 
@@ -613,6 +615,106 @@ def fcff_valuation_case(
     return result
 
 
+def _calendar_date(name: str, value: str) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+        if parsed.isoformat() != value:
+            raise ValueError()
+        return parsed
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a YYYY-MM-DD calendar date") from error
+
+
+def period_flow(
+    value: Number | None, *, period_start: str, period_end: str, as_of: str,
+    unit: str, definition: str, status: str = "model_assumption",
+    provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Describe an additive flow over inclusive calendar dates, without inference.
+
+    ``as_of`` is the information cutoff, not the end of the operating period.
+    ``unit`` includes currency and scale; ``definition`` identifies the accounting
+    basis. Status and provenance remain caller declarations, not verification.
+    A missing amount stays None. This record must not describe a stock or ratio.
+    """
+    start = _calendar_date("period_start", period_start)
+    end = _calendar_date("period_end", period_end)
+    _calendar_date("as_of", as_of)
+    if start > end:
+        raise ValueError("period_start must not follow period_end")
+    for name, text in (("unit", unit), ("definition", definition), ("status", status)):
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{name} must be an explicit nonempty string")
+    if provenance is not None and not isinstance(provenance, Mapping):
+        raise ValueError("provenance must be an object")
+    return {"value": None if value is None else _finite("value", value),
+            "period_start": period_start, "period_end": period_end, "as_of": as_of,
+            "unit": unit, "definition": definition, "status": status,
+            "provenance": deepcopy(dict(provenance or {}))}
+
+
+def remaining_period_flow(
+    full_period: Mapping[str, Any], elapsed_flows: Sequence[Mapping[str, Any]], *,
+    valuation_date: str,
+) -> dict[str, Any]:
+    """Subtract fully covered elapsed operations; never prorate a missing stub.
+
+    The valuation is after operations on ``valuation_date``. The result begins
+    the next calendar day. Inputs must share exact units and definitions, be
+    available by valuation, and cover nonoverlapping elapsed intervals within
+    the full period. Missing coverage/amounts yield ``value=None``. Estimates may
+    explicitly fill a gap, retaining their status and provenance for review.
+    """
+    def checked(record: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(record, Mapping):
+            raise ValueError("period flow must be an object")
+        try:
+            normalized = period_flow(**{key: record[key] for key in (
+                "value", "period_start", "period_end", "as_of", "unit", "definition", "status")},
+                provenance=record.get("provenance"))
+        except KeyError as error:
+            raise ValueError(f"period flow missing {error.args[0]}") from error
+        # Preserve additional declared metadata rather than stripping evidence.
+        return {**deepcopy(dict(record)), **normalized}
+
+    full = checked(full_period)
+    cutoff = _calendar_date("valuation_date", valuation_date)
+    start = _calendar_date("period_start", full["period_start"])
+    end = _calendar_date("period_end", full["period_end"])
+    if not start <= cutoff < end:
+        raise ValueError("valuation_date must be within the full period before its end")
+    if _calendar_date("as_of", full["as_of"]) > cutoff:
+        raise ValueError("full-period forecast was not available by valuation_date")
+    flows = sorted((checked(row) for row in elapsed_flows), key=lambda row: row["period_start"])
+    cursor = start
+    missing = []
+    for row in flows:
+        row_start = _calendar_date("period_start", row["period_start"])
+        row_end = _calendar_date("period_end", row["period_end"])
+        if row["unit"] != full["unit"] or row["definition"] != full["definition"]:
+            raise ValueError("elapsed flows must have the same unit and definition as the forecast")
+        if _calendar_date("as_of", row["as_of"]) > cutoff:
+            raise ValueError("elapsed flow was not available by valuation_date")
+        if row_start < cursor or row_end > cutoff:
+            raise ValueError("elapsed flows overlap or extend outside the elapsed period")
+        if row_start > cursor:
+            missing.append({"period_start": cursor.isoformat(), "period_end": (row_start - timedelta(days=1)).isoformat()})
+        if row["value"] is None:
+            missing.append({"period_start": row["period_start"], "period_end": row["period_end"]})
+        cursor = row_end + timedelta(days=1)
+    if cursor <= cutoff:
+        missing.append({"period_start": cursor.isoformat(), "period_end": valuation_date})
+    complete = not missing and full["value"] is not None
+    result = period_flow(
+        full["value"] - sum(row["value"] for row in flows) if complete else None,
+        period_start=(cutoff + timedelta(days=1)).isoformat(), period_end=end.isoformat(),
+        as_of=valuation_date, unit=full["unit"], definition=full["definition"],
+        status="derived" if complete else "incomplete",
+    )
+    return {**result, "valuation_date": valuation_date, "missing_intervals": missing,
+            "full_period": full, "elapsed_flows": flows}
+
+
 def forecast_remainder(
     full_period_forecast: Number,
     actual_to_date: Number,
@@ -736,6 +838,8 @@ __all__ = [
     "fcff",
     "fcff_valuation_case",
     "forecast_remainder",
+    "period_flow",
+    "remaining_period_flow",
     "gordon_growth_terminal_value",
     "gordon_growth_terminal_value_from_nopat",
     "internal_rate_of_return",
