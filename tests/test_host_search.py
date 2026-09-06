@@ -10,6 +10,38 @@ from nexustrade import host
 
 
 class DirectSearchTests(unittest.TestCase):
+    def test_neutral_default_and_explicit_dataset_preference_have_separate_cached_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            results = Path(directory) / 'results.jsonl'
+            with patch.object(host, 'HOST_RESULTS_PATH', str(results)), \
+                 patch.object(host, '_gateway_search', side_effect=lambda query, prefer: {'query': query, 'candidates': [], 'dataset_preference': prefer}) as gateway:
+                neutral = host.search('public policy evidence')
+                dataset = host.search('public policy evidence', prefer_machine_readable=True)
+                self.assertFalse(neutral['dataset_preference'])
+                self.assertTrue(dataset['dataset_preference'])
+                self.assertEqual(host.search('public policy evidence', prefer_machine_readable=False), neutral)
+                self.assertEqual(host.search('public policy evidence', prefer_machine_readable=True), dataset)
+                self.assertEqual(gateway.call_count, 2)
+
+    def test_broker_and_queue_preserve_neutral_default_and_dataset_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            requests = Path(directory) / 'requests.jsonl'
+            with patch.object(host, 'HOST_REQUESTS_PATH', str(requests)), \
+                 patch.object(host, 'HOST_RESULTS_PATH', str(Path(directory) / 'results.jsonl')), \
+                 patch.object(host, '_pending_requests', []), \
+                 patch.object(host, '_gateway_search', return_value=None):
+                with self.assertRaises(SystemExit):
+                    host.search('court decision')
+                self.assertFalse(json.loads(requests.read_text())['preferMachineReadable'])
+                host._pending_requests.clear()
+                with self.assertRaises(SystemExit):
+                    host.search('daily observations', prefer_machine_readable=True)
+                self.assertTrue(json.loads(requests.read_text())['preferMachineReadable'])
+                host._pending_requests.clear()
+                host.queue_search('neutral', 'macro outlook')
+                host.queue_search('dataset', 'macro series', prefer_machine_readable=True)
+                self.assertEqual([r['preferMachineReadable'] for r in host._pending_requests], [False, True])
+
     def test_concurrent_pending_children_do_not_replace_primary_broker_queue(self):
         with tempfile.TemporaryDirectory() as directory:
             requests = Path(directory) / 'host_requests.jsonl'

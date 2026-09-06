@@ -924,6 +924,10 @@ agent needs to write correct NexusTrade strategies on the first pass.
 
 The compute helpers keep evidence and arithmetic separate from investment judgment:
 
+General `host.search(query)` keeps neutral research search terms. Use
+`host.search(query, prefer_machine_readable=True)` for dataset/API discovery;
+`host.queue_search` has the same neutral default.
+
 Native research investigators may call `host.search(query,
 allow_broker_fallback=False)`. Pending or unavailable gateway work then raises
 explicitly without replacing the primary executor's broker queue or exiting.
@@ -960,6 +964,12 @@ Successful research calls still append shared durable receipt/cache rows.
   provenance stays attached. The raw numeric primitives remain available.
 - `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
   to the current model when `report.write(inputs=inputs, model=model)` runs.
+  `model=` is reference resolution, not automatic model export. Include full
+  required sections in the payload, for example
+  `statistics={"history": report.ref("history"), "forecast": report.ref("forecast"),
+  "sensitivity": report.ref("valuation", "sensitivity")}` for a model with those
+  paths. Preserve year labels, units and grid axes. Re-read the emitted JSON;
+  a code appendix or chart does not supply omitted numerical series to the author.
   The host authors report prose from the resulting JSON.
 
 For explicit citation linkage, pass `source_aliases={fetch_id: bibliography_id}`

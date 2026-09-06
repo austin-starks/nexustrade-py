@@ -196,7 +196,11 @@ def write_inputs(
 
     The host authors the report. Legacy `draftMarkdown` is discarded so stale
     prose cannot replace structured research and calculation outputs.
-    Pass model= to resolve report.ref fields at write time. Optional source_aliases
+    Pass model= to resolve report.ref fields at write time. It does not export
+    the model automatically: reference complete required sections (history,
+    forecast, labeled sensitivity axes and values) in payload, not only headline
+    scalars. The host cannot reconstruct omitted in-memory results from code.
+    Optional source_aliases
     maps durable fetch IDs to bibliography IDs and validates explicit linkage;
     {} checks an intentionally shared namespace. Legacy calls leave receipt
     verification to the host. This does not verify the content of source claims.

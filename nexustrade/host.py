@@ -316,7 +316,7 @@ def queue_read_indicator(request_id: str, indicator_id: str) -> None:
 def queue_search(
     request_id: str,
     query: str,
-    prefer_machine_readable: bool = True,
+    prefer_machine_readable: bool = False,
 ) -> None:
     """Queue a Discover Sources search through the host broker (no sandbox egress).
 
@@ -1466,18 +1466,20 @@ def search(
     query: str,
     *,
     request_id: str | None = None,
-    prefer_machine_readable: bool = True,
+    prefer_machine_readable: bool = False,
     _exit: bool = True,
     allow_broker_fallback: bool = True,
 ) -> dict[str, Any]:
-    """Discover candidate URLs. Blocks and returns on the call via the gateway;
+    """Discover candidate URLs without changing the research topic by default.
+    Set prefer_machine_readable=True explicitly when looking for datasets,
+    inventories or APIs. Blocks and returns on the call via the gateway;
     falls back to the host broker (queue + exit + re-run) when none is present.
 
     When provided Discover/agent URLs are dead or wrong, call this instead of
     guessing URLs from memory. The worker runs Discover Sources (with liveness
     probe) and returns candidates; then fetch the live ones:
 
-        res = host.search("Hormuz daily tanker transits CSV/JSON")
+        res = host.search("daily transit counts", prefer_machine_readable=True)
         urls = [c["url"] for c in res["candidates"] if c.get("live")]
         pages = host.fetch({f"src_{i}": u for i, u in enumerate(urls[:3])})
 
