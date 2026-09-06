@@ -7,6 +7,31 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_explicit_passages_keep_distant_claims_without_splicing_or_clipping(self):
+        first = "Year 2025 amounts in millions. North revenue was 17."
+        last = "Year 2026 amounts in millions. South revenue was 29."
+        long_quote = "Long passage " + "detailed source text " * 400 + "end marker."
+        text = first + " " + "unrelated background " * 1000 + last + " " + long_quote
+        passages = [first, last, long_quote]
+        selections = report.source_excerpts("fetch:annual", text, passages=passages)
+        self.assertEqual([item['quote'] for item in selections], passages)
+        self.assertTrue(all(item['sourceId'] == 'fetch:annual' for item in selections))
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            report.write_inputs({'sourceExcerpts': selections}, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['sourceExcerpts'], selections)
+        with self.assertRaisesRegex(ValueError, 'does not occur'):
+            report.source_excerpts('fetch:annual', text, passages=[first + ' ' + last])
+
+    def test_passages_report_missing_and_ambiguous_matches_without_choosing_for_the_model(self):
+        for passage, message in [('missing', 'does not occur'), ('value 12', 'ambiguous')]:
+            with self.subTest(passage=passage), self.assertRaisesRegex(ValueError, message):
+                report.source_excerpts('fetch:annual', 'North value 12. South value 12.', passages=[passage])
+        self.assertEqual(report.source_excerpts('fetch:annual', 'North\nvalue 12.', passages=['North value 12.']),
+                         [{'sourceId': 'fetch:annual', 'quote': 'North value 12.'}])
+        with self.assertRaises(TypeError):
+            report.source_excerpts('fetch:annual', 'source', passages='source')
+
     def test_optional_reference_map_refreshes_value_and_provenance_together(self):
         model = {'facts': {'flow': {'value': 12, 'sourceId': 'fetch:one', 'status': 'derived',
                                    'definition': 'FCFF', 'period_end': '2027-12-31'}}}

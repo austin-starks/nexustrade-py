@@ -94,6 +94,36 @@ class _ModelReference:
     provenance_path: tuple[str | int, ...] | None = None
 
 
+def source_excerpts(source_id: str, visible_text: str, *, passages: Sequence[str]) -> list[dict[str, str]]:
+    """Select explicit source passages without a count or character allowance.
+
+    Supply literal supporting sentences/table spans from prepare_web_pages
+    visible_text, including relevant headers and units. Separate distant passages
+    even when they support claims from the same source. This helper checks exact,
+    unambiguous text occurrence, not whether a quote proves an analytical claim.
+    Host receipt and body verification still establish source authenticity.
+    """
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError("source_id must be the durable host fetch ID")
+    if not isinstance(visible_text, str):
+        raise TypeError("visible_text must be source text")
+    if isinstance(passages, (str, bytes)):
+        raise TypeError("passages must be a sequence of separate source passages")
+    text = " ".join(visible_text.split())
+    excerpts = []
+    for index, passage in enumerate(passages):
+        if not isinstance(passage, str) or not passage.strip():
+            raise ValueError(f"passage {index} must contain source text")
+        quote = " ".join(passage.split())
+        start = text.find(quote)
+        if start < 0:
+            raise ValueError(f"passage {index} does not occur in source {source_id}")
+        if text.find(quote, start + 1) >= 0:
+            raise ValueError(f"passage {index} is ambiguous in source {source_id}; include adjacent text")
+        excerpts.append({"sourceId": source_id.strip(), "quote": quote})
+    return excerpts
+
+
 def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) -> _ModelReference:
     """Reference a model field in structured findings, tables, or source records.
 

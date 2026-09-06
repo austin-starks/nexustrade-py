@@ -1022,3 +1022,27 @@ meaning. Omitting `preserve_references` keeps legacy JSON output unchanged.
 ## License
 
 MIT
+
+### Source passages for report evidence
+
+Preserve every passage needed to support the report's claims. The host verifies
+selected text against its authenticated source receipt; there is no excerpt-count
+or character allowance to optimize against. Select separate contiguous passages
+for distant claims, even when they use the same source. Never concatenate distant
+spans into a quote or clip away a table's headers, units, or qualifications.
+
+```python
+from nexustrade import report
+
+excerpts = report.source_excerpts(
+    "fetch:annual", prepared_document["visible_text"],
+    passages=["Year 2025. Revenue was 17 million.",
+              "Year 2026. Revenue was 29 million."],
+)
+report.write_inputs({"sourceExcerpts": excerpts, "statistics": calculations})
+```
+
+The optional helper preserves the supplied passages, normalizes whitespace, and
+reports missing or ambiguous matches. It does not choose facts or certify that a
+claim follows from a quote. The host handles model request capacity separately;
+research should not discard supported claims to satisfy a prompt-size allowance.
