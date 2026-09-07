@@ -7,44 +7,64 @@ from unittest import mock
 
 
 class ScannedTableExtractionReplayTests(unittest.TestCase):
-    def test_combined_pdf_metadata_is_stable_for_the_same_source_corpus(self) -> None:
+    def test_every_document_is_its_own_attachment_at_any_corpus_size(self) -> None:
+        """One attachment per document, never a concatenated corpus.
+
+        The attachment boundary is what binds a row to the document that printed
+        it. Concatenating >=20 documents into one PDF removed that boundary and
+        the model returned one row per source on a 63-document corpus while every
+        count still reconciled. Restatements do not need concatenation to be
+        representable: they are separate observations that canonicalization joins
+        through `source_ids`.
+        """
         scanned_table = importlib.import_module("nexustrade.scanned_table")
-        first = (
-            b"%PDF-1.7\n<</CreationDate(D:20260903083904-05'00')>>\ntrailer\n"
-            b"/ID[<00112233445566778899AABBCCDDEEFF>"
-            b"<00112233445566778899AABBCCDDEEFF>]>>\n%%EOF"
-        )
-        second = (
-            b"%PDF-1.7\n<</CreationDate(D:20260903083905-05'00')>>\ntrailer\n"
-            b"/ID[<FFEEDDCCBBAA99887766554433221100>"
-            b"<FFEEDDCCBBAA99887766554433221100>]>>\n%%EOF"
-        )
-        group = [("source-a", b"one"), ("source-b", b"two")]
+        host = importlib.import_module("nexustrade.host")
+        seen_filenames: list[list[str]] = []
 
-        stabilized_first = scanned_table._stabilize_combined_pdf_metadata(first, group)
-        stabilized_second = scanned_table._stabilize_combined_pdf_metadata(second, group)
+        def structured(*args: object, **kwargs: object) -> dict[str, object]:
+            del args
+            messages = kwargs.get("messages") or []
+            names = []
+            for message in messages:
+                for part in message.get("content", []):
+                    name = (part.get("file") or {}).get("filename")
+                    if name:
+                        names.append(name)
+                    inline = part.get("filename")
+                    if inline:
+                        names.append(inline)
+            seen_filenames.append(names)
+            source_ids = list(
+                kwargs["json_schema"]["properties"]["documents"]["items"][
+                    "properties"
+                ]["source_id"]["enum"]
+            )
+            return {
+                "documents": [
+                    {"source_id": source_id, "rows": [{"ticker": "ACME"}]}
+                    for source_id in source_ids
+                ]
+            }
 
-        self.assertEqual(stabilized_first, stabilized_second)
-        self.assertEqual(len(stabilized_first), len(first))
+        documents = {f"filing-{index}": b"%PDF-1.7 pdf" for index in range(30)}
+        with (
+            mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
+            mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
+            mock.patch.object(scanned_table, "_document_result_record"),
+            mock.patch.object(scanned_table, "_document_batch_progress"),
+            mock.patch.object(host, "gateway_chat_json", side_effect=structured),
+        ):
+            result = scanned_table.extract_pdfs(
+                documents,
+                rows_schema={"ticker": "string"},
+                instructions="Return the requested rows.",
+            )
 
-    def test_combined_pdf_id_changes_when_the_source_corpus_changes(self) -> None:
-        scanned_table = importlib.import_module("nexustrade.scanned_table")
-        serialized = (
-            b"%PDF-1.7\n<</CreationDate(D:20260903083904Z)>>\ntrailer\n"
-            b"/ID[<00112233445566778899AABBCCDDEEFF>"
-            b"<00112233445566778899AABBCCDDEEFF>]>>\n%%EOF"
-        )
-
-        first = scanned_table._stabilize_combined_pdf_metadata(
-            serialized,
-            [("source-a", b"one")],
-        )
-        second = scanned_table._stabilize_combined_pdf_metadata(
-            serialized,
-            [("source-a", b"changed")],
-        )
-
-        self.assertNotEqual(first, second)
+        self.assertEqual(len(result), 30)
+        flattened = [name for names in seen_filenames for name in names]
+        self.assertNotIn("combined-corpus.pdf", flattened)
+        self.assertFalse(hasattr(scanned_table, "_combine_pdf_group"))
+        self.assertFalse(hasattr(scanned_table, "DEFAULT_COMBINED_PDF_MIN_DOCUMENTS"))
 
     def test_group_schema_uses_one_compact_document_item_definition(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
@@ -355,25 +375,11 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             }
 
         documents = {f"filing-{index}": b"pdf" for index in range(30)}
-        combined_mapping = [
-            {
-                "attachment": "combined-corpus.pdf",
-                "source_id": source_id,
-                "start_page": index + 1,
-                "end_page": index + 1,
-            }
-            for index, source_id in enumerate(documents)
-        ]
         with (
             mock.patch.object(scanned_table, "_gateway_json", return_value={"ok": True}),
             mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
             mock.patch.object(scanned_table, "_document_result_record"),
             mock.patch.object(scanned_table, "_document_batch_progress"),
-            mock.patch.object(
-                scanned_table,
-                "_combine_pdf_group",
-                return_value=(b"combined-pdf", combined_mapping),
-            ) as combine_pdf_group,
             mock.patch.object(host, "gateway_chat_json", side_effect=structured),
         ):
             result = scanned_table.extract_pdfs(
@@ -383,7 +389,6 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             )
 
         self.assertEqual(calls, [list(documents)])
-        combine_pdf_group.assert_called_once()
         self.assertEqual(call_options[0]["timeout_sec"], 930)
         self.assertEqual(call_options[0]["max_transport_attempts"], 1)
         self.assertRegex(

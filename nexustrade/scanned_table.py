@@ -1189,9 +1189,6 @@ GROUP_EXTRACT_GATEWAY_TIMEOUT_SEC = 15 * 60 + 30
 # Keep this aligned with NexusGenAI's decoded attachment-byte ceiling. The
 # gateway accepts any number of files that fit inside this real payload bound.
 DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES = 50 * 1024 * 1024
-DEFAULT_COMBINED_PDF_MIN_DOCUMENTS = 20
-
-
 def _gateway_json(
     path: str,
     payload: dict[str, Any],
@@ -1318,56 +1315,6 @@ def _document_group_context_key(group: list[tuple[str, bytes]]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-_PDFIUM_TRAILER_ID_RE = re.compile(
-    rb"/ID\[<[0-9A-Fa-f]{32}><[0-9A-Fa-f]{32}>\]"
-)
-_PDFIUM_CREATION_DATE_RE = re.compile(
-    rb"/CreationDate\(D:\d{14}(Z|[+-]\d{2}'\d{2}')\)"
-)
-
-
-def _stabilize_combined_pdf_metadata(
-    pdf_bytes: bytes,
-    group: list[tuple[str, bytes]],
-) -> bytes:
-    """Replace PDFium's volatile metadata with corpus-stable values.
-
-    PDFium writes the current second into ``CreationDate`` and a fresh 16-byte
-    trailer ID every time it saves an otherwise identical imported-page
-    document. The gateway request body includes the resulting PDF bytes, while
-    its durable idempotency key describes the stable source corpus. Leaving
-    either volatile value in place makes a legitimate retry look like a
-    different request under the same key.
-
-    Both replacements preserve the emitted token lengths, so object and
-    cross-reference offsets remain unchanged. Fail closed if PDFium changes the
-    serialization shape rather than silently returning unstable bytes.
-    """
-    def stable_creation_date(match: re.Match[bytes]) -> bytes:
-        timezone = b"Z" if match.group(1) == b"Z" else b"+00'00'"
-        return b"/CreationDate(D:20000101000000" + timezone + b")"
-
-    stabilized, date_replacements = _PDFIUM_CREATION_DATE_RE.subn(
-        stable_creation_date,
-        pdf_bytes,
-    )
-    if date_replacements != 1:
-        raise RuntimeError(
-            "combined PDF serialization did not contain exactly one PDFium creation date"
-        )
-    stable_id = _document_group_context_key(group)[:32].upper().encode("ascii")
-    replacement = b"/ID[<" + stable_id + b"><" + stable_id + b">]"
-    stabilized, id_replacements = _PDFIUM_TRAILER_ID_RE.subn(
-        replacement,
-        stabilized,
-    )
-    if id_replacements != 1:
-        raise RuntimeError(
-            "combined PDF serialization did not contain exactly one PDFium trailer ID"
-        )
-    return stabilized
 
 
 def _document_group_request_keys(
@@ -1562,49 +1509,6 @@ _EXTRACT_PDF_GROUP_SYSTEM = (
 )
 
 
-def _combine_pdf_group(
-    group: list[tuple[str, bytes]],
-) -> tuple[bytes, list[dict[str, Any]]]:
-    """Combine a large corpus and return hard one-based source page ranges."""
-    try:
-        import pypdfium2 as pdfium
-    except ImportError as exc:
-        raise RuntimeError(
-            "large grouped PDF extraction requires the nexustrade documents extra"
-        ) from exc
-
-    combined = pdfium.PdfDocument.new()
-    source_mapping: list[dict[str, Any]] = []
-    next_page = 1
-    try:
-        for source_id, pdf_bytes in group:
-            source = pdfium.PdfDocument(pdf_bytes)
-            try:
-                page_count = len(source)
-                if page_count < 1:
-                    raise RuntimeError(f"PDF source {source_id!r} has no pages")
-                source_mapping.append(
-                    {
-                        "attachment": "combined-corpus.pdf",
-                        "source_id": source_id,
-                        "start_page": next_page,
-                        "end_page": next_page + page_count - 1,
-                    }
-                )
-                combined.import_pages(source)
-                next_page += page_count
-            finally:
-                source.close()
-        output = io.BytesIO()
-        combined.save(output)
-        return (
-            _stabilize_combined_pdf_metadata(output.getvalue(), group),
-            source_mapping,
-        )
-    finally:
-        combined.close()
-
-
 def _group_response_schema(
     normalized_schema: dict[str, Any],
     source_ids: list[str],
@@ -1684,35 +1588,36 @@ def _extract_pdf_document_group(
             f"{DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES})"
         )
     source_ids = [key for key, _ in group]
-    combine_group = len(group) >= DEFAULT_COMBINED_PDF_MIN_DOCUMENTS
-    if combine_group:
-        combined_pdf, mapping = _combine_pdf_group(group)
-        if len(combined_pdf) > DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES:
-            raise GatewayChatTransportError(
-                "combined PDF corpus exceeds the gateway's aggregate attachment-byte "
-                f"limit ({len(combined_pdf)} > "
-                f"{DEFAULT_EXTRACT_ROWS_REQUEST_MAX_BYTES})"
-            )
-        attachments = [
-            gateway_file_part(
-                combined_pdf,
-                filename="combined-corpus.pdf",
-                mime_type="application/pdf",
-            )
-        ]
-    else:
-        mapping = [
-            {"attachment": f"source-{index + 1}.pdf", "source_id": key}
-            for index, (key, _) in enumerate(group)
-        ]
-        attachments = [
-            gateway_file_part(
-                data,
-                filename=f"source-{index + 1}.pdf",
-                mime_type="application/pdf",
-            )
-            for index, (_, data) in enumerate(group)
-        ]
+    # One attachment per document, at every corpus size. The attachment boundary
+    # is what binds a row to the document that printed it, and `source_id` +
+    # `_source_row_index` are stamped from that boundary.
+    #
+    # A previous revision concatenated corpora of >=20 documents into a single
+    # `combined-corpus.pdf` to address rows being emitted under a neighbouring
+    # filing's id. That traded a mis-stamp for a deletion: with no boundaries the
+    # model has only printed filing-id headers to group by, and on a 63-document
+    # corpus it returned one row per source (first-row-only) while every count
+    # still reconciled. It also failed outright on 55/63 sources when PDFium's
+    # serialization did not match the single-CreationDate shape the metadata
+    # stabilizer required.
+    #
+    # Restating filings do NOT need a combined document to be representable. An
+    # amendment that restates an earlier transaction is two observations, one
+    # truthfully stamped under each filing, which `signal` reconciles into one
+    # canonical event carrying both in `source_ids`. Multi-attribution belongs to
+    # canonicalization; extraction stays 1:1 with the printed page.
+    mapping = [
+        {"attachment": f"source-{index + 1}.pdf", "source_id": key}
+        for index, (key, _) in enumerate(group)
+    ]
+    attachments = [
+        gateway_file_part(
+            data,
+            filename=f"source-{index + 1}.pdf",
+            mime_type="application/pdf",
+        )
+        for index, (_, data) in enumerate(group)
+    ]
     for source in mapping:
         source_id = source["source_id"]
         trusted_metadata = (extra_fields_by_key or {}).get(source_id)
