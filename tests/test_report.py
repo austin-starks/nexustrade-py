@@ -7,6 +7,26 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_complete_current_model_survives_partial_selection_without_mutating_caller(self):
+        model = {'valuation': {'price': 70}, 'capital': {'assets': 27, 'claims': 4}}
+        payload = {'statistics': report.ref('valuation'), 'calculationModel': {'stale': True}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for price in (70, 90):
+                model['valuation']['price'] = price
+                report.write(inputs=payload, model=model, inputs_path=str(root/'inputs.json'),
+                             markdown_path=str(root/'output.md'), images_dir=str(root/'images'),
+                             code_dir=str(root/'code'), code_paths=[])
+                data = json.loads((root/'inputs.json').read_text())
+                self.assertEqual(data['calculationModel'], model)
+                self.assertEqual(data['statistics']['price'], price)
+                self.assertEqual(payload['calculationModel'], {'stale': True})
+                self.assertNotIn('calculationModel', model)
+            report.write(model=model, inputs_path=str(root/'model-only.json'),
+                         markdown_path=str(root/'output.md'), images_dir=str(root/'images'),
+                         code_dir=str(root/'code'), code_paths=[])
+            self.assertEqual(json.loads((root/'model-only.json').read_text()), {'calculationModel': model})
+
     def test_explicit_passages_keep_distant_claims_without_splicing_or_clipping(self):
         first = "Year 2025 amounts in millions. North revenue was 17."
         last = "Year 2026 amounts in millions. South revenue was 29."
@@ -115,7 +135,7 @@ class ReportWriteTests(unittest.TestCase):
             report.write(inputs=payload, model={}, source_aliases={'fetch:annual': 'annual-report'},
                          inputs_path=str(target), markdown_path=str(root/'output.md'),
                          images_dir=str(root/'images'), code_dir=str(root/'code'), code_paths=[])
-            self.assertEqual(json.loads(target.read_text()), payload)
+            self.assertEqual(json.loads(target.read_text()), {**payload, 'calculationModel': {}})
             with self.assertRaises(ValueError):
                 report.write_inputs(payload, source_aliases={'fetch:annual': 'unknown'}, path=str(target))
 

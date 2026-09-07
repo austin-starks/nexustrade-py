@@ -225,10 +225,11 @@ def write_inputs(
       title, request, sources, methodology, statistics, images, findings, caveats
 
     Supply structured research and calculation outputs. The host authors the report.
-    Pass model= to resolve report.ref fields at write time. It does not export
-    the model automatically: reference complete required sections (history,
-    forecast, labeled sensitivity axes and values) in payload, not only headline
-    scalars. The host cannot reconstruct omitted in-memory results from code.
+    Pass model= to resolve report.ref fields at write time and export the complete
+    current calculation object as calculationModel. This argument replaces any
+    older calculationModel in payload. Selected references organize findings;
+    they do not limit which computed sections the host can inspect. Keep model
+    focused on calculation data, assumptions, and provenance rather than raw files.
     Optional source_aliases
     maps durable fetch IDs to bibliography IDs and validates explicit linkage;
     {} checks an intentionally shared namespace. Legacy calls leave receipt
@@ -255,8 +256,12 @@ def write_inputs(
     if preserve_references and "modelReferences" in payload:
         raise ValueError("modelReferences is generated from current references; remove the supplied map")
     structured = dict(payload)
+    if model is not None:
+        structured.pop("calculationModel", None)
     references: list[dict[str, Any]] | None = [] if preserve_references else None
     inputs = _resolve(structured, model, references=references, model_source=model_source)
+    if model is not None:
+        inputs["calculationModel"] = _resolve(model, None)
     if references is not None:
         inputs["modelReferences"] = references
     if source_aliases is not None:
@@ -309,8 +314,8 @@ def write(
     if not body and image_blocks:
         body = "\n\n".join(image_blocks)
 
-    if inputs is not None:
-        payload = dict(inputs)
+    if inputs is not None or model is not None:
+        payload = dict(inputs or {})
         if title and "title" not in payload:
             payload["title"] = title
         if image_meta and "images" not in payload:

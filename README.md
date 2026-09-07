@@ -673,7 +673,11 @@ margin of safety, invested capital, net investment, ROIC, incremental ROIC,
 reinvestment rate, EVA, and conventional IRR. Build one model object from these
 results. For a compute report, pass that object with research findings, exact
 source identities, method requirements, and assumptions to
-`nexustrade.report.write(inputs=analysis_outputs, images=chart_files)`.
+`nexustrade.report.write(inputs=analysis_outputs, model=model, images=chart_files)`.
+The full current model is exported as `calculationModel`; selected `report.ref`
+fields organize the handoff without hiding other computed sections. Keep this
+object focused on calculation data, assumptions and provenance; retain raw
+source documents separately.
 The host Report Generator authors the report, and the same generated document
 is graded and delivered. Optional local Markdown exports are not report inputs.
 
