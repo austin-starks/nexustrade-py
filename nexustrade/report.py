@@ -224,8 +224,7 @@ def write_inputs(
     Required-ish keys (all optional but recommended):
       title, request, sources, methodology, statistics, images, findings, caveats
 
-    The host authors the report. Legacy `draftMarkdown` is discarded so stale
-    prose cannot replace structured research and calculation outputs.
+    Supply structured research and calculation outputs. The host authors the report.
     Pass model= to resolve report.ref fields at write time. It does not export
     the model automatically: reference complete required sections (history,
     forecast, labeled sensitivity axes and values) in payload, not only headline
@@ -256,7 +255,6 @@ def write_inputs(
     if preserve_references and "modelReferences" in payload:
         raise ValueError("modelReferences is generated from current references; remove the supplied map")
     structured = dict(payload)
-    structured.pop("draftMarkdown", None)
     references: list[dict[str, Any]] | None = [] if preserve_references else None
     inputs = _resolve(structured, model, references=references, model_source=model_source)
     if references is not None:

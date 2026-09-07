@@ -66,7 +66,7 @@ class ReportWriteTests(unittest.TestCase):
             self.assertEqual(json.loads(target.read_text())['modelReferences'][0]['modelSource'],
                              '/work/out/model.json')
 
-    def test_reference_metadata_must_be_an_object_and_cannot_reintroduce_draft(self):
+    def test_reference_metadata_must_be_an_object(self):
         with tempfile.TemporaryDirectory() as directory:
             target = str(Path(directory) / 'inputs.json')
             for metadata in (None, 7, ['not', 'metadata']):
@@ -74,10 +74,9 @@ class ReportWriteTests(unittest.TestCase):
                     report.write_inputs({'x': report.ref('value', provenance_path=('metadata',))},
                                         model={'value': 2, 'metadata': metadata},
                                         preserve_references=True, path=target)
-            report.write_inputs({'draftMarkdown': report.ref('missing'), 'values': [report.ref('value')]},
+            report.write_inputs({'values': [report.ref('value')]},
                                 model={'value': 2}, preserve_references=True, path=target)
             output = json.loads(Path(target).read_text())
-            self.assertNotIn('draftMarkdown', output)
             self.assertEqual(output['modelReferences'], [{'inputPath': ['values', 0], 'modelPath': ['value']}])
 
     def test_current_model_drives_repeated_values_and_sources(self):
@@ -149,7 +148,7 @@ class ReportWriteTests(unittest.TestCase):
 
             payload = json.loads(inputs_path.read_text(encoding="utf-8"))
             markdown = markdown_path.read_text(encoding="utf-8")
-            self.assertNotIn("draftMarkdown", payload)
+            self.assertEqual(payload, {"title": "Study", "statistics": {"effect": 0.12}})
             self.assertIn("An obsolete conclusion.", markdown)
             self.assertEqual(payload["statistics"], {"effect": 0.12})
 
@@ -159,7 +158,7 @@ class ReportWriteTests(unittest.TestCase):
             markdown = root / "output.md"
             markdown.write_text("# Stale\n\nOld result 900.")
             report.write(
-                inputs={"statistics": {"effect": 7}, "draftMarkdown": "legacy prose"},
+                inputs={"statistics": {"effect": 7}},
                 inputs_path=str(root / "report_inputs.json"),
                 markdown_path=str(markdown),
                 images_dir=str(root / "images"),
@@ -170,13 +169,13 @@ class ReportWriteTests(unittest.TestCase):
             self.assertEqual(payload, {"statistics": {"effect": 7}})
             self.assertNotIn("Old result", markdown.read_text())
 
-    def test_write_inputs_removes_legacy_prose_without_mutating_caller(self):
+    def test_write_inputs_does_not_mutate_caller(self):
         with tempfile.TemporaryDirectory() as directory:
-            payload = {"draftMarkdown": "legacy", "findings": [{"effect": 7}]}
+            payload = {"findings": [{"effect": 7}]}
             target = Path(directory) / "inputs.json"
             report.write_inputs(payload, path=str(target))
             self.assertEqual(json.loads(target.read_text()), {"findings": [{"effect": 7}]})
-            self.assertEqual(payload["draftMarkdown"], "legacy")
+            self.assertEqual(payload, {"findings": [{"effect": 7}]})
 
     def test_write_inputs_does_not_require_a_draft(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -193,7 +192,7 @@ class ReportWriteTests(unittest.TestCase):
             )
 
             payload = json.loads(inputs_path.read_text(encoding="utf-8"))
-            self.assertNotIn("draftMarkdown", payload)
+            self.assertEqual(payload, {"title": "Structured only"})
 
 
 if __name__ == "__main__":
