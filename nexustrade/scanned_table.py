@@ -1973,6 +1973,107 @@ def _prepare_pdf_document(
     )
 
 
+OBSERVATION_LEDGER_PATH = "/work/out/ledger.jsonl"
+
+
+def _persist_observation_ledger(
+    results: "Mapping[str, Mapping[str, Any]]",
+    ledger_path: str = OBSERVATION_LEDGER_PATH,
+) -> int:
+    """Persist every extracted observation before the caller narrows it.
+
+    A run that extracts a corpus and then projects it into an output dataset
+    otherwise delivers only the projection, and the observations it dropped
+    cannot be recovered from the delivered bundle. A reviewer then cannot tell a
+    correct exclusion from a silent loss, which is exactly what an independent
+    reviewer reported on the Pelosi v9 run: "the output is projected rows, not a
+    lossless observation ledger, so excluded AB/OL/OT/tickerless observations
+    could not be reconciled from delivered bytes."
+
+    The retention rule for this already existed in prose and was violated anyway.
+    Writing the ledger here makes retention a property of extraction rather than
+    something the operator elects to do and then grades itself on.
+
+    Nothing else has to change to make the file count: `resolveDeclaredMembers`
+    unions in everything under `/work/out`, so the ledger becomes a declared
+    bundle member on its own, and `operatorWorkingSet` already pins it into the
+    operator's context when it exists.
+
+    Merge is last-write-wins PER `source_id`. A run legitimately re-extracts a
+    subset to settle a suspected duplicate; overwriting the file would clobber
+    every other document's rows with that one document's, and appending would
+    double-count it. Replacing only the source ids present in this call keeps the
+    ledger meaning "the latest extracted observations for each source document",
+    which is the only reading that survives re-extraction.
+
+    A document that came back with an `error` replaces nothing: a failed
+    re-extract must not erase observations an earlier successful call recorded.
+
+    Best effort by design. This is an audit artifact, and failing an extraction
+    that has already been paid for because an audit file could not be written
+    would be strictly worse than having no audit file. Returns the number of rows
+    written, for tests.
+    """
+    directory = os.path.dirname(ledger_path)
+    # `/work/out` is a sandbox convention, so this side effect cannot fire for a
+    # library user outside a compute sandbox.
+    if not directory or not os.path.isdir(directory):
+        return 0
+
+    replaced: set[str] = set()
+    fresh: list[dict[str, Any]] = []
+    for key, entry in results.items():
+        if not isinstance(entry, Mapping) or entry.get("error") is not None:
+            continue
+        rows = entry.get("rows")
+        if not isinstance(rows, list):
+            continue
+        replaced.add(str(key))
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            record = dict(row)
+            record.setdefault("source_id", str(key))
+            fresh.append(record)
+
+    if not replaced:
+        return 0
+
+    try:
+        kept: list[str] = []
+        if os.path.exists(ledger_path):
+            with open(ledger_path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        existing = json.loads(stripped)
+                    except ValueError:
+                        # A malformed line is somebody else's row, not ours to
+                        # discard silently on a merge.
+                        kept.append(stripped)
+                        continue
+                    source_id = (
+                        str(existing.get("source_id"))
+                        if isinstance(existing, dict)
+                        else None
+                    )
+                    if source_id not in replaced:
+                        kept.append(stripped)
+
+        tmp_path = f"{ledger_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            for line in kept:
+                handle.write(f"{line}\n")
+            for record in fresh:
+                handle.write(f"{json.dumps(record, sort_keys=True)}\n")
+        os.replace(tmp_path, ledger_path)
+    except OSError:
+        return 0
+    return len(fresh)
+
+
 def extract_pdfs(
     documents: (
         "Mapping[str, bytes | Mapping[str, Any]] | "
@@ -2019,10 +2120,10 @@ def extract_pdfs(
     input, ALWAYS. A document that fails is reported rather than dropped, so a
     partial batch is visible instead of looking like a smaller-but-clean result.
 
-    Large eligible groups are page-preservingly combined into one PDF attachment.
-    The model receives an exact one-based page range for every source id and must
-    still return one result per original document. This reduces attachment-boundary
-    attribution errors without changing the caller's document or result shape.
+    Every document is its own attachment at every corpus size. Documents are
+    never concatenated into a single combined PDF, so a source id always names
+    the bytes the model actually read and nothing depends on page-range
+    bookkeeping to attribute a row back to its document.
 
     `min_rows_per_document` is an optional caller-declared invariant for the
     selected source class. Set it to 1, for example, only when every selected
@@ -2408,6 +2509,7 @@ def extract_pdfs(
         cache_hits=cache_hits,
         done=True,
     )
+    _persist_observation_ledger(results)
     return {key: results[key] for key in result_order}
 
 def extract_pdf_markdown_with_audit(
