@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, TypedDict, runtime_checkable
 
 from nexustrade.env import LazyDotenv, environment_value
 
@@ -689,6 +689,35 @@ def _points_jsonl(points: Sequence[Mapping[str, Any]]) -> bytes:
 
 def _inline_point_bytes(points: Sequence[Mapping[str, Any]]) -> int:
     return len(json.dumps(list(points), separators=(",", ":")).encode("utf-8"))
+
+
+class BacktestCollateralStatistics(TypedDict, total=False):
+    """How much capital a backtest actually had on the line.
+
+    Read it off a terminal operation's ``result["statistics"]``, alongside the
+    return the run earned.
+
+    Both keys are optional and nullable, and absence is meaningful: a backtest
+    run before the engine reported collateral carries no value at all. That is
+    NOT zero — these books lock a few thousand dollars against a portfolio worth
+    orders of magnitude more, so substituting 0, or the portfolio's value, turns
+    an unanswered question into a wrong answer. Show "not recorded" instead.
+
+    Never reconstruct either number from ``cash - buyingPower``: buying power is
+    clamped at both ends and carries an open credit-spread premium term, so the
+    inversion breaks precisely on the heavily collateralised books this
+    measures.
+
+    ``peakReservedCollateral``
+        Largest collateral locked at any tick of the run, in account currency.
+    ``medianReservedCollateral``
+        Median collateral across the ticks that HELD at least one position.
+        Flat ticks are excluded on purpose — a 0DTE book is empty overnight and
+        at weekends, and counting those ticks would drive the median to zero.
+    """
+
+    peakReservedCollateral: float | None
+    medianReservedCollateral: float | None
 
 
 def wait_for_operation(

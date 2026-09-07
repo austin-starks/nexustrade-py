@@ -22,6 +22,7 @@ from nexustrade import portfolio as _portfolio
 from nexustrade.agent import AgentEvent, AgentRun
 # sandbox-prune:end agent-surface
 from nexustrade.client import (
+    BacktestCollateralStatistics,
     HttpTransport,
     NexusTradeApiError,
     NexusTradeClient,
@@ -46,6 +47,7 @@ __all__ = [
     "AgentEvent",
     "AgentRun",
     # sandbox-prune:end agent-surface
+    "BacktestCollateralStatistics",
     "DeployResult",
     "HttpTransport",
     "NexusTradeApiError",
