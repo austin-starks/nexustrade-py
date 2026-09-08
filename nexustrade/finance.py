@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 Number = int | float
@@ -359,6 +359,79 @@ def price_premium_to_intrinsic_value(
     return (_finite("market_price", market_price) - intrinsic) / intrinsic
 
 
+#: The exact definition of every price comparison this module emits. A writer
+#: handed a bare ``discount`` scalar has to guess a denominator, and a delivered
+#: report once labelled its discount column with the UPSIDE formula — a
+#: different number that was also present in the same handoff. Carry the
+#: definition with the number so the writer quotes it instead of inventing one.
+PRICE_COMPARISON_DEFINITIONS = {
+    "discount_to_intrinsic_value": "(intrinsic_value - market_price) / intrinsic_value",
+    "upside_to_intrinsic_value": "(intrinsic_value - market_price) / market_price",
+    "premium_to_intrinsic_value": "(market_price - intrinsic_value) / intrinsic_value",
+}
+
+
+def price_comparison(intrinsic_value: Number, market_price: Number) -> dict[str, Any]:
+    """Return every price/value comparison with its own denominator named.
+
+    The three differ only in denominator and sign, so a single scalar labelled
+    "discount" is ambiguous on its face. Each value here ships beside the exact
+    expression that produced it and the inputs it used.
+    """
+    intrinsic = _finite("intrinsic_value", intrinsic_value)
+    price = _finite("market_price", market_price)
+    return {
+        "intrinsic_value": intrinsic,
+        "market_price": price,
+        "discount_to_intrinsic_value": price_discount_to_intrinsic_value(
+            intrinsic, price
+        ),
+        "upside_to_intrinsic_value": price_upside_to_intrinsic_value(
+            intrinsic, price
+        ),
+        "premium_to_intrinsic_value": price_premium_to_intrinsic_value(
+            price, intrinsic
+        ),
+        "definitions": dict(PRICE_COMPARISON_DEFINITIONS),
+    }
+
+
+def hurdle_comparison(
+    cases: Mapping[str, Number], hurdle: Number, *, hurdle_name: str = "hurdle"
+) -> dict[str, Any]:
+    """Split named returns into those that clear a hurdle and those that miss.
+
+    Exists so a sentence like "only the bull case clears the hurdle" is DERIVED
+    from the same numbers the table prints rather than written separately and
+    left behind when the numbers change. A repaired model once cut its best-case
+    IRR below the cost of capital while the prose still said that case cleared it.
+
+    Equality is a miss: a return exactly at the cost of capital creates no value.
+    """
+    if not isinstance(hurdle_name, str) or not hurdle_name.strip():
+        raise ValueError("hurdle_name must be an explicit nonempty string")
+    if not isinstance(cases, Mapping) or not cases:
+        raise ValueError("cases must be a nonempty mapping of name to return")
+    threshold = _finite(hurdle_name, hurdle)
+    values = {
+        str(name): _finite(f"cases[{name!r}]", value)
+        for name, value in cases.items()
+    }
+    clears = [name for name, value in values.items() if value > threshold]
+    misses = [name for name, value in values.items() if value <= threshold]
+    return {
+        "hurdle": threshold,
+        "hurdle_name": hurdle_name,
+        "cases": values,
+        "clears": clears,
+        "misses": misses,
+        "spreads": {name: value - threshold for name, value in values.items()},
+        "any_clears": bool(clears),
+        "all_clear": not misses,
+        "comparison": f"case return strictly greater than {hurdle_name}",
+    }
+
+
 def cash_flow_after_equity_compensation(
     reported_cash_flow: Number,
     stock_based_compensation: Number,
@@ -571,7 +644,7 @@ def fcff_valuation_case(
     market_price: Number | None = None,
     valuation_date: str | None = None,
     cash_flow_dates: Sequence[str] | None = None,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Value FCFF with either perpetual growth or an explicit terminal EV.
 
     ``terminal_value`` is undiscounted enterprise value at the end of the final
@@ -611,7 +684,11 @@ def fcff_valuation_case(
         "per_share_value": per_share,
     }
     if market_price is not None:
+        # margin_of_safety is the discount to intrinsic value. Emit the full
+        # comparison set beside it so a downstream writer never has to infer a
+        # denominator from the label alone.
         result["margin_of_safety"] = margin_of_safety(per_share, market_price)
+        result["price_comparison"] = price_comparison(per_share, market_price)
     return result
 
 
@@ -625,10 +702,207 @@ def _calendar_date(name: str, value: str) -> date:
         raise ValueError(f"{name} must be a YYYY-MM-DD calendar date") from error
 
 
+def elapsed_period_fraction(
+    *, period_start: str, period_end: str, as_of: str
+) -> dict[str, Any]:
+    """Return the INCLUSIVE elapsed-day fraction of a calendar period.
+
+    Matches ``remaining_period_flow``: the valuation is after operations on
+    ``as_of``, so ``as_of`` itself is elapsed and the remainder begins the next
+    day. A hand-rolled ``(as_of - period_start).days`` is one day short and has
+    silently shipped as the elapsed fraction of a forecast stub. Both day counts
+    are returned so a prorated amount and its basis can be serialized together.
+
+    Proration is the CALLER's decision; this only counts days. A flow that is
+    not earned evenly over the period must not be prorated by time at all.
+    """
+    start = _calendar_date("period_start", period_start)
+    end = _calendar_date("period_end", period_end)
+    cutoff = _calendar_date("as_of", as_of)
+    if start > end:
+        raise ValueError("period_start must not follow period_end")
+    if not start <= cutoff <= end:
+        raise ValueError("as_of must fall within the period")
+    elapsed_days = (cutoff - start).days + 1
+    total_days = (end - start).days + 1
+    return {
+        "period_start": period_start,
+        "period_end": period_end,
+        "as_of": as_of,
+        "elapsed_days": elapsed_days,
+        "total_days": total_days,
+        "remaining_days": total_days - elapsed_days,
+        "elapsed_fraction": elapsed_days / total_days,
+        "remaining_fraction": (total_days - elapsed_days) / total_days,
+        "remaining_period_start": (cutoff + timedelta(days=1)).isoformat()
+        if cutoff < end
+        else None,
+        "convention": (
+            "inclusive calendar days; as_of is elapsed and the remainder "
+            "begins the following day"
+        ),
+    }
+
+
+def observation_as_of(
+    observations: Sequence[Mapping[str, Any]],
+    *,
+    as_of: str,
+    timestamp_field: str,
+    value_field: str,
+) -> dict[str, Any]:
+    """Return the latest observation on or before the ``as_of`` CALENDAR DATE.
+
+    The distinction this exists for: an observation stamped ``2026-09-04
+    20:00:00`` is an observation FOR 2026-09-04, but it is after the instant
+    ``2026-09-04``. A cutoff written as ``timestamp <= '2026-09-04'`` compares
+    against midnight and drops that day entirely, which is how a valuation once
+    took the prior session's close while the requested day's close sat in the
+    same frame. Selection here is by calendar date; the exact observed instant
+    is returned beside the value so the calculation carries its own provenance
+    instead of a scalar copied out of console output.
+
+    Rows whose timestamp cannot be read as a date or datetime are rejected
+    rather than skipped. A future observation is excluded, never clamped.
+    """
+    cutoff = _calendar_date("as_of", as_of)
+    if isinstance(observations, (str, bytes, Mapping)):
+        raise ValueError("observations must be a sequence of mappings")
+    for name in ("timestamp_field", "value_field"):
+        text = timestamp_field if name == "timestamp_field" else value_field
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{name} must be an explicit nonempty string")
+    eligible: list[tuple[datetime, int, Mapping[str, Any]]] = []
+    later = 0
+    for index, row in enumerate(observations):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"observations[{index}] must be an object")
+        if timestamp_field not in row:
+            raise ValueError(f"observations[{index}] has no {timestamp_field!r}")
+        if value_field not in row:
+            raise ValueError(f"observations[{index}] has no {value_field!r}")
+        raw = row[timestamp_field]
+        observed_at = _observed_instant(f"observations[{index}]", raw)
+        if observed_at.date() > cutoff:
+            later += 1
+            continue
+        eligible.append((observed_at, index, row))
+    if not eligible:
+        raise ValueError(
+            f"no observation on or before {as_of}; "
+            f"{later} later observation(s) were excluded"
+        )
+    # Latest instant wins; on an exact tie the LAST such row in the supplied
+    # order wins, so a corrected row appended after the one it supersedes is the
+    # one selected. Ordering the input therefore decides ties, deliberately.
+    observed_at, _index, row = max(eligible, key=lambda item: (item[0], item[1]))
+    return {
+        "value": row[value_field],
+        "observed_at": observed_at.isoformat(),
+        "observed_date": observed_at.date().isoformat(),
+        "as_of": as_of,
+        "is_as_of_date": observed_at.date() == cutoff,
+        "observations_considered": len(eligible),
+        "observations_after_as_of": later,
+        "selection": (
+            f"latest {value_field} whose {timestamp_field} calendar date is on "
+            f"or before {as_of}"
+        ),
+        "row": deepcopy(dict(row)),
+    }
+
+
+def _naive_utc(value: datetime) -> datetime:
+    """Return a comparable instant, CONVERTING an offset rather than dropping it.
+
+    Discarding ``tzinfo`` would put ``2026-09-05T01:00:00+05:00`` on calendar
+    date 09-05 when the instant it names is 09-04 20:00 UTC — reintroducing the
+    day-boundary error this module exists to prevent. Naive values are left
+    alone: the lake stores naive session-close stamps and reinterpreting them
+    would shift every one of them.
+    """
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _observed_instant(name: str, value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return _naive_utc(value)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, str):
+        text = value.strip().replace(" ", "T", 1)
+        if text.endswith(("Z", "z")):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            raise ValueError(
+                f"{name} timestamp must be an ISO date or datetime"
+            ) from None
+        return _naive_utc(parsed)
+    # A pandas/numpy timestamp exposes to_pydatetime(); accept it without
+    # importing either, so the base install stays dependency-free.
+    converter = getattr(value, "to_pydatetime", None)
+    if callable(converter):
+        converted = converter()
+        if isinstance(converted, datetime):
+            return _naive_utc(converted)
+    raise ValueError(f"{name} timestamp must be an ISO date or datetime")
+
+
+#: How the amount in a ``period_flow`` came to exist, independent of the prose
+#: in ``definition``. ``reported`` is lifted from a published statement,
+#: ``modeled`` is built from forecast primitives, ``estimated`` fills a gap.
+FLOW_ORIGINS = ("reported", "modeled", "estimated")
+
+
+def flow_basis(
+    *, measure: str, origin: str, adjustments: Sequence[Mapping[str, Any]] = ()
+) -> dict[str, Any]:
+    """Describe what an amount actually IS, beneath the label it is given.
+
+    ``definition`` on a ``period_flow`` is free text, so making two flows share a
+    definition is one edit away and proves nothing: an elapsed reported
+    CFO-minus-capex and a modeled NOPAT+D&A-capex-dNWC forecast were once
+    reconciled by giving them the same definition string, leaving the amounts and
+    the accounting gap exactly as they were.
+
+    ``measure`` names the underlying quantity (the reported line, or the modeled
+    construction). ``origin`` is one of ``FLOW_ORIGINS``. ``adjustments`` are the
+    explicit named bridges applied to reach ``definition`` from ``measure``, each
+    ``{"name": str, "value": number}``; an unquantified bridge is not one.
+
+    Declaring a basis records a claim for review. It does not verify that the
+    bridge is complete, and nothing here should be read as approval.
+    """
+    if not isinstance(measure, str) or not measure.strip():
+        raise ValueError("measure must be an explicit nonempty string")
+    if origin not in FLOW_ORIGINS:
+        raise ValueError(f"origin must be one of {', '.join(FLOW_ORIGINS)}")
+    if isinstance(adjustments, (str, bytes, Mapping)):
+        raise ValueError("adjustments must be a sequence of objects")
+    bridged = []
+    for index, adjustment in enumerate(adjustments):
+        if not isinstance(adjustment, Mapping):
+            raise ValueError(f"adjustments[{index}] must be an object")
+        name = adjustment.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"adjustments[{index}] needs an explicit name")
+        if "value" not in adjustment:
+            raise ValueError(f"adjustments[{index}] needs an explicit value")
+        bridged.append({**deepcopy(dict(adjustment)), "name": name,
+                        "value": _finite(f"adjustments[{index}].value", adjustment["value"])})
+    return {"measure": measure, "origin": origin, "adjustments": bridged,
+            "total_adjustment": sum(row["value"] for row in bridged)}
+
+
 def period_flow(
     value: Number | None, *, period_start: str, period_end: str, as_of: str,
     unit: str, definition: str, status: str = "model_assumption",
     provenance: Mapping[str, Any] | None = None,
+    basis: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Describe an additive flow over inclusive calendar dates, without inference.
 
@@ -636,6 +910,11 @@ def period_flow(
     ``unit`` includes currency and scale; ``definition`` identifies the accounting
     basis. Status and provenance remain caller declarations, not verification.
     A missing amount stays None. This record must not describe a stock or ratio.
+
+    ``basis`` optionally records what the amount is beneath its label — see
+    ``flow_basis``. Supplying it lets ``remaining_period_flow`` see a reported
+    proxy standing in for a modeled construction even after both were given the
+    same ``definition``.
     """
     start = _calendar_date("period_start", period_start)
     end = _calendar_date("period_end", period_end)
@@ -647,10 +926,18 @@ def period_flow(
             raise ValueError(f"{name} must be an explicit nonempty string")
     if provenance is not None and not isinstance(provenance, Mapping):
         raise ValueError("provenance must be an object")
-    return {"value": None if value is None else _finite("value", value),
-            "period_start": period_start, "period_end": period_end, "as_of": as_of,
-            "unit": unit, "definition": definition, "status": status,
-            "provenance": deepcopy(dict(provenance or {}))}
+    record = {"value": None if value is None else _finite("value", value),
+              "period_start": period_start, "period_end": period_end, "as_of": as_of,
+              "unit": unit, "definition": definition, "status": status,
+              "provenance": deepcopy(dict(provenance or {}))}
+    if basis is not None:
+        if not isinstance(basis, Mapping):
+            raise ValueError("basis must be an object")
+        record["basis"] = flow_basis(
+            measure=basis.get("measure"), origin=basis.get("origin"),
+            adjustments=basis.get("adjustments", ()),
+        )
+    return record
 
 
 def remaining_period_flow(
@@ -671,7 +958,7 @@ def remaining_period_flow(
         try:
             normalized = period_flow(**{key: record[key] for key in (
                 "value", "period_start", "period_end", "as_of", "unit", "definition", "status")},
-                provenance=record.get("provenance"))
+                provenance=record.get("provenance"), basis=record.get("basis"))
         except KeyError as error:
             raise ValueError(f"period flow missing {error.args[0]}") from error
         # Preserve additional declared metadata rather than stripping evidence.
@@ -712,7 +999,51 @@ def remaining_period_flow(
         status="derived" if complete else "incomplete",
     )
     return {**result, "valuation_date": valuation_date, "missing_intervals": missing,
+            "basis_reconciliation": _basis_reconciliation(full, flows),
             "full_period": full, "elapsed_flows": flows}
+
+
+def _basis_reconciliation(
+    full: Mapping[str, Any], flows: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """State whether the elapsed amounts are the same KIND of thing as the forecast.
+
+    Matching ``unit`` and ``definition`` is required above, but both are free
+    text and an author can make them agree in one edit. This reports what the
+    declared bases actually say. It is a disclosure, not an approval: an
+    unreconciled result is still returned, with the mismatch attached to it.
+    """
+    declared = [row for row in (full, *flows) if isinstance(row.get("basis"), Mapping)]
+    if not declared:
+        return {"declared": False, "reconciled": None,
+                "note": ("No flow declared a basis. Equal definition strings do not "
+                         "establish that a reported proxy and a modeled forecast "
+                         "measure the same cash flow; see flow_basis.")}
+    undeclared = [row for row in (full, *flows) if not isinstance(row.get("basis"), Mapping)]
+    forecast_basis = full.get("basis") if isinstance(full.get("basis"), Mapping) else None
+    measures = {row["basis"]["measure"] for row in declared}
+    origins = {row["basis"]["origin"] for row in declared}
+    adjustments = [name for row in declared
+                   for name in (item["name"] for item in row["basis"]["adjustments"])]
+    reconciled = (
+        bool(flows) and not undeclared and len(measures) == 1 and len(origins) == 1
+    )
+    return {
+        "declared": True,
+        "reconciled": reconciled,
+        "forecast_basis": deepcopy(forecast_basis),
+        "elapsed_bases": [deepcopy(row.get("basis")) for row in flows],
+        "measures": sorted(measures),
+        "origins": sorted(origins),
+        "declared_adjustments": adjustments,
+        "flows_without_declared_basis": len(undeclared),
+        "note": ("Declared bases agree." if reconciled else
+                 "No elapsed flow was supplied, so no basis was reconciled." if not flows else
+                 "Declared bases differ. The elapsed amounts and the forecast are "
+                 "not the same measurement; the difference between them is not "
+                 "established by these records and needs a stated bridge or an "
+                 "investigation, not a shared definition string."),
+    }
 
 
 def forecast_remainder(
@@ -837,21 +1168,28 @@ __all__ = [
     "equity_return_case",
     "fcff",
     "fcff_valuation_case",
+    "flow_basis",
+    "FLOW_ORIGINS",
     "forecast_remainder",
     "period_flow",
     "remaining_period_flow",
+    "elapsed_period_fraction",
     "gordon_growth_terminal_value",
     "gordon_growth_terminal_value_from_nopat",
+    "hurdle_comparison",
     "internal_rate_of_return",
     "incremental_return_on_invested_capital",
     "invested_capital_from_operations",
     "margin_of_safety",
     "nopat",
     "net_investment",
+    "observation_as_of",
     "operating_nwc",
     "operating_period_metrics",
     "operating_forecast_period",
     "per_share_value",
+    "price_comparison",
+    "PRICE_COMPARISON_DEFINITIONS",
     "price_discount_to_intrinsic_value",
     "price_premium_to_intrinsic_value",
     "price_upside_to_intrinsic_value",

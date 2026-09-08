@@ -399,3 +399,28 @@ valuation date. The finance PV, enterprise-value, FCFF-case and IRR helpers acce
 Discount terminal value on the final payment date. Reconcile first-period revenue,
 profit, capex and cash-flow assumptions to available actuals with
 `forecast_remainder`; a revenue-only check does not validate capital spending.
+Count an elapsed stub with `finance.elapsed_period_fraction`, whose inclusive day
+count matches `remaining_period_flow`; subtracting dates by hand is a day short.
+
+A quote or any other time series is selected with
+`finance.observation_as_of(rows, as_of=..., timestamp_field=..., value_field=...)`,
+and the returned `observed_at` goes into the model beside the value. Every `date`
+column in the lake is a TIMESTAMP, and a daily bar stamped `2026-09-04 20:00:00`
+is an observation FOR 2026-09-04 that `WHERE date <= '2026-09-04'` excludes,
+because that compares against midnight; cast both sides to DATE when a SQL cutoff
+is a calendar day. Never retype a number printed by an earlier command into a
+producer: read it from the row you selected.
+
+Keep retrieval in its own producer that writes what it fetched to a file, and
+keep calculation and report producers pure over that file. A producer that
+fetches and computes together re-fetches on every edit, and the repeated work
+does not show up in the output for a reviewer to see.
+
+Emit a metric with the expression that produced it. `finance.price_comparison`
+returns discount, upside and premium with their denominators named, and
+`fcff_valuation_case(..., market_price=...)` carries them. A comparison stated in
+prose — which cases clear the cost of capital, which do not — is derived with
+`finance.hurdle_comparison` from the same values the table prints, never written
+separately. When two flows are supposed to be the same measurement, say so with
+`finance.flow_basis` rather than by making their `definition` strings match: an
+equal label is one edit away and reconciles nothing.
