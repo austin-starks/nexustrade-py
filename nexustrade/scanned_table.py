@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import urllib.error
@@ -1973,7 +1974,7 @@ def _prepare_pdf_document(
     )
 
 
-OBSERVATION_LEDGER_PATH = "/work/out/ledger.jsonl"
+OBSERVATION_LEDGER_PATH = "/work/observation_ledger.jsonl"
 
 
 def _persist_observation_ledger(
@@ -2009,9 +2010,19 @@ def _persist_observation_ledger(
     A document that came back with an `error` replaces nothing: a failed
     re-extract must not erase observations an earlier successful call recorded.
 
+    Written to `/work`, NOT `/work/out`. Everything under `/work/out` becomes a
+    declared bundle member, so a run curates that directory and sweeps its
+    intermediates out of it — on session 6a9f4d73cbc9576145f61be3 the operator
+    moved `/work/out/ledger.jsonl` to scratch along with its own `.pkl` files,
+    which is correct hygiene on its part and destroyed the accounting artifact.
+    `/work` is where the host already expects operator-adjacent files it reads
+    itself (see `DEFAULT_LINEAGE_PATH`), and the run has no reason to tidy it.
+
     Best effort by design. This is an audit artifact, and failing an extraction
     that has already been paid for because an audit file could not be written
-    would be strictly worse than having no audit file. Returns the number of rows
+    would be strictly worse than having no audit file. A write that fails says so
+    on stderr rather than vanishing: a silently skipped ledger is indistinguishable
+    from a document that legitimately produced nothing. Returns the number of rows
     written, for tests.
     """
     directory = os.path.dirname(ledger_path)
@@ -2069,7 +2080,12 @@ def _persist_observation_ledger(
             for record in fresh:
                 handle.write(f"{json.dumps(record, sort_keys=True)}\n")
         os.replace(tmp_path, ledger_path)
-    except OSError:
+    except OSError as error:
+        print(
+            f"observation ledger not written to {ledger_path}: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
         return 0
     return len(fresh)
 

@@ -98,7 +98,7 @@ class ObservationLedgerTests(unittest.TestCase):
             self.assertEqual(_read(path), [])
 
     def test_is_a_noop_outside_a_sandbox(self) -> None:
-        """`/work/out` is a sandbox convention; a library user must be unaffected."""
+        """`/work` is a sandbox convention; a library user must be unaffected."""
         missing = os.path.join(tempfile.gettempdir(), "nexustrade-no-such-dir", "ledger.jsonl")
         written = self.scanned_table._persist_observation_ledger(
             {"doc_a": {"rows": [{"n": 1}], "error": None}},
