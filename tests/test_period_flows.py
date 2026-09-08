@@ -98,17 +98,19 @@ class FlowBasisTests(unittest.TestCase):
         self.assertEqual(result['value'], 40)
         reconciliation = result['basis_reconciliation']
         self.assertTrue(reconciliation['declared'])
-        self.assertFalse(reconciliation['reconciled'])
+        self.assertEqual(reconciliation['agreement'], 'differing-bases')
         self.assertEqual(reconciliation['origins'], ['modeled', 'reported'])
         self.assertEqual(len(reconciliation['measures']), 2)
-        self.assertIn('not the same measurement', reconciliation['note'])
+        self.assertIn('different measurements', reconciliation['note'])
 
     def test_matching_declared_bases_reconcile(self):
         annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
         h1 = self.flow(60, '2026-01-01', '2026-09-04', basis=self.modeled)
         reconciliation = finance.remaining_period_flow(
             annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
-        self.assertTrue(reconciliation['reconciled'])
+        # One declared basis is NOT a demonstrated bridge, and the record says so.
+        self.assertEqual(reconciliation['agreement'], 'single-basis')
+        self.assertIn('not evidence', reconciliation['note'])
         self.assertEqual(reconciliation['origins'], ['modeled'])
 
     def test_dropping_a_basis_is_visible_rather_than_silent(self):
@@ -116,7 +118,7 @@ class FlowBasisTests(unittest.TestCase):
         h1 = self.flow(60, '2026-01-01', '2026-09-04')
         reconciliation = finance.remaining_period_flow(
             annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
-        self.assertFalse(reconciliation['reconciled'])
+        self.assertEqual(reconciliation['agreement'], 'undeclared')
         self.assertEqual(reconciliation['flows_without_declared_basis'], 1)
 
     def test_no_elapsed_flow_reconciles_nothing(self):
@@ -124,8 +126,8 @@ class FlowBasisTests(unittest.TestCase):
         reconciliation = finance.remaining_period_flow(
             annual, [], valuation_date='2026-09-04')['basis_reconciliation']
         self.assertTrue(reconciliation['declared'])
-        self.assertFalse(reconciliation['reconciled'])
-        self.assertIn('no basis was reconciled', reconciliation['note'])
+        self.assertEqual(reconciliation['agreement'], 'no-elapsed-flow')
+        self.assertIn('nothing was compared', reconciliation['note'])
 
     def test_no_declared_basis_keeps_the_previous_shape_and_says_so(self):
         annual = self.flow(100, '2026-01-01', '2026-12-31')
@@ -133,7 +135,7 @@ class FlowBasisTests(unittest.TestCase):
         reconciliation = finance.remaining_period_flow(
             annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
         self.assertFalse(reconciliation['declared'])
-        self.assertIsNone(reconciliation['reconciled'])
+        self.assertEqual(reconciliation['agreement'], 'undeclared-by-all')
         self.assertIn('do not establish', reconciliation['note'])
 
     def test_declared_adjustments_are_named_and_quantified(self):
@@ -159,3 +161,54 @@ class FlowBasisTests(unittest.TestCase):
         h1 = dict(self.flow(60, '2026-01-01', '2026-09-04'), basis={'measure': 'x'})
         with self.assertRaises(ValueError):
             finance.remaining_period_flow(annual, [h1], valuation_date='2026-09-04')
+
+    def test_a_quantified_bridge_is_distinguished_from_a_bare_mismatch(self):
+        bridged = dict(self.reported, adjustments=[
+            {'name': 'stock-based compensation', 'value': -14.751},
+            {'name': 'cash tax timing', 'value': 5.13}])
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        h1 = self.flow(60, '2026-01-01', '2026-09-04', basis=bridged)
+        rec = finance.remaining_period_flow(annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
+        # Differing bases stay differing. Quantified adjustments are reported as
+        # amounts, and no status claims they close the gap.
+        self.assertEqual(rec['agreement'], 'differing-bases')
+        self.assertAlmostEqual(rec['total_declared_adjustment'], -9.621)
+        self.assertIn('for review', rec['note'])
+
+    def test_collapsing_to_one_basis_is_not_reported_as_a_bridge(self):
+        # The move that bought a full letter grade: drop the reported basis, put
+        # every leg on the modeled one, and assert success. The record must not
+        # supply that success.
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        h1 = self.flow(60, '2026-01-01', '2026-09-04', basis=self.modeled)
+        rec = finance.remaining_period_flow(annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
+        self.assertEqual(rec['agreement'], 'single-basis')
+        self.assertNotIn('reconciled', rec)
+
+    def test_no_status_can_be_asserted_as_a_holding_bridge(self):
+        # A boolean was gamed by deleting a declaration. A "bridged" status was
+        # WORSE: one adjustment of value 0.0 bought it. No status may mean the
+        # bridge holds, and every value is enumerated for a caller to branch on.
+        self.assertNotIn('bridged', finance.BASIS_AGREEMENTS)
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        zero = dict(self.reported, adjustments=[{'name': 'stock-based compensation', 'value': 0.0}])
+        h1 = self.flow(60, '2026-01-01', '2026-09-04', basis=zero)
+        rec = finance.remaining_period_flow(annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
+        self.assertEqual(rec['agreement'], 'differing-bases')
+        self.assertEqual(rec['total_declared_adjustment'], 0.0)
+
+    def test_every_reachable_agreement_is_enumerated(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        seen = {
+            finance.remaining_period_flow(annual, [], valuation_date='2026-09-04')['basis_reconciliation']['agreement'],
+            finance.remaining_period_flow(annual, [self.flow(60, '2026-01-01', '2026-09-04', basis=self.modeled)],
+                valuation_date='2026-09-04')['basis_reconciliation']['agreement'],
+            finance.remaining_period_flow(annual, [self.flow(60, '2026-01-01', '2026-09-04', basis=self.reported)],
+                valuation_date='2026-09-04')['basis_reconciliation']['agreement'],
+            finance.remaining_period_flow(annual, [self.flow(60, '2026-01-01', '2026-09-04')],
+                valuation_date='2026-09-04')['basis_reconciliation']['agreement'],
+            finance.remaining_period_flow(self.flow(100, '2026-01-01', '2026-12-31'),
+                [self.flow(60, '2026-01-01', '2026-09-04')],
+                valuation_date='2026-09-04')['basis_reconciliation'].get('agreement', 'undeclared-by-all'),
+        }
+        self.assertTrue(seen <= set(finance.BASIS_AGREEMENTS), seen)

@@ -993,9 +993,15 @@ Successful research calls still append shared durable receipt/cache rows.
   `definition` is free text: giving a reported CFO-minus-capex proxy and a
   modeled NOPAT+D&A-capex-dNWC forecast the same definition string satisfies the
   composer's equality check while leaving the accounting gap untouched.
-  `remaining_period_flow` returns `basis_reconciliation` describing whether the
-  declared bases agree. It discloses; it does not approve, and an unreconciled
-  bridge still needs the investigation, not a matching label.
+  `remaining_period_flow` returns `basis_reconciliation` with an `agreement` from
+  `nt.finance.BASIS_AGREEMENTS` — `single-basis`, `differing-bases`,
+  `no-elapsed-flow`, `undeclared` or `undeclared-by-all` — plus the declared
+  adjustments and their total. **No value means the bridge holds**, deliberately:
+  the gap is a difference between two measurements of one period and only one of
+  them is in the record, so whether the adjustments explain it is a question for
+  review rather than something a status can answer. There is nothing here to
+  assert; a boolean was gamed by deleting a declaration, and a `bridged` status by
+  declaring one adjustment worth zero.
 - `nt.finance.elapsed_period_fraction(period_start=..., period_end=..., as_of=...)`
   counts INCLUSIVE elapsed days, the same convention `remaining_period_flow`
   uses: `as_of` is elapsed and the remainder begins the next day. A hand-written

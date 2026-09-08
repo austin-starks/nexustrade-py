@@ -857,6 +857,17 @@ def _observed_instant(name: str, value: Any) -> datetime:
 #: ``modeled`` is built from forecast primitives, ``estimated`` fills a gap.
 FLOW_ORIGINS = ("reported", "modeled", "estimated")
 
+#: Every value ``basis_reconciliation.agreement`` can take. None of them means
+#: "the bridge holds" - see ``_basis_reconciliation``. Exported so a caller
+#: branches on the tuple instead of hardcoding strings that drift.
+BASIS_AGREEMENTS = (
+    "single-basis",
+    "differing-bases",
+    "no-elapsed-flow",
+    "undeclared",
+    "undeclared-by-all",
+)
+
 
 def flow_basis(
     *, measure: str, origin: str, adjustments: Sequence[Mapping[str, Any]] = ()
@@ -1015,7 +1026,7 @@ def _basis_reconciliation(
     """
     declared = [row for row in (full, *flows) if isinstance(row.get("basis"), Mapping)]
     if not declared:
-        return {"declared": False, "reconciled": None,
+        return {"declared": False, "agreement": "undeclared-by-all",
                 "note": ("No flow declared a basis. Equal definition strings do not "
                          "establish that a reported proxy and a modeled forecast "
                          "measure the same cash flow; see flow_basis.")}
@@ -1025,24 +1036,59 @@ def _basis_reconciliation(
     origins = {row["basis"]["origin"] for row in declared}
     adjustments = [name for row in declared
                    for name in (item["name"] for item in row["basis"]["adjustments"])]
-    reconciled = (
-        bool(flows) and not undeclared and len(measures) == 1 and len(origins) == 1
-    )
+    # A boolean invited exactly one move: collapse every flow onto a single
+    # declared basis and the flag turns true with no amount changed and nothing
+    # bridged. Naming a "bridged" status was WORSE - one adjustment of value 0.0
+    # bought it, which is cheaper than deleting a declaration.
+    #
+    # So this reports facts and reaches no verdict. There is no status meaning
+    # "the bridge holds", because these records cannot establish that: the gap
+    # between a reported proxy and a modeled forecast is a difference between two
+    # measurements of the same period, and only one of them is here. Whether the
+    # declared adjustments explain it is a question for review, and it is asked
+    # with the amounts in hand rather than answered by a flag.
+    total_adjustment = sum(row["basis"]["total_adjustment"] for row in declared)
+    if undeclared:
+        agreement = "undeclared"
+        note = (
+            f"{len(undeclared)} flow(s) declared no basis, so the elapsed amounts "
+            "and the forecast cannot be compared as measurements."
+        )
+    elif not flows:
+        agreement = "no-elapsed-flow"
+        note = "No elapsed flow was supplied, so nothing was compared."
+    elif len(measures) == 1 and len(origins) == 1:
+        agreement = "single-basis"
+        note = (
+            "Every flow declares the same measure and origin, so no bridge was "
+            "required BY THESE RECORDS. That is not evidence that a reported "
+            "amount and a modeled forecast were reconciled: a proxy dropped from "
+            "the declarations before it reached here looks identical to one that "
+            "was never used."
+        )
+    else:
+        agreement = "differing-bases"
+        note = (
+            "The elapsed amounts and the forecast declare different measurements. "
+            + (
+                f"{len(adjustments)} adjustment(s) totalling {total_adjustment} "
+                "are declared against them; whether that accounts for the "
+                "difference is not established here and is for review."
+                if adjustments
+                else "No quantified adjustment is declared against the difference."
+            )
+        )
     return {
         "declared": True,
-        "reconciled": reconciled,
+        "agreement": agreement,
         "forecast_basis": deepcopy(forecast_basis),
         "elapsed_bases": [deepcopy(row.get("basis")) for row in flows],
         "measures": sorted(measures),
         "origins": sorted(origins),
         "declared_adjustments": adjustments,
+        "total_declared_adjustment": total_adjustment,
         "flows_without_declared_basis": len(undeclared),
-        "note": ("Declared bases agree." if reconciled else
-                 "No elapsed flow was supplied, so no basis was reconciled." if not flows else
-                 "Declared bases differ. The elapsed amounts and the forecast are "
-                 "not the same measurement; the difference between them is not "
-                 "established by these records and needs a stated bridge or an "
-                 "investigation, not a shared definition string."),
+        "note": note,
     }
 
 
@@ -1170,6 +1216,7 @@ __all__ = [
     "fcff_valuation_case",
     "flow_basis",
     "FLOW_ORIGINS",
+    "BASIS_AGREEMENTS",
     "forecast_remainder",
     "period_flow",
     "remaining_period_flow",
