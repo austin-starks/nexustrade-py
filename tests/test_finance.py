@@ -316,3 +316,261 @@ class FinanceSdkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ObservationSelectionTests(unittest.TestCase):
+    """Frozen from the stopped 2026-09-07 run.
+
+    The lake returned a 2026-09-04 close of 338.46 stamped ``2026-09-04
+    20:00:00``. A later query filtered ``"date" <= '2026-09-04'``, which compares
+    the timestamp against midnight, dropped that row, and the valuation used the
+    prior session's 342.48 while asserting no 09-04 bar existed.
+    """
+
+    rows = [
+        {"date": "2026-09-02 20:00:00", "closingPrice": 337.12},
+        {"date": "2026-09-03 20:00:00", "closingPrice": 342.48},
+        {"date": "2026-09-04 20:00:00", "closingPrice": 338.46},
+    ]
+
+    def select(self, as_of: str, rows=None):
+        return nt.finance.observation_as_of(
+            self.rows if rows is None else rows,
+            as_of=as_of,
+            timestamp_field="date",
+            value_field="closingPrice",
+        )
+
+    def test_an_intraday_stamp_still_belongs_to_its_calendar_date(self) -> None:
+        selected = self.select("2026-09-04")
+        self.assertEqual(selected["value"], 338.46)
+        self.assertEqual(selected["observed_at"], "2026-09-04T20:00:00")
+        self.assertEqual(selected["observed_date"], "2026-09-04")
+        self.assertTrue(selected["is_as_of_date"])
+        self.assertEqual(selected["observations_after_as_of"], 0)
+
+    def test_a_later_observation_is_excluded_not_clamped(self) -> None:
+        selected = self.select("2026-09-03")
+        self.assertEqual(selected["value"], 342.48)
+        self.assertFalse(selected["value"] == 338.46)
+        self.assertEqual(selected["observations_after_as_of"], 1)
+
+    def test_a_date_with_no_observation_falls_back_to_the_latest_prior(self) -> None:
+        selected = self.select("2026-09-06")
+        self.assertEqual(selected["observed_date"], "2026-09-04")
+        self.assertFalse(selected["is_as_of_date"])
+
+    def test_the_selected_row_travels_with_the_value(self) -> None:
+        selected = self.select("2026-09-04")
+        self.assertEqual(selected["row"]["closingPrice"], 338.46)
+        selected["row"]["closingPrice"] = 0.0
+        self.assertEqual(self.rows[2]["closingPrice"], 338.46)
+
+    def test_an_offset_is_converted_not_discarded(self) -> None:
+        # 2026-09-05T01:00+05:00 IS 2026-09-04T20:00Z. Dropping the offset would
+        # file it under calendar date 09-05, exclude it, and hand back the prior
+        # session's close - the exact defect this helper exists to prevent.
+        rows = [
+            {"date": "2026-09-03 20:00:00", "closingPrice": 342.48},
+            {"date": "2026-09-05T01:00:00+05:00", "closingPrice": 338.46},
+        ]
+        selected = self.select("2026-09-04", rows=rows)
+        self.assertEqual(selected["value"], 338.46)
+        self.assertEqual(selected["observed_at"], "2026-09-04T20:00:00")
+        self.assertTrue(selected["is_as_of_date"])
+
+    def test_a_z_suffix_and_an_explicit_utc_offset_agree(self) -> None:
+        for stamp in ("2026-09-04T20:00:00Z", "2026-09-04T20:00:00+00:00"):
+            with self.subTest(stamp=stamp):
+                selected = self.select(
+                    "2026-09-04", rows=[{"date": stamp, "closingPrice": 338.46}]
+                )
+                self.assertEqual(selected["observed_at"], "2026-09-04T20:00:00")
+
+    def test_an_aware_datetime_object_is_converted_too(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        rows = [
+            {
+                "date": datetime(
+                    2026, 9, 5, 1, 0, tzinfo=timezone(timedelta(hours=5))
+                ),
+                "closingPrice": 338.46,
+            }
+        ]
+        selected = self.select("2026-09-04", rows=rows)
+        self.assertEqual(selected["observed_at"], "2026-09-04T20:00:00")
+
+    def test_an_exact_tie_is_broken_by_supplied_order(self) -> None:
+        # A corrected row appended after the one it supersedes must win.
+        rows = [
+            {"date": "2026-09-04 20:00:00", "closingPrice": 1.0},
+            {"date": "2026-09-04 20:00:00", "closingPrice": 2.0},
+        ]
+        self.assertEqual(self.select("2026-09-04", rows=rows)["value"], 2.0)
+        self.assertEqual(
+            self.select("2026-09-04", rows=list(reversed(rows)))["value"], 1.0
+        )
+
+    def test_selection_is_chronological_not_lexicographic(self) -> None:
+        rows = [
+            {"date": "2026-09-04T20:00:00.500000", "closingPrice": 2.0},
+            {"date": "2026-09-04T20:00:00", "closingPrice": 1.0},
+        ]
+        self.assertEqual(self.select("2026-09-04", rows=rows)["value"], 2.0)
+
+    def test_datetime_and_date_objects_are_accepted(self) -> None:
+        from datetime import date, datetime
+
+        rows = [
+            {"t": date(2026, 9, 3), "v": 1.0},
+            {"t": datetime(2026, 9, 4, 20, 0), "v": 2.0},
+        ]
+        selected = nt.finance.observation_as_of(
+            rows, as_of="2026-09-04", timestamp_field="t", value_field="v"
+        )
+        self.assertEqual(selected["value"], 2.0)
+
+    def test_empty_and_malformed_inputs_fail_explicitly(self) -> None:
+        with self.assertRaises(ValueError):
+            self.select("2026-09-01")
+        with self.assertRaises(ValueError):
+            self.select("2026-09-04", rows=[{"date": "not-a-date", "closingPrice": 1}])
+        with self.assertRaises(ValueError):
+            self.select("2026-09-04", rows=[{"closingPrice": 1}])
+        with self.assertRaises(ValueError):
+            self.select("2026-09-04", rows=[{"date": "2026-09-04"}])
+        with self.assertRaises(ValueError):
+            self.select("09/04/2026")
+
+
+class ElapsedFractionTests(unittest.TestCase):
+    def test_the_as_of_day_is_elapsed(self) -> None:
+        # July 1 to September 4 inclusive is 66 days, not 65. The run used 65.
+        result = nt.finance.elapsed_period_fraction(
+            period_start="2026-07-01", period_end="2026-12-31", as_of="2026-09-04"
+        )
+        self.assertEqual(result["elapsed_days"], 66)
+        self.assertEqual(result["total_days"], 184)
+        self.assertEqual(result["remaining_days"], 118)
+        self.assertAlmostEqual(result["elapsed_fraction"], 66 / 184)
+        self.assertEqual(result["remaining_period_start"], "2026-09-05")
+
+    def test_the_convention_matches_remaining_period_flow(self) -> None:
+        flow = dict(as_of="2026-09-04", unit="USD", definition="FCFF")
+        full = nt.finance.period_flow(
+            100.0, period_start="2026-07-01", period_end="2026-12-31", **flow
+        )
+        stub = nt.finance.period_flow(
+            10.0, period_start="2026-07-01", period_end="2026-09-04", **flow
+        )
+        remaining = nt.finance.remaining_period_flow(
+            full, [stub], valuation_date="2026-09-04"
+        )
+        fraction = nt.finance.elapsed_period_fraction(
+            period_start="2026-07-01", period_end="2026-12-31", as_of="2026-09-04"
+        )
+        self.assertEqual(
+            remaining["period_start"], fraction["remaining_period_start"]
+        )
+
+    def test_a_whole_elapsed_period_leaves_no_remainder(self) -> None:
+        result = nt.finance.elapsed_period_fraction(
+            period_start="2026-07-01", period_end="2026-09-04", as_of="2026-09-04"
+        )
+        self.assertEqual(result["remaining_days"], 0)
+        self.assertIsNone(result["remaining_period_start"])
+
+    def test_an_as_of_outside_the_period_fails(self) -> None:
+        for as_of in ("2026-06-30", "2027-01-01"):
+            with self.subTest(as_of=as_of), self.assertRaises(ValueError):
+                nt.finance.elapsed_period_fraction(
+                    period_start="2026-07-01", period_end="2026-12-31", as_of=as_of
+                )
+
+
+class PriceComparisonTests(unittest.TestCase):
+    """Frozen from cycle 2 of the stopped run.
+
+    The model stored ``discount -0.5701`` and ``upside -0.3631`` correctly. The
+    host report labelled its -57.0% column ``Discount = (IV / market) - 1``, the
+    formula for the OTHER number, and the grader then blamed the model.
+    """
+
+    def test_each_comparison_ships_with_its_own_denominator(self) -> None:
+        comparison = nt.finance.price_comparison(215.5615, 338.46)
+        self.assertAlmostEqual(
+            comparison["discount_to_intrinsic_value"], -0.5701, places=4
+        )
+        self.assertAlmostEqual(
+            comparison["upside_to_intrinsic_value"], -0.3631, places=4
+        )
+        self.assertAlmostEqual(
+            comparison["premium_to_intrinsic_value"], 0.5701, places=4
+        )
+        self.assertEqual(
+            comparison["definitions"]["discount_to_intrinsic_value"],
+            "(intrinsic_value - market_price) / intrinsic_value",
+        )
+        self.assertEqual(
+            comparison["definitions"]["upside_to_intrinsic_value"],
+            "(intrinsic_value - market_price) / market_price",
+        )
+        self.assertNotEqual(
+            comparison["discount_to_intrinsic_value"],
+            comparison["upside_to_intrinsic_value"],
+        )
+
+    def test_a_valuation_case_carries_the_definitions(self) -> None:
+        case = nt.finance.fcff_valuation_case(
+            forecast_fcff=[10.0, 12.0],
+            discount_rate=0.1,
+            terminal_value=200.0,
+            cash_and_non_operating_assets=5.0,
+            debt_and_debt_like_liabilities=3.0,
+            diluted_shares=2.0,
+            market_price=100.0,
+        )
+        self.assertEqual(
+            case["margin_of_safety"],
+            case["price_comparison"]["discount_to_intrinsic_value"],
+        )
+        self.assertIn("definitions", case["price_comparison"])
+
+    def test_editing_the_returned_definitions_cannot_change_the_module(self) -> None:
+        nt.finance.price_comparison(200.0, 100.0)["definitions"].clear()
+        self.assertIn(
+            "discount_to_intrinsic_value",
+            nt.finance.PRICE_COMPARISON_DEFINITIONS,
+        )
+
+
+class HurdleComparisonTests(unittest.TestCase):
+    def test_the_sentence_follows_the_numbers(self) -> None:
+        # The repaired model: bull IRR 6.59% against an 8.85% WACC. The prose
+        # still said only the bull case cleared the hurdle.
+        result = nt.finance.hurdle_comparison(
+            {"bear": -0.0288, "base": 0.0303, "bull": 0.0659},
+            0.0885,
+            hurdle_name="WACC",
+        )
+        self.assertEqual(result["clears"], [])
+        self.assertEqual(result["misses"], ["bear", "base", "bull"])
+        self.assertFalse(result["any_clears"])
+        self.assertAlmostEqual(result["spreads"]["bull"], 0.0659 - 0.0885)
+
+    def test_a_return_exactly_at_the_hurdle_is_a_miss(self) -> None:
+        result = nt.finance.hurdle_comparison({"base": 0.0885}, 0.0885)
+        self.assertEqual(result["misses"], ["base"])
+        self.assertFalse(result["all_clear"])
+
+    def test_empty_or_nonnumeric_cases_fail_explicitly(self) -> None:
+        for cases in ({}, {"base": None}, {"base": True}):
+            with self.subTest(cases=cases), self.assertRaises(ValueError):
+                nt.finance.hurdle_comparison(cases, 0.05)
+
+    def test_a_blank_hurdle_name_is_rejected_before_it_names_an_error(self) -> None:
+        for name in ("", "   ", None):
+            with self.subTest(name=name), self.assertRaises(ValueError) as caught:
+                nt.finance.hurdle_comparison({"base": 0.1}, 0.05, hurdle_name=name)
+            self.assertIn("hurdle_name", str(caught.exception))

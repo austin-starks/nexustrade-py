@@ -70,3 +70,92 @@ class PeriodFlowTests(unittest.TestCase):
         for cutoff in ('2026-12-31', '2027-12-31', '2027-02-29'):
             with self.assertRaises(ValueError):
                 finance.remaining_period_flow(annual, [], valuation_date=cutoff)
+
+
+class FlowBasisTests(unittest.TestCase):
+    """Frozen from the stopped 2026-09-07 run.
+
+    ``remaining_period_flow`` rejected an elapsed reported CFO-minus-capex row
+    against a modeled NOPAT+D&A-capex-dNWC forecast. The next edit gave both the
+    same ``definition`` string. The exception went away; the amounts and the
+    accounting gap did not change.
+    """
+
+    reported = {'measure': 'reported CFO less capital expenditures', 'origin': 'reported'}
+    modeled = {'measure': 'NOPAT plus D&A less capex less change in operating NWC',
+               'origin': 'modeled'}
+
+    def flow(self, value, start, end, **kwargs):
+        options = dict(as_of='2026-09-04', unit='USD', definition='free cash flow to the firm')
+        options.update(kwargs)
+        return finance.period_flow(value, period_start=start, period_end=end, **options)
+
+    def test_a_shared_definition_string_no_longer_hides_a_different_measure(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        h1 = self.flow(60, '2026-01-01', '2026-09-04', basis=self.reported)
+        result = finance.remaining_period_flow(annual, [h1], valuation_date='2026-09-04')
+        # The composer still computes; the mismatch is disclosed, not gated.
+        self.assertEqual(result['value'], 40)
+        reconciliation = result['basis_reconciliation']
+        self.assertTrue(reconciliation['declared'])
+        self.assertFalse(reconciliation['reconciled'])
+        self.assertEqual(reconciliation['origins'], ['modeled', 'reported'])
+        self.assertEqual(len(reconciliation['measures']), 2)
+        self.assertIn('not the same measurement', reconciliation['note'])
+
+    def test_matching_declared_bases_reconcile(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        h1 = self.flow(60, '2026-01-01', '2026-09-04', basis=self.modeled)
+        reconciliation = finance.remaining_period_flow(
+            annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
+        self.assertTrue(reconciliation['reconciled'])
+        self.assertEqual(reconciliation['origins'], ['modeled'])
+
+    def test_dropping_a_basis_is_visible_rather_than_silent(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        h1 = self.flow(60, '2026-01-01', '2026-09-04')
+        reconciliation = finance.remaining_period_flow(
+            annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
+        self.assertFalse(reconciliation['reconciled'])
+        self.assertEqual(reconciliation['flows_without_declared_basis'], 1)
+
+    def test_no_elapsed_flow_reconciles_nothing(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        reconciliation = finance.remaining_period_flow(
+            annual, [], valuation_date='2026-09-04')['basis_reconciliation']
+        self.assertTrue(reconciliation['declared'])
+        self.assertFalse(reconciliation['reconciled'])
+        self.assertIn('no basis was reconciled', reconciliation['note'])
+
+    def test_no_declared_basis_keeps_the_previous_shape_and_says_so(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31')
+        h1 = self.flow(60, '2026-01-01', '2026-09-04')
+        reconciliation = finance.remaining_period_flow(
+            annual, [h1], valuation_date='2026-09-04')['basis_reconciliation']
+        self.assertFalse(reconciliation['declared'])
+        self.assertIsNone(reconciliation['reconciled'])
+        self.assertIn('do not establish', reconciliation['note'])
+
+    def test_declared_adjustments_are_named_and_quantified(self):
+        basis = dict(self.reported, adjustments=[
+            {'name': 'stock-based compensation', 'value': -14.751},
+            {'name': 'after-tax accrued interest', 'value': 1.521}])
+        record = self.flow(60, '2026-01-01', '2026-09-04', basis=basis)
+        self.assertEqual([row['name'] for row in record['basis']['adjustments']],
+                         ['stock-based compensation', 'after-tax accrued interest'])
+        self.assertAlmostEqual(record['basis']['total_adjustment'], -13.23)
+
+    def test_a_malformed_basis_fails_instead_of_being_stored(self):
+        for basis in ({'measure': 'x'}, {'origin': 'reported'}, {'measure': ' ', 'origin': 'reported'},
+                      {'measure': 'x', 'origin': 'guessed'},
+                      {'measure': 'x', 'origin': 'reported', 'adjustments': [{'name': 'a'}]},
+                      {'measure': 'x', 'origin': 'reported', 'adjustments': [{'value': 1}]},
+                      {'measure': 'x', 'origin': 'reported', 'adjustments': {'name': 'a', 'value': 1}}):
+            with self.subTest(basis=basis), self.assertRaises(ValueError):
+                self.flow(60, '2026-01-01', '2026-09-04', basis=basis)
+
+    def test_a_basis_supplied_as_a_raw_dict_is_validated_by_the_composer(self):
+        annual = self.flow(100, '2026-01-01', '2026-12-31', basis=self.modeled)
+        h1 = dict(self.flow(60, '2026-01-01', '2026-09-04'), basis={'measure': 'x'})
+        with self.assertRaises(ValueError):
+            finance.remaining_period_flow(annual, [h1], valuation_date='2026-09-04')

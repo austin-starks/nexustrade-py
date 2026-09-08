@@ -988,6 +988,37 @@ Successful research calls still append shared durable receipt/cache rows.
   An uncovered elapsed interval or missing amount returns `value=None`, never an
   automatic proration. A model estimate can fill an interval explicitly; its
   provenance stays attached. The raw numeric primitives remain available.
+- `nt.finance.flow_basis(measure=..., origin=..., adjustments=[...])`, passed as
+  `period_flow(..., basis=...)`, records what an amount IS beneath its label.
+  `definition` is free text: giving a reported CFO-minus-capex proxy and a
+  modeled NOPAT+D&A-capex-dNWC forecast the same definition string satisfies the
+  composer's equality check while leaving the accounting gap untouched.
+  `remaining_period_flow` returns `basis_reconciliation` describing whether the
+  declared bases agree. It discloses; it does not approve, and an unreconciled
+  bridge still needs the investigation, not a matching label.
+- `nt.finance.elapsed_period_fraction(period_start=..., period_end=..., as_of=...)`
+  counts INCLUSIVE elapsed days, the same convention `remaining_period_flow`
+  uses: `as_of` is elapsed and the remainder begins the next day. A hand-written
+  `(as_of - start).days` is one day short. Whether a flow may be prorated by
+  time at all remains the analyst's call.
+- `nt.finance.observation_as_of(rows, as_of=..., timestamp_field=...,
+  value_field=...)` selects the latest observation whose CALENDAR DATE is on or
+  before `as_of`, and returns the exact `observed_at` instant beside the value.
+  A daily bar stamped `2026-09-04 20:00:00` is an observation for 2026-09-04 but
+  is after the instant `2026-09-04`, so a `WHERE date <= '2026-09-04'` cutoff
+  drops that whole day. Compare dates to dates in SQL — `CAST(date AS DATE) <=
+  CAST(? AS DATE)` — and select the row with this helper rather than reading a
+  number out of console output. A timezone offset is converted, not discarded.
+  On an exact timestamp tie the last such row in the supplied order wins.
+- `nt.finance.price_comparison(intrinsic_value, market_price)` returns the
+  discount, upside and premium together with `definitions` naming each
+  denominator, and `fcff_valuation_case(..., market_price=...)` includes it.
+  The three differ only in denominator, so a bare scalar labelled "discount"
+  leaves a report writer guessing which one it is.
+- `nt.finance.hurdle_comparison({"base": ..., "bull": ...}, wacc)` derives which
+  cases clear a hurdle from the same numbers the table prints, so a sentence
+  like "only the bull case clears" cannot survive a change to the numbers it
+  describes. Equality is a miss.
 - `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
   to the current model when `report.write(inputs=inputs, model=model)` runs.
   `model=` is reference resolution, not automatic model export. Include full
