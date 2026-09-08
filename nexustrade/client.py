@@ -12,13 +12,14 @@ import json
 import os
 import random
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, TypedDict, runtime_checkable
 
 from nexustrade.env import LazyDotenv, environment_value
 
@@ -39,6 +40,8 @@ _MAX_REDIRECTS = 5
 # API, or it returned 2xx with an envelope the client could not use. Reporting
 # a literal 200 there would misattribute a 201 response.
 _NO_HTTP_STATUS = 0
+DEFAULT_API_BASE_URL = "https://nexustrade.io/api/v1"
+WORKSPACE_SESSION_HEADER = "X-NexusTrade-Session"
 _MAX_UPLOAD_PUT_ATTEMPTS = 5
 _UPLOAD_PUT_INITIAL_BACKOFF_SECONDS = 0.5
 _UPLOAD_PUT_MAX_BACKOFF_SECONDS = 8.0
@@ -92,6 +95,13 @@ class NexusTradeApiError(RuntimeError):
         # still running, so the caller needs the id to resume waiting without
         # resubmitting — reading it out of the message is not an interface.
         self.operation_id = operation_id
+
+
+class NexusTradeWorkspaceSessionExpiredError(NexusTradeApiError):
+    """An explicitly supplied anonymous workspace can no longer be resumed."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(status, "workspace_session_expired", message)
 
 
 def _is_retryable_upload_http_status(status: int) -> bool:
@@ -219,22 +229,23 @@ class UploadTransport(Protocol):
     ) -> None: ...
 
 
-@dataclass(frozen=True)
+@dataclass
 class HttpTransport:
-    api_key: str = field(repr=False)
+    api_key: str | None = field(repr=False)
     base_url: str
+    workspace_session: str | None = field(default=None, repr=False)
     timeout_seconds: float = 30.0
+    _workspace_session_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.api_key, str)
-            or not self.api_key
-            or any(
-                character.isspace() or ord(character) < 32
-                for character in self.api_key
-            )
-        ):
-            raise ValueError("NexusTrade api_key must be a non-empty token.")
+        if self.api_key is not None:
+            self._validate_credential(self.api_key, "api_key")
+        if self.workspace_session is not None:
+            self._validate_credential(self.workspace_session, "workspace_session")
         parsed = urllib.parse.urlsplit(self.base_url)
         if not parsed.scheme or not parsed.hostname:
             raise ValueError("NexusTrade base_url must be an absolute URL.")
@@ -257,6 +268,116 @@ class HttpTransport:
         ):
             raise ValueError("timeout_seconds must be positive.")
 
+    @staticmethod
+    def _validate_credential(value: str, field_name: str) -> None:
+        if (
+            not isinstance(value, str)
+            or not value
+            or any(character.isspace() or ord(character) < 32 for character in value)
+        ):
+            raise ValueError(
+                f"NexusTrade {field_name} must be a non-empty opaque token."
+            )
+
+    def export_workspace_session(self) -> str | None:
+        """Return the anonymous workspace token after lazy bootstrap."""
+        return self.workspace_session
+
+    def import_workspace_session(self, workspace_session: str) -> None:
+        """Resume an anonymous workspace without creating a replacement."""
+        self._validate_credential(workspace_session, "workspace_session")
+        self.workspace_session = workspace_session
+
+    def _credential_headers(self) -> dict[str, str]:
+        if self.api_key is not None:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return {WORKSPACE_SESSION_HEADER: self._ensure_workspace_session()}
+
+    def _ensure_workspace_session(self) -> str:
+        if self.workspace_session is not None:
+            return self.workspace_session
+        with self._workspace_session_lock:
+            if self.workspace_session is not None:
+                return self.workspace_session
+            self.workspace_session = self._bootstrap_workspace_session()
+            return self.workspace_session
+
+    def _bootstrap_workspace_session(self) -> str:
+        parsed = urllib.parse.urlsplit(self.base_url)
+        url = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, "/api/workspace/session", "", "")
+        )
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with _urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read(_MAX_RESPONSE_BYTES + 1)
+                if len(raw) > _MAX_RESPONSE_BYTES:
+                    raise NexusTradeApiError(
+                        response.status,
+                        "response_too_large",
+                        "NexusTrade workspace response exceeded the SDK size limit.",
+                    )
+                try:
+                    decoded = json.loads(raw.decode("utf-8")) if raw else {}
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise NexusTradeApiError(
+                        response.status,
+                        "invalid_response",
+                        "NexusTrade returned invalid JSON.",
+                    ) from error
+                workspace_session = (
+                    decoded.get("workspaceSession")
+                    if isinstance(decoded, dict)
+                    else None
+                )
+                if not isinstance(workspace_session, str):
+                    raise NexusTradeApiError(
+                        response.status,
+                        "invalid_response",
+                        "Workspace response is missing workspaceSession.",
+                    )
+                self._validate_credential(workspace_session, "workspace_session")
+                return workspace_session
+        except urllib.error.HTTPError as error:
+            raise self._api_error_from_http_error(error) from error
+        except urllib.error.URLError as error:
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "transport_error",
+                str(error.reason),
+            ) from error
+        except (TimeoutError, OSError) as error:
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "transport_error",
+                str(error),
+            ) from error
+
+    @staticmethod
+    def _api_error_from_http_error(
+        error: urllib.error.HTTPError,
+    ) -> NexusTradeApiError:
+        raw = error.read(_MAX_ERROR_BYTES)
+        try:
+            decoded = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            decoded = {}
+        error_body = decoded.get("error") if isinstance(decoded, dict) else None
+        fallback = str(error.reason or "") or f"HTTP {error.code}"
+        if isinstance(error_body, dict):
+            code = str(error_body.get("code") or "api_error")
+            message = str(error_body.get("message") or fallback)
+        else:
+            code = "api_error"
+            message = fallback
+        if code.lower() == "workspace_session_expired":
+            return NexusTradeWorkspaceSessionExpiredError(error.code, message)
+        return NexusTradeApiError(error.code, code, message)
+
     def request(
         self,
         method: str,
@@ -271,10 +392,7 @@ class HttpTransport:
             if body is not None
             else None
         )
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json",
-        }
+        headers = {**self._credential_headers(), "Accept": "application/json"}
         if payload is not None:
             headers["Content-Type"] = "application/json"
         if idempotency_key is not None:
@@ -313,22 +431,7 @@ class HttpTransport:
                     )
                 return decoded
         except urllib.error.HTTPError as error:
-            raw = error.read(_MAX_ERROR_BYTES)
-            try:
-                decoded = json.loads(raw.decode("utf-8")) if raw else {}
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                decoded = {}
-            error_body = decoded.get("error") if isinstance(decoded, dict) else None
-            # Same fallback ladder as the TypeScript SDK: envelope message,
-            # then the HTTP reason phrase, then the bare status.
-            fallback = str(error.reason or "") or f"HTTP {error.code}"
-            if isinstance(error_body, dict):
-                code = str(error_body.get("code") or "api_error")
-                message = str(error_body.get("message") or fallback)
-            else:
-                code = "api_error"
-                message = fallback
-            raise NexusTradeApiError(error.code, code, message) from error
+            raise self._api_error_from_http_error(error) from error
         except urllib.error.URLError as error:
             raise NexusTradeApiError(
                 _NO_HTTP_STATUS,
@@ -427,7 +530,7 @@ class HttpTransport:
             raise ValueError("max_bytes must be positive.")
         url = f"{self.base_url.rstrip('/')}/nexustrade/{path.lstrip('/')}"
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            **self._credential_headers(),
             "Accept": "application/vnd.apache.parquet,application/octet-stream",
         }
         if byte_range is not None:
@@ -450,19 +553,7 @@ class HttpTransport:
                         )
                 return response.read(max_bytes)
         except urllib.error.HTTPError as error:
-            raw = error.read(_MAX_ERROR_BYTES)
-            try:
-                decoded = json.loads(raw.decode("utf-8")) if raw else {}
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                decoded = {}
-            error_body = decoded.get("error") if isinstance(decoded, dict) else None
-            if isinstance(error_body, dict):
-                code = str(error_body.get("code") or "api_error")
-                message = str(error_body.get("message") or error.reason)
-            else:
-                code = "api_error"
-                message = str(error.reason)
-            raise NexusTradeApiError(error.code, code, message) from error
+            raise self._api_error_from_http_error(error) from error
         except urllib.error.URLError as error:
             raise NexusTradeApiError(
                 _NO_HTTP_STATUS,
@@ -791,6 +882,7 @@ class NexusTradeClient:
         *,
         api_key: str | None = None,
         base_url: str | None = None,
+        workspace_session: str | None = None,
         transport: Transport | None = None,
     ) -> None:
         if transport is not None:
@@ -800,27 +892,39 @@ class NexusTradeClient:
         # when the environment already answers — which is always true inside
         # run_compute, where the platform injects both variables.
         dotenv = LazyDotenv()
-        resolved_key = api_key or environment_value("NEXUSTRADE_API_KEY", dotenv)
-        resolved_url = base_url or environment_value(
-            "NEXUSTRADE_API_BASE_URL",
-            dotenv,
+        resolved_key = (
+            api_key
+            if api_key is not None
+            else environment_value("NEXUSTRADE_API_KEY", dotenv)
         )
-        if not resolved_key or not resolved_url:
-            raise ValueError(
-                "NexusTradeClient requires an API key. Create one at "
-                "https://nexustrade.io/developers, then either pass "
-                "api_key=... and base_url=... or set NEXUSTRADE_API_KEY and "
-                "NEXUSTRADE_API_BASE_URL "
-                "(base URL is https://nexustrade.io/api/v1). "
-                "Both are also read from a .env file at or above the current "
-                "directory; the real environment takes precedence. "
-                "OAuth tokens are not accepted by this API."
-            )
-        self._transport = HttpTransport(resolved_key, resolved_url)
+        resolved_url = (
+            base_url
+            if base_url is not None
+            else environment_value("NEXUSTRADE_API_BASE_URL", dotenv)
+        )
+        self._transport = HttpTransport(
+            resolved_key,
+            resolved_url or DEFAULT_API_BASE_URL,
+            workspace_session=workspace_session,
+        )
 
     @classmethod
     def from_environment(cls) -> "NexusTradeClient":
         return cls()
+
+    def export_workspace_session(self) -> str | None:
+        """Return the anonymous workspace token after the first API call."""
+        exporter = getattr(self._transport, "export_workspace_session", None)
+        return exporter() if callable(exporter) else None
+
+    def import_workspace_session(self, workspace_session: str) -> None:
+        """Resume an existing anonymous workspace without replacing it."""
+        importer = getattr(self._transport, "import_workspace_session", None)
+        if not callable(importer):
+            raise ValueError(
+                "The configured transport does not support workspace sessions."
+            )
+        importer(workspace_session)
 
     def create_portfolio(
         self,
@@ -917,6 +1021,73 @@ class NexusTradeClient:
                 _NO_HTTP_STATUS,
                 "invalid_response",
                 "Portfolio response is missing portfolio.",
+            )
+        return Portfolio(result, client=self)
+
+    def update_portfolio(
+        self,
+        portfolio_id: str,
+        operations: Sequence[Mapping[str, Any]],
+        *,
+        idempotency_key: str,
+    ) -> "Portfolio":
+        """Apply deterministic no-code edits without invoking Aurora.
+
+        Guest workspaces may rename and add/remove/replace strategies. Trading,
+        deployment, scheduling, and portfolio-policy operations remain gated.
+        """
+        from nexustrade.portfolio_handle import Portfolio
+
+        if not operations:
+            raise ValueError("update_portfolio needs at least one operation.")
+        response = self._transport.request(
+            "POST",
+            f"portfolios/{urllib.parse.quote(portfolio_id, safe='')}/operations",
+            body={"operations": [dict(operation) for operation in operations]},
+            idempotency_key=idempotency_key,
+        )
+        result = response.get("portfolio")
+        if not isinstance(result, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Portfolio update response is missing portfolio.",
+            )
+        return Portfolio(result, client=self)
+
+    def fork_public_portfolio(
+        self,
+        shared_portfolio_id: str,
+        *,
+        idempotency_key: str,
+        target_portfolio_id: str | None = None,
+        name: str | None = None,
+        mode: Literal["replace", "append"] = "replace",
+    ) -> "Portfolio":
+        """Fork a public/shared portfolio into this workspace."""
+        from nexustrade.portfolio_handle import Portfolio
+
+        body: dict[str, Any] = {
+            "target": "existing" if target_portfolio_id else "new",
+            "mode": mode,
+        }
+        if target_portfolio_id:
+            body["targetPortfolioId"] = target_portfolio_id
+        if name:
+            body["name"] = name
+        response = self._transport.request(
+            "POST",
+            "shared-portfolios/"
+            f"{urllib.parse.quote(shared_portfolio_id, safe='')}/fork",
+            body=body,
+            idempotency_key=idempotency_key,
+        )
+        result = response.get("portfolio")
+        if not isinstance(result, dict):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "invalid_response",
+                "Portfolio fork response is missing portfolio.",
             )
         return Portfolio(result, client=self)
 
@@ -1632,6 +1803,7 @@ class NexusTradeClient:
         *,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        """Submit an optimization. Requires a registered API key."""
         return self._create_portfolio_job(
             "optimizations",
             handle,
@@ -1639,9 +1811,31 @@ class NexusTradeClient:
         )
 
     def get_optimization(self, optimization_id: str) -> dict[str, Any]:
+        """Read optimization results. Requires a registered API key."""
         response = self._transport.request(
             "GET",
             f"optimizations/{urllib.parse.quote(optimization_id, safe='')}",
+        )
+        return self._operation(response)
+
+    def create_systematic_sweep(
+        self,
+        handle: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Submit a systematic sweep. Requires a registered API key."""
+        return self._create_portfolio_job(
+            "sweeps",
+            handle,
+            idempotency_key,
+        )
+
+    def get_systematic_sweep(self, optimization_id: str) -> dict[str, Any]:
+        """Read sweep results. Requires a registered API key."""
+        response = self._transport.request(
+            "GET",
+            f"sweeps/{urllib.parse.quote(optimization_id, safe='')}",
         )
         return self._operation(response)
 
@@ -1651,6 +1845,7 @@ class NexusTradeClient:
         *,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        """Submit a walk-forward study. Requires a registered API key."""
         return self._create_portfolio_job(
             "walk-forward-studies",
             handle,
@@ -1838,6 +2033,18 @@ class NexusTradeClient:
     ) -> dict[str, Any]:
         """Block until an optimization is terminal. See ``wait_for_operation``."""
         return wait_for_operation(self.get_optimization, optimization_id, **options)
+
+    def wait_for_systematic_sweep(
+        self,
+        optimization_id: str,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """Block until a systematic sweep is terminal."""
+        return wait_for_operation(
+            self.get_systematic_sweep,
+            optimization_id,
+            **options,
+        )
 
     def wait_for_walk_forward(
         self,

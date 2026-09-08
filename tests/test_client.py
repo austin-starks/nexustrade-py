@@ -86,6 +86,120 @@ class AlwaysRunningTransport:
 
 
 class NexusTradeClientTests(unittest.TestCase):
+    def test_anonymous_transport_lazily_bootstraps_and_reuses_workspace(self) -> None:
+        workspace_response = mock.MagicMock()
+        workspace_response.status = 200
+        workspace_response.read.return_value = json.dumps(
+            {
+                "workspaceSession": "ws-guest",
+                "user": {"id": "u-1", "accountKind": "Unregistered"},
+                "capabilities": {},
+                "expiresAt": "2026-10-08T00:00:00.000Z",
+            }
+        ).encode("utf-8")
+        workspace_response.__enter__.return_value = workspace_response
+        workspace_response.__exit__.return_value = False
+
+        api_response = mock.MagicMock()
+        api_response.status = 200
+        api_response.read.return_value = json.dumps({"portfolios": []}).encode(
+            "utf-8"
+        )
+        api_response.__enter__.return_value = api_response
+        api_response.__exit__.return_value = False
+
+        with mock.patch.object(
+            client_module,
+            "_urlopen",
+            side_effect=[workspace_response, api_response, api_response],
+        ) as urlopen:
+            transport = client_module.HttpTransport(
+                None,
+                "https://gateway.example/api/v1",
+            )
+            transport.request("GET", "portfolios")
+            transport.request("GET", "portfolios")
+
+        self.assertEqual(urlopen.call_count, 3)
+        bootstrap_request = urlopen.call_args_list[0].args[0]
+        self.assertEqual(
+            bootstrap_request.full_url,
+            "https://gateway.example/api/workspace/session",
+        )
+        for call in urlopen.call_args_list[1:]:
+            request = call.args[0]
+            self.assertEqual(
+                request.get_header("X-nexustrade-session"),
+                "ws-guest",
+            )
+            self.assertIsNone(request.get_header("Authorization"))
+        self.assertEqual(transport.export_workspace_session(), "ws-guest")
+
+    def test_registered_auth_precedes_imported_workspace(self) -> None:
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = json.dumps({"portfolios": []}).encode("utf-8")
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+
+        with mock.patch.object(client_module, "_urlopen", return_value=response) as open_:
+            transport = client_module.HttpTransport(
+                "sk-temp",
+                "https://gateway.example/api/v1",
+                workspace_session="ws-ignored",
+            )
+            transport.request("GET", "portfolios")
+
+        request = open_.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer sk-temp")
+        self.assertIsNone(request.get_header("X-nexustrade-session"))
+
+    def test_expired_explicit_workspace_is_typed_and_never_replaced(self) -> None:
+        error = urllib.error.HTTPError(
+            "https://gateway.example/api/v1/nexustrade/portfolios",
+            401,
+            "Unauthorized",
+            {},
+            BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": "workspace_session_expired",
+                            "message": "Anonymous workspace expired",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+        with mock.patch.object(
+            client_module,
+            "_urlopen",
+            side_effect=error,
+        ) as open_:
+            transport = client_module.HttpTransport(
+                None,
+                "https://gateway.example/api/v1",
+                workspace_session="ws-expired",
+            )
+            with self.assertRaises(
+                client_module.NexusTradeWorkspaceSessionExpiredError
+            ) as raised:
+                transport.request("GET", "portfolios")
+
+        self.assertEqual(raised.exception.code, "workspace_session_expired")
+        self.assertEqual(open_.call_count, 1)
+
+    def test_client_imports_and_exports_anonymous_workspace(self) -> None:
+        transport = client_module.HttpTransport(
+            None,
+            "https://gateway.example/api/v1",
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.import_workspace_session("ws-transfer")
+
+        self.assertEqual(client.export_workspace_session(), "ws-transfer")
+
     def test_create_portfolio_uses_stable_json_contract(self) -> None:
         transport = FakeTransport(
             [{"portfolio": {"portfolioId": "p-1", "portfolioName": "Book"}}]
@@ -113,6 +227,107 @@ class NexusTradeClientTests(unittest.TestCase):
             ],
         )
 
+    def test_edit_fork_and_systematic_sweep_use_public_contracts(self) -> None:
+        transport = FakeTransport(
+            [
+                {"portfolio": {"id": "p-1", "name": "Renamed"}},
+                {"portfolio": {"id": "p-2", "name": "Forked"}},
+                {
+                    "operation": {
+                        "id": "sweep-1",
+                        "kind": "optimization",
+                        "status": "running",
+                    }
+                },
+                {
+                    "operation": {
+                        "id": "sweep-1",
+                        "kind": "optimization",
+                        "status": "completed",
+                    }
+                },
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        edited = client.update_portfolio(
+            "p-1",
+            [{"type": "rename", "name": "Renamed"}],
+            idempotency_key="edit-v1",
+        )
+        forked = client.fork_public_portfolio(
+            "shared-1",
+            idempotency_key="fork-v1",
+            name="Forked",
+        )
+        sweep = client.create_systematic_sweep(
+            {
+                "tool": "optimize_portfolio",
+                "portfolio": {"name": "Book", "strategies": [{}]},
+                "args": {
+                    "genes": [
+                        {
+                            "scope": "Action",
+                            "field": "TakeProfitPct",
+                            "values": [1, 2],
+                        }
+                    ]
+                },
+            },
+            idempotency_key="sweep-v1",
+        )
+        completed = client.get_systematic_sweep("sweep-1")
+
+        self.assertEqual(edited.id, "p-1")
+        self.assertEqual(forked.id, "p-2")
+        self.assertEqual(sweep["id"], "sweep-1")
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(
+            transport.calls,
+            [
+                {
+                    "method": "POST",
+                    "path": "portfolios/p-1/operations",
+                    "body": {
+                        "operations": [{"type": "rename", "name": "Renamed"}]
+                    },
+                    "idempotency_key": "edit-v1",
+                },
+                {
+                    "method": "POST",
+                    "path": "shared-portfolios/shared-1/fork",
+                    "body": {
+                        "target": "new",
+                        "mode": "replace",
+                        "name": "Forked",
+                    },
+                    "idempotency_key": "fork-v1",
+                },
+                {
+                    "method": "POST",
+                    "path": "sweeps",
+                    "body": {
+                        "portfolio": {"name": "Book", "strategies": [{}]},
+                        "args": {
+                            "genes": [
+                                {
+                                    "scope": "Action",
+                                    "field": "TakeProfitPct",
+                                    "values": [1, 2],
+                                }
+                            ]
+                        },
+                    },
+                    "idempotency_key": "sweep-v1",
+                },
+                {
+                    "method": "GET",
+                    "path": "sweeps/sweep-1",
+                    "body": None,
+                    "idempotency_key": None,
+                },
+            ],
+        )
     def test_backtest_batch_returns_operation_handles(self) -> None:
         transport = FakeTransport(
             [
@@ -393,7 +608,9 @@ class NexusTradeClientTests(unittest.TestCase):
         self.assertEqual(raised.exception.status, 403)
         self.assertEqual(raised.exception.code, "insufficient_scope")
 
-    def test_environment_does_not_reuse_unrelated_openai_credentials(self) -> None:
+    def test_environment_uses_anonymous_workspace_not_unrelated_openai_credentials(
+        self,
+    ) -> None:
         with mock.patch.dict(
             os.environ,
             {
@@ -402,8 +619,9 @@ class NexusTradeClientTests(unittest.TestCase):
             },
             clear=True,
         ):
-            with self.assertRaises(ValueError):
-                client_module.NexusTradeClient.from_environment()
+            client = client_module.NexusTradeClient.from_environment()
+
+        self.assertIsNone(client.export_workspace_session())
 
     def test_http_transport_rejects_invalid_success_json(self) -> None:
         response = mock.MagicMock()

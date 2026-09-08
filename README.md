@@ -179,7 +179,7 @@ input index; it cannot rewrite or drop the raw record.
 ```python
 from nexustrade import NexusTradeClient, always, backtest, buy, portfolio, stock_asset, strategy
 
-client = NexusTradeClient(api_key="sk-...", base_url="https://nexustrade.io/api/v1")
+client = NexusTradeClient()
 
 book = portfolio("Example", [
     strategy("Buy SPY", always(), buy(stock_asset("SPY"), 100)),
@@ -756,6 +756,8 @@ is missing here, so this list cannot drift from the code.
 | `create_portfolio(book, idempotency_key=…)` | Persist a portfolio definition               |
 | `list_portfolios(…)`                        | List portfolios, with filters and pagination |
 | `get_portfolio(portfolio_id)`               | Read one portfolio                           |
+| `update_portfolio(id, operations, idempotency_key=…)` | Rename or edit strategies deterministically |
+| `fork_public_portfolio(shared_id, idempotency_key=…)` | Fork a public portfolio into the workspace |
 | `deploy(portfolio_id, frequency=…)`         | Start paper trading it                       |
 | `undeploy(portfolio_id)`                    | Stop it                                      |
 
@@ -776,6 +778,9 @@ is missing here, so this list cannot drift from the code.
 | `create_optimization(handle, idempotency_key=…)` | Submit an optimization      |
 | `get_optimization(optimization_id)`              | Read the operation          |
 | `wait_for_optimization(optimization_id, …)`      | Block until terminal        |
+| `create_systematic_sweep(handle, idempotency_key=…)` | Submit an explicit-gene sweep |
+| `get_systematic_sweep(optimization_id)`          | Read the sweep operation      |
+| `wait_for_systematic_sweep(optimization_id, …)`  | Block until terminal          |
 | `create_walk_forward(handle, idempotency_key=…)` | Submit a walk-forward study |
 | `get_walk_forward(study_id)`                     | Read the operation          |
 | `wait_for_walk_forward(study_id, …)`             | Block until terminal        |
@@ -835,7 +840,10 @@ is missing here, so this list cannot drift from the code.
 | Method                                    | Purpose                                  |
 | ----------------------------------------- | ---------------------------------------- |
 | `NexusTradeClient(api_key=…, base_url=…)` | Explicit credentials                     |
+| `NexusTradeClient()`                      | Lazy anonymous workspace with strict limits |
 | `NexusTradeClient.from_environment()`     | Read them from the environment or `.env` |
+| `export_workspace_session()`              | Export an anonymous workspace for later use |
+| `import_workspace_session(token)`         | Resume an existing anonymous workspace      |
 
 **Portfolio handle** — returned by the `portfolio(...)` builder and by
 `get_portfolio` / `list_portfolios`.
@@ -849,8 +857,31 @@ is missing here, so this list cannot drift from the code.
 
 ## Authentication
 
-Create a key at **[nexustrade.io/developers](https://nexustrade.io/developers)**
-(Profile → API Keys). Keys start with `sk-` and are shown once.
+An API key is optional. With no key, the first API operation lazily creates a
+real unregistered NexusTrade workspace and applies stricter request, backtest,
+and AI limits. Anonymous workspaces can create, edit, and fork portfolios,
+launch backtests, and use the programmatic agent/chat surface. Every optimization
+operation—including genetic and systematic sweep launches, result reads,
+reruns, promotion, and out-of-sample workflows—requires a registered API key.
+Export the workspace's opaque token if the work must survive a new process:
+
+```python
+guest = NexusTradeClient()
+guest.list_portfolios()
+token = guest.export_workspace_session()
+
+resumed = NexusTradeClient(workspace_session=token)
+```
+
+An expired explicit workspace token raises
+`NexusTradeWorkspaceSessionExpiredError`; the SDK never creates a replacement
+workspace that would make saved work appear deleted.
+
+Registered users can create a key at
+**[nexustrade.io/developers](https://nexustrade.io/developers)** (Profile → API
+Keys). Keys start with `sk-` and are shown once. When both credentials are
+provided, registered `Authorization` takes precedence and the workspace header
+is not sent.
 
 ```python
 client = NexusTradeClient(api_key="sk-...", base_url="https://nexustrade.io/api/v1")
@@ -936,6 +967,8 @@ nor the poll timeout bounds how long a _job_ takes.
 
 Portfolio drafting, backtesting, optimization, walk-forward studies, and
 read-only SQL over the market-data lake, versioned under `/api/v1/nexustrade`.
+The full surface requires a registered API key; anonymous workspaces are limited
+to portfolio authoring/forking, backtests, and programmatic agent/chat calls.
 The screener and creating a live deployment remain outside this surface.
 Orders are reachable, but a live order is only ever staged for human approval —
 never submitted. `deploy` and `undeploy` act on whatever an existing id already
