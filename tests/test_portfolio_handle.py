@@ -6,6 +6,7 @@ import json
 import unittest
 
 from nexustrade.portfolio_handle import Portfolio
+from nexustrade.portfolio import portfolio as build_portfolio
 from nexustrade import client as client_module
 
 
@@ -40,6 +41,12 @@ class PortfolioHandleTests(unittest.TestCase):
         self.assertIsNone(book.id)
         self.assertEqual(json.loads(json.dumps(book))["name"], "Momentum")
         self.assertNotIn("id", json.loads(json.dumps(book)))
+
+    def test_builder_emits_cash_and_buying_power(self) -> None:
+        book = build_portfolio("Seed", [{"name": "s"}], initial_value=100000)
+        self.assertEqual(book["initialValue"], 100000)
+        self.assertEqual(book["cash"], 100000)
+        self.assertEqual(book["buyingPower"], 100000)
 
     def test_save_sets_id_without_leaking_into_body(self) -> None:
         transport = FakeTransport(

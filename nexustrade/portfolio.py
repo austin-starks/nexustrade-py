@@ -944,6 +944,8 @@ def portfolio(
             {
                 "name": name,
                 "initialValue": initial_value,
+                "cash": initial_value,
+                "buyingPower": initial_value,
                 "strategies": list(strategies),
                 "main": main,
                 "supportsFractionalShares": supports_fractional_shares,
