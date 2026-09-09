@@ -205,7 +205,7 @@ Combine with `nt.multi`, `nt.at_least`, `nt.at_most`, `nt.exactly`.
 <details>
 <summary><b>Sequence two events, and freeze a level at entry</b></summary>
 
-`nt.sequence(length, interval, *conditions)` fires when the LAST condition is true
+`nt.andThen(length, interval, *conditions)` fires when the LAST condition is true
 now and the one before it was true at a **strictly earlier** tick inside the
 window. `&` is the simultaneous form. The interval is required and has no
 default, because a silent `Day` fallback kills an intraday setup.
@@ -224,7 +224,7 @@ book = nt.portfolio("Break and hold", [
     nt.strategy(
         "Red 15m candle, then a break of its high",
         (nt.PositionValue(spy) == 0)
-        & nt.sequence(
+        & nt.andThen(
             30,
             "Minute",
             nt.IndicatorWindowAgo(nt.PriceRateOfChange(spy, 15, "Minute"), 15, "Minute") < 0,

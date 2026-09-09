@@ -18,7 +18,7 @@ __all__: List[str] = [
     "fewer_than",
     "exactly",
     "multi",
-    "sequence",
+    "andThen",
     "always",
     "stock_asset",
     "crypto_asset",
@@ -286,14 +286,14 @@ def multi(count: int, comparison: str, *conditions: Condition) -> Condition:
     )
 
 
-def sequence(
+def andThen(
     length: int,
     interval: Literal["Day", "Hour", "Minute"],
     *conditions: Condition,
 ) -> Condition:
     """A SEQUENCE, not a simultaneity.
 
-    `sequence(30, "Minute", a, b)` is true at tick t when b is true at t and a
+    `andThen(30, "Minute", a, b)` is true at tick t when b is true at t and a
     was true at a STRICTLY EARLIER tick in the preceding 30 minutes. Use `&`
     when both should hold at once. With three or more steps the window applies
     per transition, so each step must occur within it of the step before.
