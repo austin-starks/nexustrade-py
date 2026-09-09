@@ -40,7 +40,6 @@ __all__: List[str] = [
     "rebalance_estimated_cost",
     "rebalance_expected_benefit",
     "rebalance_net_benefit",
-    "IndicatorAtEntry",
     "leg",
     "options_builder",
     "against_parent",
@@ -593,39 +592,6 @@ def rebalance_expected_benefit() -> Indicator:
 def rebalance_net_benefit() -> Indicator:
     return _rebalance_decision_metric("netBenefit")
 
-
-def IndicatorAtEntry(
-    operand: Indicator,
-    asset: Union[str, Dict[str, Any], _Candidate],
-    side: Literal["Buy", "Sell"] = "Buy",
-) -> Indicator:
-    """The value `operand` held at the most recent FILLED entry.
-
-    A rolling window keeps moving, so a stop written against
-    `MinimumPrice(spy, 5, "Minute")` is silently a TRAILING stop and every
-    R-multiple measured off it is measured against a moving risk. This freezes
-    the level the trade was actually taken at, so the stop and the target
-    reference the same number.
-
-    Undefined while flat or before any fill, which gates the condition off
-    rather than firing it. The snapshot can lag the fill by up to one bar.
-
-    Reads ORDER STATE, so a strategy using it cannot be materialised columnar —
-    the same cost LastOrderPrice already carries. Do not reach for it when a
-    rolling window would do.
-
-    operand: the indicator whose value is frozen at the fill
-    asset: ticker whose fills anchor the level
-    side: Buy or Sell — which side of the fill counts as the entry
-    """
-    d: Dict[str, Any] = {
-        "type": "IndicatorAtEntry",
-        "indicators": [_indicator_dict(operand)],
-        "side": _enum(side, ["Buy", "Sell"], "side"),
-        "orderStatus": "Filled",
-    }
-    _set_asset(d, "targetAsset", asset)
-    return Indicator(d)
 
 
 def dynamic_rebalance(
@@ -1496,6 +1462,26 @@ def Index(
     return Indicator(d)
 
 __all__.append("Index")
+
+def IndicatorAtEntry(
+    operand: Indicator,
+    asset: Union[str, Dict[str, Any], _Candidate],
+    side: Literal["Buy", "Sell"],
+    order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
+) -> Indicator:
+    """IndicatorAtEntry indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    side: The side of the fill the value is anchored to
+    order_status: Matches order events with this status
+    """
+    d: Dict[str, Any] = {"type": "IndicatorAtEntry"}
+    _set_asset(d, "targetAsset", asset)
+    d["side"] = _enum(side, ["Buy","Sell"], "side")
+    d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
+    d["indicators"] = [operand.d]
+    return Indicator(d)
+
+__all__.append("IndicatorAtEntry")
 
 def IndicatorAtMinutesAfterOpen(
     operand: Indicator,
