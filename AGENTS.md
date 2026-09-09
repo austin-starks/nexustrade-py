@@ -203,6 +203,63 @@ Combine with `nt.multi`, `nt.at_least`, `nt.at_most`, `nt.exactly`.
 </details>
 
 <details>
+<summary><b>Sequence two events, and freeze a level at entry</b></summary>
+
+`nt.sequence(length, interval, *conditions)` fires when the LAST condition is true
+now and the one before it was true at a **strictly earlier** tick inside the
+window. `&` is the simultaneous form. The interval is required and has no
+default, because a silent `Day` fallback kills an intraday setup.
+
+`nt.IndicatorAtEntry(operand, asset, side)` freezes what `operand` read at the
+most recent filled entry. A rolling window keeps moving, so a stop written
+straight against `nt.MinimumPrice(spy, 5, "Minute")` is a **trailing** stop and
+the R-multiple measured off it is measured against a moving risk.
+
+```python
+spy = nt.stock_asset("SPY")
+entry = nt.LastOrderPrice(spy, "Buy", "Filled")
+stop_level = nt.IndicatorAtEntry(nt.MinimumPrice(spy, 5, "Minute"), spy, "Buy")
+
+book = nt.portfolio("Break and hold", [
+    nt.strategy(
+        "Red 15m candle, then a break of its high",
+        (nt.PositionValue(spy) == 0)
+        & nt.sequence(
+            30,
+            "Minute",
+            nt.IndicatorWindowAgo(nt.PriceRateOfChange(spy, 15, "Minute"), 15, "Minute") < 0,
+            nt.CrossAbove(
+                nt.Price(spy),
+                nt.IndicatorWindowAgo(nt.MaximumPrice(spy, 15, "Minute"), 15, "Minute"),
+            ) > 0,
+        ),
+        nt.buy(spy, 100, "percent of buying power"),
+    ),
+    nt.strategy(
+        "Stop under the low that was there at entry",
+        (nt.PositionValue(spy) > 0) & (nt.Price(spy) < stop_level),
+        nt.sell(spy, 100, "percent of current positions"),
+    ),
+    nt.strategy(
+        "Take profit at 2.5R off the risk actually taken",
+        (nt.PositionValue(spy) > 0)
+        & (nt.Price(spy) >= entry + (entry - stop_level) * 2.5),
+        nt.sell(spy, 100, "percent of current positions"),
+    ),
+])
+```
+
+The stop and the target now reference the same frozen number, so the reward is
+measured against the risk actually taken. Write the scalar on the RIGHT of the
+operator — `(entry - stop_level) * 2.5`, never `2.5 * (entry - stop_level)` —
+because `Indicator` implements the left-hand operators only.
+
+`IndicatorAtEntry` reads order state, so a strategy using it cannot be
+materialised columnar. `nt.LastOrderPrice` already carries that cost, but it is
+a real reason not to reach for either casually.
+</details>
+
+<details>
 <summary><b>Rank and rotate a universe</b></summary>
 
 `CANDIDATE` is the placeholder for "each name being evaluated". Use it inside a

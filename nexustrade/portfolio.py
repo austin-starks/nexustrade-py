@@ -18,6 +18,7 @@ __all__: List[str] = [
     "fewer_than",
     "exactly",
     "multi",
+    "sequence",
     "always",
     "stock_asset",
     "crypto_asset",
@@ -39,6 +40,7 @@ __all__: List[str] = [
     "rebalance_estimated_cost",
     "rebalance_expected_benefit",
     "rebalance_net_benefit",
+    "IndicatorAtEntry",
     "leg",
     "options_builder",
     "against_parent",
@@ -281,6 +283,38 @@ def multi(count: int, comparison: str, *conditions: Condition) -> Condition:
             "comparison": comparison,
             "value": count,
             "conditions": [c.d for c in conditions],
+        }
+    )
+
+
+def sequence(
+    length: int,
+    interval: Literal["Day", "Hour", "Minute"],
+    *conditions: Condition,
+) -> Condition:
+    """A SEQUENCE, not a simultaneity.
+
+    `sequence(30, "Minute", a, b)` is true at tick t when b is true at t and a
+    was true at a STRICTLY EARLIER tick in the preceding 30 minutes. Use `&`
+    when both should hold at once. With three or more steps the window applies
+    per transition, so each step must occur within it of the step before.
+
+    Emits wire type "Then", the way at_least/at_most/exactly emit "Multi". The
+    name avoids `then` so the TypeScript half can share it: a module namespace
+    with a callable `then` export is assimilated as a thenable.
+
+    length: how far back the previous step may have fired
+    interval: Day, Hour or Minute — REQUIRED, because a silent Day default
+        would kill an intraday setup
+    """
+    return Condition(
+        {
+            "type": "Then",
+            "conditions": [_condition_dict(c) for c in conditions],
+            "window": {
+                "length": length,
+                "interval": _enum(interval, ["Day", "Hour", "Minute"], "interval"),
+            },
         }
     )
 
@@ -558,6 +592,40 @@ def rebalance_expected_benefit() -> Indicator:
 
 def rebalance_net_benefit() -> Indicator:
     return _rebalance_decision_metric("netBenefit")
+
+
+def IndicatorAtEntry(
+    operand: Indicator,
+    asset: Union[str, Dict[str, Any], _Candidate],
+    side: Literal["Buy", "Sell"] = "Buy",
+) -> Indicator:
+    """The value `operand` held at the most recent FILLED entry.
+
+    A rolling window keeps moving, so a stop written against
+    `MinimumPrice(spy, 5, "Minute")` is silently a TRAILING stop and every
+    R-multiple measured off it is measured against a moving risk. This freezes
+    the level the trade was actually taken at, so the stop and the target
+    reference the same number.
+
+    Undefined while flat or before any fill, which gates the condition off
+    rather than firing it. The snapshot can lag the fill by up to one bar.
+
+    Reads ORDER STATE, so a strategy using it cannot be materialised columnar —
+    the same cost LastOrderPrice already carries. Do not reach for it when a
+    rolling window would do.
+
+    operand: the indicator whose value is frozen at the fill
+    asset: ticker whose fills anchor the level
+    side: Buy or Sell — which side of the fill counts as the entry
+    """
+    d: Dict[str, Any] = {
+        "type": "IndicatorAtEntry",
+        "indicators": [_indicator_dict(operand)],
+        "side": _enum(side, ["Buy", "Sell"], "side"),
+        "orderStatus": "Filled",
+    }
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
 
 
 def dynamic_rebalance(

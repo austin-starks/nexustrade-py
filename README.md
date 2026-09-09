@@ -259,7 +259,8 @@ book = nt.portfolio("Momentum", [
 | **Options**         | `OptionDaysToExpiration` `OptionCollateral` `OptionUnrealizedPnL` `open_option` `close_option` |
 | **Actions**         | `buy` `sell` `alert` `dynamic_rebalance` `rebalance_option`                                    |
 | **Selection**       | `filter` `select_top` `select_percentile` `universe`                                           |
-| **Logic**           | `always` `at_least` `at_most` `exactly` `fewer_than` `multi`                                   |
+| **Logic**           | `always` `at_least` `at_most` `exactly` `fewer_than` `multi` `sequence`                        |
+| **Anchored levels** | `IndicatorAtEntry` `LastOrderPrice` `IndicatorAtMinutesAfterOpen` `IndicatorWindowAgo`         |
 
 Full list: `python -c "import nexustrade; print(nexustrade.__all__)"`
 
