@@ -2844,6 +2844,40 @@ def gene_entry_cooldown_days(
 
 __all__.append("gene_entry_cooldown_days")
 
+def gene_condition_window_length(
+    *,
+    strategy_index: int,
+    path: Sequence[int],
+    slot: str,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep ConditionWindowLength (Strategy scope) over a value set."""
+    return {
+        "field": "ConditionWindowLength",
+        "scope": "Strategy",
+        "target": {"scope": "Strategy", "field": "ConditionWindowLength", "strategy_index": strategy_index, "path": path, "slot": slot},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_condition_window_length")
+
+def gene_condition_threshold(
+    *,
+    strategy_index: int,
+    path: Sequence[int],
+    slot: str,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep ConditionThreshold (Strategy scope) over a value set."""
+    return {
+        "field": "ConditionThreshold",
+        "scope": "Strategy",
+        "target": {"scope": "Strategy", "field": "ConditionThreshold", "strategy_index": strategy_index, "path": path, "slot": slot},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_condition_threshold")
+
 def gene_rank_signal(
     *,
     strategy_index: int,
