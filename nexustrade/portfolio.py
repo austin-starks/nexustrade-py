@@ -2861,6 +2861,21 @@ def gene_entry_condition(
 
 __all__.append("gene_entry_condition")
 
+def gene_replace_entry_condition(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep EntryCondition (Strategy scope), replacing the seed's gate rather than adding to it."""
+    return {
+        "field": "EntryCondition",
+        "scope": "Strategy",
+        "target": {"scope": "Strategy", "field": "EntryCondition", "strategyIndex": strategy_index, "replace": True},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_replace_entry_condition")
+
 def gene_exit_condition(
     *,
     strategy_index: int,
@@ -2875,6 +2890,21 @@ def gene_exit_condition(
     }
 
 __all__.append("gene_exit_condition")
+
+def gene_replace_exit_condition(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep ExitCondition (Strategy scope), replacing the seed's gate rather than adding to it."""
+    return {
+        "field": "ExitCondition",
+        "scope": "Strategy",
+        "target": {"scope": "Strategy", "field": "ExitCondition", "strategyIndex": strategy_index, "replace": True},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_replace_exit_condition")
 
 def gene_entry_cooldown_days(
     *,
