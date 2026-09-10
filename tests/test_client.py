@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from io import BytesIO
 from unittest import mock
 
+import nexustrade as nt
 from nexustrade import client as client_module
 
 
@@ -225,6 +226,44 @@ class NexusTradeClientTests(unittest.TestCase):
                     "idempotency_key": "book-v1",
                 }
             ],
+        )
+
+    def test_typed_replace_strategy_keeps_its_waiting_limit_policy(self) -> None:
+        transport = FakeTransport([{"portfolio": {"id": "p-9", "name": "AAPL Income"}}])
+        client = client_module.NexusTradeClient(transport=transport)
+        operations: list[client_module.PortfolioEditOperation] = [
+            {
+                "type": "replaceStrategy",
+                "targetStrategyId": "s-1",
+                "strategyObject": nt.strategy(
+                    "Buy AAPL",
+                    nt.always(),
+                    nt.buy(nt.stock_asset("AAPL"), 25, "percent of portfolio"),
+                    order_execution=nt.limit_order(
+                        price=nt.unit_price_limit(150),
+                        working_time=nt.good_for_day(),
+                    ),
+                ),
+            }
+        ]
+
+        edited = client.update_portfolio("p-9", operations, idempotency_key="limit-v1")
+
+        self.assertEqual(edited.id, "p-9")
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0]["path"], "portfolios/p-9/operations")
+        sent = transport.calls[0]["body"]["operations"]
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["type"], "replaceStrategy")
+        self.assertEqual(sent[0]["targetStrategyId"], "s-1")
+        self.assertEqual(sent[0]["strategyObject"]["name"], "Buy AAPL")
+        self.assertEqual(
+            sent[0]["strategyObject"]["orderExecution"],
+            {
+                "type": "Limit",
+                "price": {"type": "UnitPrice", "amount": 150},
+                "workingTime": {"type": "Day"},
+            },
         )
 
     def test_edit_fork_and_systematic_sweep_use_public_contracts(self) -> None:

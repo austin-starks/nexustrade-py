@@ -400,6 +400,45 @@ client.list_portfolios(include_paper=True, include_positions=True)
 client.get_portfolio(portfolio_id)
 ```
 
+### Editing a saved portfolio
+
+`update_portfolio` applies deterministic edits with no LLM in the path. The
+`operations` sequence is a typed union of `TypedDict`s, so a type checker knows
+which keys each edit needs.
+
+```python
+from nexustrade import PortfolioEditOperation
+
+operations: list[PortfolioEditOperation] = [
+    {"type": "rename", "name": "AAPL Income"},
+    {
+        "type": "replaceStrategy",
+        "targetStrategyId": strategy_id,  # or targetStrategyName
+        "strategyObject": nt.strategy(
+            "Buy AAPL",
+            nt.always(),
+            nt.buy(nt.stock_asset("AAPL"), 25, "percent of portfolio"),
+            order_execution=nt.limit_order(
+                price=nt.unit_price_limit(150),
+                working_time=nt.good_for_day(),
+            ),
+        ),
+    },
+]
+
+client.update_portfolio(portfolio_id, operations, idempotency_key="aapl-limit-v1")
+```
+
+The five edits are `rename`, `addStrategies`, `removeStrategies`,
+`replaceStrategy`, and `replaceStrategies`. Deploy, undeploy, delete,
+scheduling, and trading-policy operations are not reachable on this route.
+
+**`replaceStrategies` replaces the whole set**, so a strategy left out of the
+list is deleted. Carry unchanged strategies through verbatim, including the
+`orderExecution` each already has, or a working Limit silently reverts to
+Market. `removeStrategies` takes strategy ids from a fetched portfolio; removal
+by name is rejected.
+
 Fetched portfolios include a read-only `policy` snapshot. Trading policy
 changes are intentionally unavailable through the SDK; edit them in Portfolio
 Settings. Portfolio authoring and backtest payloads omit this server-owned

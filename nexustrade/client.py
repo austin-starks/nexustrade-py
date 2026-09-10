@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, TypedDict, Union, runtime_checkable
 
 from nexustrade.env import LazyDotenv, environment_value
 
@@ -782,6 +782,72 @@ def _inline_point_bytes(points: Sequence[Mapping[str, Any]]) -> int:
     return len(json.dumps(list(points), separators=(",", ":")).encode("utf-8"))
 
 
+class PortfolioRenameOperation(TypedDict):
+    """Rename the book."""
+
+    type: Literal["rename"]
+    name: str
+
+
+class AddStrategiesOperation(TypedDict):
+    """Append strategies, leaving existing ones and their open orders alone."""
+
+    type: Literal["addStrategies"]
+    strategyObjects: Sequence[Mapping[str, Any]]
+
+
+class RemoveStrategiesOperation(TypedDict):
+    """Remove by strategy id from a fetched portfolio. Names are not accepted."""
+
+    type: Literal["removeStrategies"]
+    strategyIds: Sequence[str]
+
+
+class ReplaceStrategyByIdOperation(TypedDict):
+    """Swap one strategy, addressed by its id."""
+
+    type: Literal["replaceStrategy"]
+    targetStrategyId: str
+    strategyObject: Mapping[str, Any]
+
+
+class ReplaceStrategyByNameOperation(TypedDict):
+    """Swap one strategy, addressed by its name."""
+
+    type: Literal["replaceStrategy"]
+    targetStrategyName: str
+    strategyObject: Mapping[str, Any]
+
+
+class ReplaceStrategiesOperation(TypedDict):
+    """Replace the whole strategy set.
+
+    The array REPLACES the book, so a strategy left out is deleted. Carry
+    unchanged strategies through verbatim, including the ``orderExecution``
+    each already has.
+    """
+
+    type: Literal["replaceStrategies"]
+    strategyObjects: Sequence[Mapping[str, Any]]
+
+
+#: The edits :meth:`NexusTradeClient.update_portfolio` accepts. The book is
+#: addressed by the method argument, so an operation never carries a portfolio
+#: id of its own. Strategy payloads are FINISHED objects in the shape
+#: ``nexustrade.strategy()`` emits, ``orderExecution`` included; the server
+#: ingests them with no LLM in the path and rejects natural-language strings.
+#: Deploy, undeploy, delete, scheduling and trading-policy operations are
+#: deliberately absent — they are not reachable on this route.
+PortfolioEditOperation = Union[
+    PortfolioRenameOperation,
+    AddStrategiesOperation,
+    RemoveStrategiesOperation,
+    ReplaceStrategyByIdOperation,
+    ReplaceStrategyByNameOperation,
+    ReplaceStrategiesOperation,
+]
+
+
 class BacktestCollateralStatistics(TypedDict, total=False):
     """How much capital a backtest actually had on the line.
 
@@ -1027,7 +1093,7 @@ class NexusTradeClient:
     def update_portfolio(
         self,
         portfolio_id: str,
-        operations: Sequence[Mapping[str, Any]],
+        operations: Sequence[PortfolioEditOperation],
         *,
         idempotency_key: str,
     ) -> "Portfolio":
