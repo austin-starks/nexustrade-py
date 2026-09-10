@@ -52,6 +52,13 @@ __all__: List[str] = [
     "days_held_trigger",
     "greeks_trigger",
     "close_option",
+    "limit_order",
+    "current_limit",
+    "unit_price_limit",
+    "maximum_net_debit",
+    "minimum_net_credit",
+    "good_for_day",
+    "good_for_minutes",
     "session_flatten",
     "strategy",
     "portfolio",
@@ -921,12 +928,51 @@ def close_option(
     )
 
 
+def limit_order(
+    *,
+    price: Dict[str, Any],
+    working_time: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    return _compact(
+        {
+            "type": "Limit",
+            "price": price,
+            "workingTime": working_time,
+        }
+    )
+
+
+def current_limit() -> Dict[str, Any]:
+    return {"type": "QuoteRelative", "reference": "Current"}
+
+
+def unit_price_limit(amount: float) -> Dict[str, Any]:
+    return {"type": "UnitPrice", "amount": amount}
+
+
+def maximum_net_debit(amount: float) -> Dict[str, Any]:
+    return {"type": "MaximumNetDebit", "amount": amount}
+
+
+def minimum_net_credit(amount: float) -> Dict[str, Any]:
+    return {"type": "MinimumNetCredit", "amount": amount}
+
+
+def good_for_day() -> Dict[str, Any]:
+    return {"type": "Day"}
+
+
+def good_for_minutes(minutes: float) -> Dict[str, Any]:
+    return {"type": "Minutes", "minutes": minutes}
+
+
 def strategy(
     name: str,
     condition: Condition,
     action: Dict[str, Any],
     *,
     active: Optional[bool] = None,
+    order_execution: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -934,6 +980,7 @@ def strategy(
             "condition": _condition_dict(condition),
             "action": action,
             "active": active,
+            "orderExecution": order_execution or {"type": "Market"},
         }
     )
 

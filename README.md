@@ -246,6 +246,37 @@ book = nt.portfolio("Momentum", [
 ], initial_value=100_000)
 ```
 
+Order execution belongs to the strategy. Omit it for the backward-compatible
+Market default, use a fixed unit price for Buy/Sell, or set an option strategy's
+maximum net debit / minimum net credit:
+
+```python
+nt.strategy(
+    "Buy SPY at my price",
+    nt.always(),
+    nt.buy(nt.stock_asset("SPY"), 10),
+    order_execution=nt.limit_order(
+        price=nt.unit_price_limit(500),
+        working_time=nt.good_for_day(),
+    ),
+)
+
+nt.strategy(
+    "Sell the spread for $1.50 or better",
+    nt.always(),
+    option_action,
+    order_execution=nt.limit_order(
+        price=nt.minimum_net_credit(1.5),
+        working_time=nt.good_for_minutes(30),
+    ),
+)
+```
+
+`current_limit()` creates a quote-relative Limit for dynamic rebalance
+strategies. It keeps the no-worse-than-current-quote protection, but it is not a
+resting price target. Live option strategies must choose an explicit Limit
+policy.
+
 <details>
 <summary><b>What you can build</b> — 170+ generated builders</summary>
 

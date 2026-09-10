@@ -11,6 +11,32 @@ import nexustrade as nt
 
 
 class PackageExportTests(unittest.TestCase):
+    def test_strategy_materializes_market_when_execution_is_omitted(self) -> None:
+        strategy = nt.strategy("Buy", nt.always(), {"type": "Buy"})
+
+        self.assertEqual(strategy["orderExecution"], {"type": "Market"})
+
+    def test_strategy_order_execution_helpers_are_top_level_and_emit_wire_shape(self) -> None:
+        policy = nt.limit_order(
+            price=nt.minimum_net_credit(1.5),
+            working_time=nt.good_for_minutes(30),
+        )
+        strategy = nt.strategy(
+            "Write for my credit",
+            nt.always(),
+            {"type": "OpenOption"},
+            order_execution=policy,
+        )
+
+        self.assertEqual(
+            strategy["orderExecution"],
+            {
+                "type": "Limit",
+                "price": {"type": "MinimumNetCredit", "amount": 1.5},
+                "workingTime": {"type": "Minutes", "minutes": 30},
+            },
+        )
+
     def test_top_level_portfolio_is_the_builder_not_the_submodule(self) -> None:
         self.assertTrue(callable(nt.portfolio))
         book = nt.portfolio(
