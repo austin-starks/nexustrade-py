@@ -2855,7 +2855,7 @@ def gene_entry_condition(
     return {
         "field": "EntryCondition",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "EntryCondition", "strategy_index": strategy_index},
+        "target": {"scope": "Strategy", "field": "EntryCondition", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2870,7 +2870,7 @@ def gene_exit_condition(
     return {
         "field": "ExitCondition",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ExitCondition", "strategy_index": strategy_index},
+        "target": {"scope": "Strategy", "field": "ExitCondition", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2885,7 +2885,7 @@ def gene_entry_cooldown_days(
     return {
         "field": "EntryCooldownDays",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "EntryCooldownDays", "strategy_index": strategy_index},
+        "target": {"scope": "Strategy", "field": "EntryCooldownDays", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2902,7 +2902,7 @@ def gene_condition_window_length(
     return {
         "field": "ConditionWindowLength",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ConditionWindowLength", "strategy_index": strategy_index, "path": path, "slot": slot},
+        "target": {"scope": "Strategy", "field": "ConditionWindowLength", "strategyIndex": strategy_index, "path": path, "slot": slot},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2919,7 +2919,7 @@ def gene_condition_threshold(
     return {
         "field": "ConditionThreshold",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ConditionThreshold", "strategy_index": strategy_index, "path": path, "slot": slot},
+        "target": {"scope": "Strategy", "field": "ConditionThreshold", "strategyIndex": strategy_index, "path": path, "slot": slot},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2934,7 +2934,7 @@ def gene_rank_signal(
     return {
         "field": "RankSignal",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "RankSignal", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "RankSignal", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2949,7 +2949,7 @@ def gene_buying_power_pct(
     return {
         "field": "BuyingPowerPct",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "BuyingPowerPct", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "BuyingPowerPct", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2964,7 +2964,7 @@ def gene_allocation_pct(
     return {
         "field": "AllocationPct",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "AllocationPct", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "AllocationPct", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2979,7 +2979,7 @@ def gene_total_budget_pct(
     return {
         "field": "TotalBudgetPct",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "TotalBudgetPct", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "TotalBudgetPct", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -2994,7 +2994,7 @@ def gene_deployment_pct(
     return {
         "field": "DeploymentPct",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "DeploymentPct", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "DeploymentPct", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3008,7 +3008,7 @@ def gene_roll_trigger_dte(
     """Sweep RollTriggerDte (Action scope) over a value set."""
     target: Dict[str, Any] = {"scope": "Action", "field": "RollTriggerDte"}
     if strategy_index is not None:
-        target["strategy_index"] = strategy_index
+        target["strategyIndex"] = strategy_index
     return {
         "field": "RollTriggerDte",
         "scope": "Action",
@@ -3026,7 +3026,7 @@ def gene_take_profit_pct(
     """Sweep TakeProfitPct (Action scope) over a value set."""
     target: Dict[str, Any] = {"scope": "Action", "field": "TakeProfitPct"}
     if strategy_index is not None:
-        target["strategy_index"] = strategy_index
+        target["strategyIndex"] = strategy_index
     return {
         "field": "TakeProfitPct",
         "scope": "Action",
@@ -3044,7 +3044,7 @@ def gene_stop_loss_pct(
     """Sweep StopLossPct (Action scope) over a value set."""
     target: Dict[str, Any] = {"scope": "Action", "field": "StopLossPct"}
     if strategy_index is not None:
-        target["strategy_index"] = strategy_index
+        target["strategyIndex"] = strategy_index
     return {
         "field": "StopLossPct",
         "scope": "Action",
@@ -3063,7 +3063,7 @@ def gene_structure_kind(
     return {
         "field": "StructureKind",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "StructureKind", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "StructureKind", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3078,7 +3078,7 @@ def gene_allocation_policy(
     return {
         "field": "AllocationPolicy",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "AllocationPolicy", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "AllocationPolicy", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3093,7 +3093,7 @@ def gene_exposure_policy(
     return {
         "field": "ExposurePolicy",
         "scope": "Action",
-        "target": {"scope": "Action", "field": "ExposurePolicy", "strategy_index": strategy_index},
+        "target": {"scope": "Action", "field": "ExposurePolicy", "strategyIndex": strategy_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3109,7 +3109,7 @@ def gene_option_delta(
     return {
         "field": "OptionDelta",
         "scope": "OptionLeg",
-        "target": {"scope": "OptionLeg", "field": "OptionDelta", "strategy_index": strategy_index, "leg_index": leg_index},
+        "target": {"scope": "OptionLeg", "field": "OptionDelta", "strategyIndex": strategy_index, "legIndex": leg_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3125,7 +3125,7 @@ def gene_strike_distance(
     return {
         "field": "StrikeDistance",
         "scope": "OptionLeg",
-        "target": {"scope": "OptionLeg", "field": "StrikeDistance", "strategy_index": strategy_index, "leg_index": leg_index},
+        "target": {"scope": "OptionLeg", "field": "StrikeDistance", "strategyIndex": strategy_index, "legIndex": leg_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3141,7 +3141,7 @@ def gene_dte_bracket(
     return {
         "field": "DteBracket",
         "scope": "OptionLeg",
-        "target": {"scope": "OptionLeg", "field": "DteBracket", "strategy_index": strategy_index, "leg_index": leg_index},
+        "target": {"scope": "OptionLeg", "field": "DteBracket", "strategyIndex": strategy_index, "legIndex": leg_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3157,7 +3157,7 @@ def gene_max_spread_pct(
     return {
         "field": "MaxSpreadPct",
         "scope": "OptionLeg",
-        "target": {"scope": "OptionLeg", "field": "MaxSpreadPct", "strategy_index": strategy_index, "leg_index": leg_index},
+        "target": {"scope": "OptionLeg", "field": "MaxSpreadPct", "strategyIndex": strategy_index, "legIndex": leg_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3173,7 +3173,7 @@ def gene_select_top_limit(
     return {
         "field": "SelectTopLimit",
         "scope": "UniversePipeline",
-        "target": {"scope": "UniversePipeline", "field": "SelectTopLimit", "strategy_index": strategy_index, "stage_index": stage_index},
+        "target": {"scope": "UniversePipeline", "field": "SelectTopLimit", "strategyIndex": strategy_index, "stageIndex": stage_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -3189,7 +3189,7 @@ def gene_universe_pipeline_filter(
     return {
         "field": "UniversePipelineFilter",
         "scope": "UniversePipeline",
-        "target": {"scope": "UniversePipeline", "field": "UniversePipelineFilter", "strategy_index": strategy_index, "stage_index": stage_index},
+        "target": {"scope": "UniversePipeline", "field": "UniversePipelineFilter", "strategyIndex": strategy_index, "stageIndex": stage_index},
         "values": [_gene_wire_value(value) for value in values],
     }
 
