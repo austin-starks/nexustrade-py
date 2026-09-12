@@ -2633,10 +2633,10 @@ def backtest(
     fee_config: Optional[FeeConfig] = None,
 ) -> Dict[str, Any]:
     """Submit a backtest. Returns a handle; results are read after it completes.
-    start_date: Backtest start date (ISO format, e.g. 2024-01-01). For interval=Minute, default first-look is the last 90 inclusive calendar days and the selected range cannot exceed 365 days. Do not use 2010-01-01 or a multi-year span on Minute.
-    end_date: Backtest end date (ISO format, e.g. 2024-12-31). Minute hard max is 365 days from start_date; extend a survivor in a later run instead of splitting into yearly Minute jobs.
+    start_date: Backtest start date (ISO format, e.g. 2024-01-01). For interval=Minute, default first-look is the last 90 inclusive calendar days and the selected range plus minute-indicator warmup cannot exceed 730 days of minute data. Do not use 2010-01-01 on Minute.
+    end_date: Backtest end date (ISO format, e.g. 2024-12-31). Minute allows up to 730 days of minute data from start_date, counting minute-indicator warmup; never split a longer span into yearly Minute jobs.
     baseline_symbol: Benchmark for comparisonValue (buy-and-hold of this ticker). Defaults to SPY if omitted — use SPY only for broad equity/market strategies. For single-name options, set to that underlying (AAPL options → AAPL). For multi-name options books, run separate backtests with each material underlying as baseline (AAPL for AAPL sleeve, MSFT for MSFT), or equal-weight B&H of the traded universe — do not default to SPY.
-    interval: Time interval: Day or Minute (default Day). Minute is a daytrade tape. 365 days is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year is a normal second backtest, not an escalation.
+    interval: Time interval: Day or Minute (default Day). Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
     initial_value: Starting portfolio value (default 10000) Range 1..inf.
     generate_events: Generate detailed event data (signals, orders, audits) during backtest. Costs 5x research tokens. Events are Mongo hot-store traces retained for 3 days. Use query_backtest_events to explore them while retained.
     fee_config: Optional fee contract keyed by AssetTypeEnum (Stock/Cryptocurrency/Option) with {amount, type: percent|dollars}. Omit for shared defaults (Option $0.65/contract). For replay of an optimizer/walk-forward study, pass that study's persisted feeConfig. Option fill slippage (OptionSlippageFraction) is not set here — engine default 0.5 applies.
@@ -2695,7 +2695,7 @@ def walk_forward(
     genes: Optional[Sequence[Gene]] = None,
 ) -> Dict[str, Any]:
     """Submit a walk-forward study (anchored or rolling folds, GA or sweep engine).
-    global_start_date: Global calendar start for the walk-forward study (ISO date). Each Minute evaluation window cannot exceed 365 days, which is the only cap; the 90-day seed first look is a default for callers who name no dates.
+    global_start_date: Global calendar start for the walk-forward study (ISO date). Each Minute evaluation window cannot exceed 730 days of minute data counting minute-indicator warmup, which is the only cap; the 90-day seed first look is a default for callers who name no dates.
     global_end_date: Global calendar end for the walk-forward study (ISO date).
     fold_count: Number of forward folds (2–8, required). Range 2..8.
     engine_kind: Child optimizer engine: ga (default) or sweep. Prefer sweep for deploy certification and options rotation books; use ga for exploratory continuous mutation.
@@ -2785,8 +2785,8 @@ def optimization(
     genes: Optional[Sequence[Gene]] = None,
 ) -> Dict[str, Any]:
     """Submit a genetic optimization over the portfolio's tunable genes.
-    start_date: Optimization start date (ISO format, e.g. 2024-01-01). Minute has ONE cap: 365 days. The 90-day first look is a default for callers who name no dates, not a ceiling — pass the window the question needs.
-    end_date: Optimization end date (ISO format, e.g. 2024-12-31). Minute selected range cannot exceed 365 days.
+    start_date: Optimization start date (ISO format, e.g. 2024-01-01). Minute has ONE cap: 730 days of minute data, counting minute-indicator warmup. The 90-day first look is a default for callers who name no dates, not a ceiling — pass the window the question needs.
+    end_date: Optimization end date (ISO format, e.g. 2024-12-31). Minute selected range plus minute-indicator warmup cannot exceed 730 days of minute data.
     fitness_functions: Fitness functions: sharpeRatio, sortinoRatio, maxDrawdown, avgDrawdown, percentChange, dollarsSold, ulcerPerformanceIndex, participationRate, distinctUnderlyingsTraded, medianDeployment
     population_size: Population size for genetic algorithm (default 6, range 3-12) Range 3..12.
     num_generations: Number of generations (default 6, max 10) Range 1..10.
