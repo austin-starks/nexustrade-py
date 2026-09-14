@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 
 def _read(path: str) -> list[dict[str, object]]:
@@ -122,11 +123,69 @@ class ObservationLedgerTests(unittest.TestCase):
             self.assertIn("not json at all", body)
 
     def test_extract_pdfs_persists_without_being_asked(self) -> None:
-        """The point of the change: retention is not something the run elects."""
-        source = importlib.import_module("inspect").getsource(
-            self.scanned_table.extract_pdfs
-        )
-        self.assertIn("_persist_observation_ledger(results)", source)
+        """Grouped extraction must retain evidence before returning to the caller."""
+        host = importlib.import_module("nexustrade.host")
+        persist = self.scanned_table._persist_observation_ledger
+        documents = {key: b"%PDF-1.7 fixture" for key in ("a", "b", "c")}
+        response = {
+            "documents": [
+                {"source_id": "a", "rows": [{"ticker": "AAPL"}, {"ticker": "MSFT"}]},
+                {"source_id": "b", "rows": [{"ticker": "NVDA"}]},
+                {"source_id": "c", "rows": [{"ticker": "GOOG"}]},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            ledger_path = os.path.join(directory, "ledger.jsonl")
+            with (
+                mock.patch.object(self.scanned_table, "_gateway_json", return_value={"ok": True}),
+                mock.patch.object(self.scanned_table, "_document_result_lookup", return_value=None),
+                mock.patch.object(self.scanned_table, "_document_result_record"),
+                mock.patch.object(self.scanned_table, "_document_batch_progress"),
+                mock.patch.object(host, "gateway_chat_json", return_value=response) as gateway,
+                mock.patch.object(
+                    self.scanned_table,
+                    "_persist_observation_ledger",
+                    side_effect=lambda results: persist(results, ledger_path=ledger_path),
+                ),
+            ):
+                result = self.scanned_table.extract_pdfs(
+                    documents, rows_schema={"ticker": "string"}, max_workers=1,
+                )
+                self.assertEqual(sum(len(item["rows"]) for item in result.values()), 4)
+                self.assertTrue(os.path.isfile(ledger_path), "Grouped return skipped observation retention")
+                self.assertEqual(len(_read(ledger_path)), 4)
+
+                # Re-reading two sources clears a genuinely empty source and
+                # replaces the other without dropping the untouched third.
+                gateway.return_value = {"documents": [
+                    {"source_id": "a", "rows": []},
+                    {"source_id": "b", "rows": [{"ticker": "V"}]},
+                ]}
+                self.scanned_table.extract_pdfs(
+                    {key: documents[key] for key in ("a", "b")},
+                    rows_schema={"ticker": "string"}, max_workers=1,
+                )
+                rows = _read(ledger_path)
+                self.assertEqual(
+                    sorted((row["source_id"], row["ticker"]) for row in rows),
+                    [("b", "V"), ("c", "GOOG")],
+                )
+
+                # An invalid source is reported but cannot erase its prior
+                # observations when its peers still take the grouped path.
+                gateway.return_value = {"documents": [
+                    {"source_id": "a", "rows": [{"ticker": "AAPL"}]},
+                    {"source_id": "b", "rows": [{"ticker": "V"}]},
+                ]}
+                result = self.scanned_table.extract_pdfs(
+                    {"a": documents["a"], "b": documents["b"], "c": None},
+                    rows_schema={"ticker": "string"}, max_workers=1,
+                )
+                self.assertIsNotNone(result["c"]["error"])
+                self.assertEqual(
+                    sorted((row["source_id"], row["ticker"]) for row in _read(ledger_path)),
+                    [("a", "AAPL"), ("b", "V"), ("c", "GOOG")],
+                )
 
 
 if __name__ == "__main__":

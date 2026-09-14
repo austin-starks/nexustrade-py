@@ -1995,10 +1995,9 @@ def _persist_observation_ledger(
     Writing the ledger here makes retention a property of extraction rather than
     something the operator elects to do and then grades itself on.
 
-    Nothing else has to change to make the file count: `resolveDeclaredMembers`
-    unions in everything under `/work/out`, so the ledger becomes a declared
-    bundle member on its own, and `operatorWorkingSet` already pins it into the
-    operator's context when it exists.
+    The host reads this ledger during finish and validation so it can reconcile
+    observations against the caller's declared output. It is not automatically
+    a delivered bundle member merely because this file exists.
 
     Merge is last-write-wins PER `source_id`. A run legitimately re-extracts a
     subset to settle a suspected duplicate; overwriting the file would clobber
@@ -2331,7 +2330,7 @@ def extract_pdfs(
         print(f"document extraction batch registration failed: {exc}")
 
     if use_group_extraction:
-        return _extract_pdf_document_groups(
+        grouped_results = _extract_pdf_document_groups(
             items,
             request_keys=request_keys,
             batch_key=batch_key,
@@ -2362,6 +2361,8 @@ def extract_pdfs(
             initial_results=results,
             result_order=result_order,
         )
+        _persist_observation_ledger(grouped_results)
+        return grouped_results
 
     def run_once(key: str, pdf_bytes: bytes) -> dict[str, Any]:
         if normalized_schema is not None:
