@@ -2210,6 +2210,47 @@ def OptionPositionValue(
 
 __all__.append("OptionPositionValue")
 
+def OptionRealizedPnL(
+    underlying: str,
+    option_type: Literal["call", "put"],
+    direction: Literal["long", "short"],
+    spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
+    lookback_days: Optional[float] = None,
+) -> Indicator:
+    """OptionRealizedPnL indicator.
+    underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
+    option_type: Filter by Call or Put. Leave empty for all.
+    direction: Filter by Long or Short. Leave empty for all.
+    spread_type: Filter by spread type. Leave empty for all.
+    lookback_days: Only count activity within this many days of the evaluation date. Leave empty for the whole life of the book.
+    """
+    d: Dict[str, Any] = {"type": "OptionRealizedPnL"}
+    d["underlying"] = underlying
+    d["optionType"] = _enum(option_type, ["call","put"], "option_type")
+    d["direction"] = _enum(direction, ["long","short"], "direction")
+    d["spreadType"] = _enum(spread_type, ["vertical","calendar","diagonal","ironCondor","straddle","strangle","custom"], "spread_type")
+    if lookback_days is not None:
+        d["lookbackDays"] = lookback_days
+    return Indicator(d)
+
+__all__.append("OptionRealizedPnL")
+
+def OptionRealizedPremium(
+    underlying: str,
+    lookback_days: Optional[float] = None,
+) -> Indicator:
+    """OptionRealizedPremium indicator.
+    underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
+    lookback_days: Only count activity within this many days of the evaluation date. Leave empty for the whole life of the book.
+    """
+    d: Dict[str, Any] = {"type": "OptionRealizedPremium"}
+    d["underlying"] = underlying
+    if lookback_days is not None:
+        d["lookbackDays"] = lookback_days
+    return Indicator(d)
+
+__all__.append("OptionRealizedPremium")
+
 def OptionSpreadCount(
     underlying: str,
     option_type: Literal["call", "put"],
