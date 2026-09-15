@@ -272,6 +272,24 @@ nt.strategy(
 )
 ```
 
+An option net limit can also follow a position the strategy holds. Pass an
+indicator instead of a number and the engine evaluates it when the strategy
+fires. If it has no positive value at that moment, no order is placed:
+
+```python
+nt.strategy(
+    "Sell the credit spread for the debit fill plus $0.50",
+    when_debit_spread_held,
+    credit_spread_action,
+    order_execution=nt.limit_order(
+        price=nt.minimum_net_credit(
+            nt.Plus(nt.OptionSpreadEntryPrice("SPX", "call", "long", "vertical"), nt.Value(0.5))
+        ),
+        working_time=nt.good_for_day(),
+    ),
+)
+```
+
 `current_limit()` creates a quote-relative Limit for dynamic rebalance
 strategies. It keeps the no-worse-than-current-quote protection, but it is not a
 resting price target. Live option strategies must choose an explicit Limit
@@ -287,7 +305,7 @@ policy.
 | **Position state**  | `PositionValue` `PositionPercentChange` `PositionMaxDrawdown`                                  |
 | **Portfolio state** | `PortfolioValue` `BuyingPower` `MaxDrawdown` `InitialValue`                                    |
 | **Fundamentals**    | `Fundamental` `Economic` `DaysUntilEarnings` `IsIndexMember` `IsIndustry`                      |
-| **Options**         | `OptionDaysToExpiration` `OptionCollateral` `OptionUnrealizedPnL` `open_option` `close_option` |
+| **Options**         | `OptionDaysToExpiration` `OptionCollateral` `OptionSpreadEntryPrice` `OptionUnrealizedPnL` `open_option` `close_option` |
 | **Actions**         | `buy` `sell` `alert` `dynamic_rebalance` `rebalance_option`                                    |
 | **Selection**       | `filter` `select_top` `select_percentile` `universe`                                           |
 | **Logic**           | `always` `at_least` `at_most` `exactly` `fewer_than` `multi` `sequence`                        |

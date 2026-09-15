@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -36,6 +37,35 @@ class PackageExportTests(unittest.TestCase):
                 "workingTime": {"type": "Minutes", "minutes": 30},
             },
         )
+
+    def test_net_limit_helpers_accept_an_indicator_amount(self) -> None:
+        debit_fill_plus_fifty_cents = nt.Plus(
+            nt.OptionSpreadEntryPrice("SPX", "call", "long", "vertical"),
+            nt.Value(0.5),
+        )
+        half_the_credit = nt.Multiply(
+            nt.AbsoluteValue(nt.OptionSpreadEntryPrice("SPY", "put", "short", "vertical")),
+            nt.Value(0.5),
+        )
+
+        credit = nt.limit_order(
+            price=nt.minimum_net_credit(debit_fill_plus_fifty_cents),
+            working_time=nt.good_for_day(),
+        )
+        debit = nt.maximum_net_debit(half_the_credit)
+
+        self.assertEqual(
+            credit["price"],
+            {"type": "MinimumNetCredit", "amount": debit_fill_plus_fifty_cents.to_dict()},
+        )
+        self.assertEqual(
+            credit["price"]["amount"]["indicators"][0]["type"],
+            "OptionSpreadEntryPrice",
+        )
+        self.assertEqual(debit["amount"], half_the_credit.to_dict())
+        # The wire payload is plain data, not SDK objects.
+        json.dumps(credit)
+        json.dumps(debit)
 
     def test_top_level_portfolio_is_the_builder_not_the_submodule(self) -> None:
         self.assertTrue(callable(nt.portfolio))

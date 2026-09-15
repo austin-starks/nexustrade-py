@@ -950,12 +950,18 @@ def unit_price_limit(amount: float) -> Dict[str, Any]:
     return {"type": "UnitPrice", "amount": amount}
 
 
-def maximum_net_debit(amount: float) -> Dict[str, Any]:
-    return {"type": "MaximumNetDebit", "amount": amount}
+def _net_limit_amount(amount: Union[float, "Indicator"]) -> Any:
+    return amount.to_dict() if isinstance(amount, Indicator) else amount
 
 
-def minimum_net_credit(amount: float) -> Dict[str, Any]:
-    return {"type": "MinimumNetCredit", "amount": amount}
+def maximum_net_debit(amount: Union[float, "Indicator"]) -> Dict[str, Any]:
+    """Dollars per share, or an indicator evaluated when the strategy fires."""
+    return {"type": "MaximumNetDebit", "amount": _net_limit_amount(amount)}
+
+
+def minimum_net_credit(amount: Union[float, "Indicator"]) -> Dict[str, Any]:
+    """Dollars per share, or an indicator evaluated when the strategy fires."""
+    return {"type": "MinimumNetCredit", "amount": _net_limit_amount(amount)}
 
 
 def good_for_day() -> Dict[str, Any]:
@@ -2271,6 +2277,27 @@ def OptionSpreadCount(
     return Indicator(d)
 
 __all__.append("OptionSpreadCount")
+
+def OptionSpreadEntryPrice(
+    underlying: str,
+    option_type: Literal["call", "put"],
+    direction: Literal["long", "short"],
+    spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
+) -> Indicator:
+    """OptionSpreadEntryPrice indicator.
+    underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
+    option_type: Filter by Call or Put. Leave empty for all.
+    direction: Filter by Long or Short. Leave empty for all.
+    spread_type: Filter by spread type. Leave empty for all.
+    """
+    d: Dict[str, Any] = {"type": "OptionSpreadEntryPrice"}
+    d["underlying"] = underlying
+    d["optionType"] = _enum(option_type, ["call","put"], "option_type")
+    d["direction"] = _enum(direction, ["long","short"], "direction")
+    d["spreadType"] = _enum(spread_type, ["vertical","calendar","diagonal","ironCondor","straddle","strangle","custom"], "spread_type")
+    return Indicator(d)
+
+__all__.append("OptionSpreadEntryPrice")
 
 def OptionUnrealizedPnL(
     underlying: str,
