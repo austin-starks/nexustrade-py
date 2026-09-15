@@ -313,6 +313,81 @@ def queue_read_indicator(request_id: str, indicator_id: str) -> None:
     )
 
 
+def _stable_browse_id(
+    instruction: str, start_url: str | None, limit: int | None
+) -> str:
+    digest = hashlib.sha256(
+        f"{instruction}\0{start_url or ''}\0{limit if limit is not None else ''}".encode(
+            "utf-8"
+        )
+    ).hexdigest()[:16]
+    return f"browse:{digest}"
+
+
+def queue_browse(
+    request_id: str,
+    instruction: str,
+    start_url: str | None = None,
+    limit: int | None = None,
+) -> None:
+    """Queue a held-browser action through the host broker (no sandbox Chrome).
+
+    First call opens the job's Cloak lease; later calls reuse it. Omit start_url
+    to keep acting on the current page. Prefer ``browse(...)`` over this
+    low-level queue + flush + read_results assembly.
+    """
+    text = instruction.strip() if isinstance(instruction, str) else ""
+    if not text:
+        raise ValueError("queue_browse requires a non-empty instruction")
+    req: dict[str, Any] = {
+        "id": request_id,
+        "kind": "browse",
+        "instruction": text,
+    }
+    if start_url is not None:
+        url = start_url.strip() if isinstance(start_url, str) else ""
+        if not url:
+            raise ValueError("queue_browse start_url must be a non-empty string")
+        req["startUrl"] = url
+    if limit is not None:
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("queue_browse limit must be a positive int")
+        req["limit"] = limit
+    _pending_requests.append(req)
+
+
+def browse(
+    instruction: str,
+    *,
+    start_url: str | None = None,
+    limit: int | None = None,
+    request_id: str | None = None,
+    _exit: bool = True,
+) -> dict[str, Any]:
+    """Act in the job's held browser. Blocks via the host broker (queue + exit).
+
+    Returns host ``data``: ``{"urls": [...], "hasMore": bool, "exhausted": bool,
+    "session": {"profileId", "proxy"}, ...}``. No CDP or proxy secrets.
+    """
+    text = instruction.strip() if isinstance(instruction, str) else ""
+    if not text:
+        raise ValueError("browse requires a non-empty instruction")
+    rid = request_id or _stable_browse_id(text, start_url, limit)
+    result = read_result(rid)
+    if result is not None:
+        if result.get("ok") is False:
+            raise RuntimeError(result.get("error") or f"browse({text!r}) failed")
+        data = result.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError(f"browse({text!r}) returned no data")
+        return data
+    queue_browse(rid, text, start_url=start_url, limit=limit)
+    flush_requests()
+    if _exit:
+        raise SystemExit(0)
+    return {}
+
+
 def queue_search(
     request_id: str,
     query: str,
