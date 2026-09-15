@@ -9,12 +9,46 @@ of silently substituting zero.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 Number = int | float
+
+
+def sensitivity_cases(
+    builder: Callable[[dict[str, Any]], Mapping[str, Any]],
+    assumptions: Mapping[str, Any],
+    variations: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Rebuild named sensitivities through the SAME pure scenario producer.
+
+    Variations replace top-level primitive assumptions; nested values are
+    replaced whole, never guessed or recursively merged. Unknown keys fail so
+    a misspelled assumption cannot silently produce an unchanged sensitivity.
+    Each case saves its exact inputs and result. The builder must recompute
+    dependent elapsed flows, forecasts, terminal value and valuation from those
+    inputs; this helper does not infer economic dependencies or choose a model.
+    """
+    if not callable(builder) or not isinstance(assumptions, Mapping):
+        raise ValueError("supply a callable builder and an assumptions mapping")
+    if not isinstance(variations, Mapping) or not variations:
+        raise ValueError("variations must be a nonempty mapping of named overrides")
+    output = {}
+    for name, overrides in variations.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(overrides, Mapping):
+            raise ValueError("each variation needs a nonempty name and an overrides mapping")
+        unknown = set(overrides) - set(assumptions)
+        if unknown:
+            raise ValueError(f"unknown sensitivity assumptions: {sorted(map(str, unknown))}")
+        inputs = deepcopy(dict(assumptions))
+        inputs.update(deepcopy(dict(overrides)))
+        result = builder(deepcopy(inputs))
+        if not isinstance(result, Mapping):
+            raise ValueError("scenario builder must return a mapping")
+        output[name] = {"assumptions": inputs, "result": deepcopy(dict(result))}
+    return output
 
 
 def _flow_periods(
