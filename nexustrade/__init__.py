@@ -119,6 +119,8 @@ _LAZY_EXPORTS = {
     "queue_portfolio_job": ("nexustrade.host", "queue_portfolio_job"),
     "queue_portfolio_job_read": ("nexustrade.host", "queue_portfolio_job_read"),
     "queue_search": ("nexustrade.host", "queue_search"),
+    "queue_browse": ("nexustrade.host", "queue_browse"),
+    "browse": ("nexustrade.host", "browse"),
     "read_result": ("nexustrade.host", "read_result"),
     "read_results": ("nexustrade.host", "read_results"),
     "search": ("nexustrade.host", "search"),
