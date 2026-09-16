@@ -1654,6 +1654,27 @@ def InitialValue() -> Indicator:
 
 __all__.append("InitialValue")
 
+def InsiderTrades(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "DistinctBuyers"] = "NetValue",
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner"] = "Any",
+    window_days: float = 90,
+) -> Indicator:
+    """InsiderTrades indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    metric: Dollar value, shares, trade counts, or distinct buying insiders
+    role: Only trades by an officer, director, or 10% owner, or any insider
+    window_days: Count trades whose filings became public within this many trailing days
+    """
+    d: Dict[str, Any] = {"type": "InsiderTrades"}
+    _set_asset(d, "targetAsset", asset)
+    d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","DistinctBuyers"], "metric")
+    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner"], "role")
+    d["windowDays"] = window_days
+    return Indicator(d)
+
+__all__.append("InsiderTrades")
+
 def IsAsset(
     match_asset: Union[str, Dict[str, Any], _Candidate],
     asset: Union[str, Dict[str, Any], _Candidate],
@@ -2331,6 +2352,30 @@ def Plus(
     return Indicator(d)
 
 __all__.append("Plus")
+
+def PoliticalTrades(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    filer: str,
+    metric: Literal["NetDollars", "BuyDollars", "SellDollars", "BuyCount", "SellCount", "DistinctBuyers"] = "NetDollars",
+    chamber: Literal["All", "House", "Senate"] = "All",
+    window_days: float = 90,
+) -> Indicator:
+    """PoliticalTrades indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    filer: Optional: a member's full or last name, such as Nancy Pelosi
+    metric: Disclosed dollars (amount range midpoints), trade counts, or distinct buying members
+    chamber: House, Senate, or both
+    window_days: Count trades first disclosed within this many trailing days
+    """
+    d: Dict[str, Any] = {"type": "PoliticalTrades"}
+    _set_asset(d, "targetAsset", asset)
+    d["filer"] = filer
+    d["metric"] = _enum(metric, ["NetDollars","BuyDollars","SellDollars","BuyCount","SellCount","DistinctBuyers"], "metric")
+    d["chamber"] = _enum(chamber, ["All","House","Senate"], "chamber")
+    d["windowDays"] = window_days
+    return Indicator(d)
+
+__all__.append("PoliticalTrades")
 
 def PortfolioValue() -> Indicator:
     """PortfolioValue indicator.
