@@ -611,6 +611,7 @@ def dynamic_rebalance(
     deployment_percent: Optional[float] = None,
     per_name_allocation: Optional[Dict[str, Any]] = None,
     can_sell: Optional[Condition] = None,
+    allow_shorts: Optional[bool] = None,
     allocation_policy: Optional[Dict[str, Any]] = None,
     exposure_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -639,6 +640,7 @@ def dynamic_rebalance(
                 if can_sell is not None
                 else None
             ),
+            "allowShorts": allow_shorts,
             "allocationPolicy": allocation_policy,
             "exposurePolicy": exposure_policy,
         }
