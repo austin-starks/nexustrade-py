@@ -2358,23 +2358,29 @@ __all__.append("Plus")
 def PoliticalTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
     filer: str,
-    metric: Literal["NetDollars", "BuyDollars", "SellDollars", "BuyCount", "SellCount", "DistinctBuyers"] = "NetDollars",
-    chamber: Literal["All", "House", "Senate"] = "All",
+    metric: Literal["NetAmount", "BuyAmount", "SellAmount", "BuyCount", "SellCount", "DistinctBuyers"] = "BuyAmount",
     window_days: float = 90,
+    amount_basis: Literal["LowerBound", "Midpoint", "UpperBound"] = "LowerBound",
+    instrument: Literal["Equity", "Option", "All"] = "Equity",
+    chamber: Literal["All", "House", "Senate"] = "All",
 ) -> Indicator:
     """PoliticalTrades indicator.
-    asset: Ticker name (ex. SPY, BTC)
-    filer: Optional: a member's full or last name, such as Nancy Pelosi
-    metric: Disclosed dollars (amount range midpoints), trade counts, or distinct buying members
-    chamber: House, Senate, or both
-    window_days: Count trades first disclosed within this many trailing days
+    asset: Pass CANDIDATE inside a rebalance pipeline to bind each stock.
+    filer: Member full or last name. Pass an empty string for all members.
+    metric: Amount-range aggregate, event count, or distinct purchasing members.
+    window_days: Trailing calendar days measured from when each event became public.
+    amount_basis: Range endpoint used by amount metrics; LowerBound is conservative.
+    instrument: Equity excludes confirmed option disclosures; Option selects them explicitly.
+    chamber: Optional advanced cohort filter; named-member requests should normally use All.
     """
     d: Dict[str, Any] = {"type": "PoliticalTrades"}
     _set_asset(d, "targetAsset", asset)
     d["filer"] = filer
-    d["metric"] = _enum(metric, ["NetDollars","BuyDollars","SellDollars","BuyCount","SellCount","DistinctBuyers"], "metric")
-    d["chamber"] = _enum(chamber, ["All","House","Senate"], "chamber")
+    d["metric"] = _enum(metric, ["NetAmount","BuyAmount","SellAmount","BuyCount","SellCount","DistinctBuyers"], "metric")
     d["windowDays"] = window_days
+    d["amountBasis"] = _enum(amount_basis, ["LowerBound","Midpoint","UpperBound"], "amount_basis")
+    d["instrument"] = _enum(instrument, ["Equity","Option","All"], "instrument")
+    d["chamber"] = _enum(chamber, ["All","House","Senate"], "chamber")
     return Indicator(d)
 
 __all__.append("PoliticalTrades")

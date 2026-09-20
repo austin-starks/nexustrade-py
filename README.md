@@ -246,6 +246,27 @@ book = nt.portfolio("Momentum", [
 ], initial_value=100_000)
 ```
 
+Congressional-disclosure signals are native indicators too. House and Senate
+are combined unless you explicitly choose a chamber; amount metrics default to
+the disclosed lower bound and confirmed option disclosures are excluded by
+default:
+
+```python
+pelosi_purchases = nt.PoliticalTrades(
+    nt.CANDIDATE,
+    "Nancy Pelosi",
+    "BuyAmount",
+    90,
+    "LowerBound",
+    "Equity",
+)
+```
+
+Use `""` as the filer to include all members. `BuyCount` counts canonical
+purchase events, while `BuyAmount` measures disclosed magnitude. Select
+`"Option"` only when you want option-disclosure activity associated with the
+underlying ticker.
+
 Order execution belongs to the strategy. Omit it for the backward-compatible
 Market default, use a fixed unit price for Buy/Sell, or set an option strategy's
 maximum net debit / minimum net credit:
