@@ -246,7 +246,7 @@ class SecSdkTests(unittest.TestCase):
                 ticker="googl",
                 as_of="2026-08-28",
                 forms=["10-K", "10-Q"],
-                max_filings=12,
+                max_filings=4,
                 limit=25,
             )
             nt.sec.business_breakdowns(
@@ -271,7 +271,7 @@ class SecSdkTests(unittest.TestCase):
                     "ticker": "GOOGL",
                     "asOf": "2026-08-28",
                     "forms": ["10-K", "10-Q"],
-                    "maxFilings": 12,
+                    "maxFilings": 4,
                     "limit": 25,
                 },
                 {
@@ -280,12 +280,14 @@ class SecSdkTests(unittest.TestCase):
                     "asOf": "2026-08-28",
                     "periodEndFrom": "2024-01-01",
                     "periodEndTo": "2025-12-31",
+                    "maxFilings": 4,
                     "concepts": ["RevenueFromContractWithCustomerExcludingAssessedTax"],
                 },
                 {
                     "action": "fact_instances",
                     "ticker": "GOOGL",
                     "asOf": "2026-08-28",
+                    "maxFilings": 4,
                     "concepts": ["Assets"],
                     "dimensional": "none",
                 },
@@ -310,6 +312,10 @@ class SecSdkTests(unittest.TestCase):
             nt.sec.dimensioned_concepts(ticker="GOOGL", as_of=None)  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "concepts must contain"):
             nt.sec.business_breakdowns(ticker="GOOGL", as_of="2026-08-28", concepts=[])
+        with self.assertRaisesRegex(ValueError, "1 through 4"):
+            nt.sec.dimensioned_concepts(
+                ticker="GOOGL", as_of="2026-08-28", max_filings=5
+            )
         self.assertFalse(os.path.exists(self.requests_path))
 
 
