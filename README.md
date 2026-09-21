@@ -775,7 +775,9 @@ discovery, then query only exact returned concepts:
 concepts = nt.sec.dimensioned_concepts(
     ticker="GOOGL",
     as_of="2026-08-28",
+    period_end_from="2021-01-01",
     forms=["10-K", "10-Q"],
+    max_filings=20,
     limit=100,
 )
 
@@ -783,7 +785,10 @@ facts = nt.sec.fact_instances(
     ticker="GOOGL",
     as_of="2026-08-28",
     concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+    period_end_from="2021-01-01",
+    forms=["10-K", "10-Q"],
     dimensional="all",
+    max_filings=20,
     limit=500,
 )
 
@@ -791,6 +796,9 @@ breakdown_candidates = nt.sec.business_breakdowns(
     ticker="GOOGL",
     as_of="2026-08-28",
     concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+    period_end_from="2021-01-01",
+    forms=["10-K", "10-Q"],
+    max_filings=20,
 )
 ```
 
