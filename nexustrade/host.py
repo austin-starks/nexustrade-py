@@ -15,8 +15,9 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-HOST_REQUESTS_PATH = "/work/host_requests.jsonl"
-HOST_RESULTS_PATH = "/work/host_results.jsonl"
+WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")
+HOST_REQUESTS_PATH = os.path.join(WORK_DIR, "host_requests.jsonl")
+HOST_RESULTS_PATH = os.path.join(WORK_DIR, "host_results.jsonl")
 _HOST_ACTIVITY_FILE_ENV = "NEXUSTRADE_HOST_ACTIVITY_FILE"
 
 _pending_requests: list[dict[str, Any]] = []
@@ -732,7 +733,7 @@ def run_sec(request: dict[str, Any], timeout_sec: int = 300) -> dict[str, Any]:
 
 
 
-BACKTESTS_RECORD_PATH = "/work/backtests.json"
+BACKTESTS_RECORD_PATH = os.path.join(WORK_DIR, "backtests.json")
 
 _PORTFOLIO_EXAMPLE = (
     'pf.portfolio("My book", [pf.strategy("Rebalance", pf.always(), '
@@ -899,8 +900,8 @@ def _run_portfolio_job_handle(
     return payload
 
 
-STUDIES_RECORD_PATH = "/work/walk_forwards.json"
-OPTIMIZATIONS_RECORD_PATH = "/work/optimizations.json"
+STUDIES_RECORD_PATH = os.path.join(WORK_DIR, "walk_forwards.json")
+OPTIMIZATIONS_RECORD_PATH = os.path.join(WORK_DIR, "optimizations.json")
 
 
 def _record_portfolio_job(expected_tool: str, data: dict[str, Any]) -> None:

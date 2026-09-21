@@ -7,6 +7,46 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_write_accepts_path_alias_and_rejects_conflicting_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'aliased-inputs.json'
+            report.write(inputs={'answer': 42}, path=str(target),
+                         markdown_path=str(root/'output.md'), images_dir=str(root/'images'),
+                         code_dir=str(root/'code'), code_paths=[])
+            self.assertEqual(json.loads(target.read_text()), {'answer': 42})
+            with self.assertRaisesRegex(ValueError, 'different report input files'):
+                report.write(inputs={'answer': 42}, path=str(root/'one.json'),
+                             inputs_path=str(root/'two.json'),
+                             markdown_path=str(root/'output.md'), images_dir=str(root/'images'),
+                             code_dir=str(root/'code'), code_paths=[])
+
+    def test_method_requirements_alias_uses_host_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            requirements = [{'requirement': 'method:x:R-one', 'answer': 'Done.'}]
+            report.write_inputs({'method_requirements': requirements}, path=str(target))
+            self.assertEqual(json.loads(target.read_text()), {'requirements': requirements})
+            with self.assertRaisesRegex(ValueError, 'different values'):
+                report.write_inputs({'requirements': [], 'method_requirements': requirements},
+                                    path=str(target))
+
+    def test_local_model_source_is_recorded_in_logical_work_namespace(self):
+        original_work_dir = report.WORK_DIR
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                report.WORK_DIR = directory
+                target = Path(directory) / 'inputs.json'
+                model_path = Path(directory) / 'out' / 'model.json'
+                report.write_inputs(
+                    {'value': report.ref('value')}, model={'value': 7},
+                    preserve_references=True, model_source=str(model_path), path=str(target)
+                )
+                saved = json.loads(target.read_text())
+                self.assertEqual(saved['modelReferences'][0]['modelSource'], '/work/out/model.json')
+        finally:
+            report.WORK_DIR = original_work_dir
+
     def test_complete_current_model_survives_partial_selection_without_mutating_caller(self):
         model = {'valuation': {'price': 70}, 'capital': {'assets': 27, 'claims': 4}}
         payload = {'statistics': report.ref('valuation'), 'calculationModel': {'stale': True}}

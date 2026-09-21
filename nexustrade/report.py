@@ -4,30 +4,33 @@ Deep Research pattern:
 1. Compute stats + save plots in the sandbox
 2. Call `report.write(inputs={...})` with structured research and calculation outputs
 3. report_inputs.json carries the evidence; optional local Markdown is not an authoring input
-4. `sandbox_finish(kind=\"report\")` — host calls NexusGenAI **Sandbox Report Generator**
-   on report_inputs.json, embeds CDN images, appends code appendix, uploads PDF
+4. `sandbox_finish(kind=\"report\")` — the host compiles a claim-bound report
+   template from report_inputs.json, embeds CDN images, appends code appendix,
+   and uploads the PDF
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
 
-DEFAULT_MARKDOWN_PATH = "/work/output.md"
+WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")
+DEFAULT_MARKDOWN_PATH = os.path.join(WORK_DIR, "output.md")
 # Deliverables live under /work/out: only that directory becomes bundle members
 # (§2b), and the host inventories it to build declared_members. Datasets were
 # moved to /work/out/rows.jsonl already; reports are the other half of that
 # migration. Writing outside it produced report bundles that declared nothing.
-DEFAULT_IMAGES_DIR = "/work/out/images"
-DEFAULT_INPUTS_PATH = "/work/out/report_inputs.json"
+DEFAULT_IMAGES_DIR = os.path.join(WORK_DIR, "out", "images")
+DEFAULT_INPUTS_PATH = os.path.join(WORK_DIR, "out", "report_inputs.json")
 # Read-side fallbacks for a workspace written by an older sandbox image.
-LEGACY_IMAGES_DIR = "/work/output/images"
-LEGACY_INPUTS_PATH = "/work/report_inputs.json"
+LEGACY_IMAGES_DIR = os.path.join(WORK_DIR, "output", "images")
+LEGACY_INPUTS_PATH = os.path.join(WORK_DIR, "report_inputs.json")
 # Code is evidence, not a deliverable, so it stays outside the bundle.
-DEFAULT_CODE_DIR = "/work/output/code"
+DEFAULT_CODE_DIR = os.path.join(WORK_DIR, "output", "code")
 
 ImageSpec = Union[
     tuple[str, str],  # (path, caption)
@@ -45,6 +48,17 @@ def _slug(caption: str, index: int) -> str:
     base = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in caption.strip())
     base = base.strip("_") or f"figure_{index}"
     return base[:80]
+
+
+def _logical_work_path(path: str) -> str:
+    """Map a local-backend host path back to the sandbox's /work namespace."""
+    candidate = Path(path)
+    work = Path(WORK_DIR)
+    try:
+        relative = candidate.resolve().relative_to(work.resolve())
+    except ValueError:
+        return path
+    return str(Path("/work") / relative)
 
 
 def _save_image(
@@ -132,6 +146,11 @@ def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) ->
     ordinary JSON, never templates or OpenCode-authored report prose. Optional
     provenance_path points to current model metadata (source IDs, status, dates,
     definition). With preserve_references=True it survives in modelReferences.
+    For report authorship, place each displayable number or digit-bearing string
+    (including dates and filing forms) in an exact scalar ref under a
+    semantically named input field. A broad object/array ref remains grader
+    evidence, but its nested values are not prose-ready claims because the host
+    will not infer meaning from array position.
     """
     if not path or any(isinstance(p, bool) or not isinstance(p, (str, int)) for p in path):
         raise ValueError("model reference requires string keys or nonnegative list indices")
@@ -227,9 +246,10 @@ def write_inputs(
     Supply structured research and calculation outputs. The host authors the report.
     Pass model= to resolve report.ref fields at write time and export the complete
     current calculation object as calculationModel. This argument replaces any
-    older calculationModel in payload. Selected references organize findings;
-    they do not limit which computed sections the host can inspect. Keep model
-    focused on calculation data, assumptions, and provenance rather than raw files.
+    older calculationModel in payload. Exact scalar references authorize numeric
+    report claims; broad references preserve model evidence for the grader but do
+    not authorize nested numbers for prose or tables. Keep model focused on
+    calculation data, assumptions, and provenance rather than raw files.
     Optional source_aliases
     maps durable fetch IDs to bibliography IDs and validates explicit linkage;
     {} checks an intentionally shared namespace. Legacy calls leave receipt
@@ -251,11 +271,20 @@ def write_inputs(
     `images` should be [{fileName, caption}, ...] matching files under DEFAULT_IMAGES_DIR.
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    if model_source is not None and (not isinstance(model_source, str) or not model_source.strip()):
-        raise ValueError("model_source must be a nonempty artifact path")
+    if model_source is not None:
+        if not isinstance(model_source, str) or not model_source.strip():
+            raise ValueError("model_source must be a nonempty artifact path")
+        model_source = _logical_work_path(model_source.strip())
     if preserve_references and "modelReferences" in payload:
         raise ValueError("modelReferences is generated from current references; remove the supplied map")
     structured = dict(payload)
+    if "method_requirements" in structured:
+        if (
+            "requirements" in structured
+            and structured["requirements"] != structured["method_requirements"]
+        ):
+            raise ValueError("requirements and method_requirements contain different values")
+        structured["requirements"] = structured.pop("method_requirements")
     if model is not None:
         structured.pop("calculationModel", None)
     references: list[dict[str, Any]] | None = [] if preserve_references else None
@@ -285,15 +314,23 @@ def write(
     images_dir: str = DEFAULT_IMAGES_DIR,
     code_dir: str = DEFAULT_CODE_DIR,
     inputs_path: str = DEFAULT_INPUTS_PATH,
+    path: str | None = None,
 ) -> str:
     """
     Materialize report artifacts for sandbox_finish(kind=\"report\").
 
     Pass `inputs=` for structured evidence, calculations, and research findings.
+    `path=` is a compatibility alias for `inputs_path=`. The legacy
+    `method_requirements` input key is normalized to the host's `requirements` key.
     The host Report Generator authors the document that is graded and delivered.
     Optional `markdown` is a local compatibility export only; it never enters
     report_inputs.json and is never recovered from an earlier output.md.
     """
+    if path is not None:
+        if inputs_path != DEFAULT_INPUTS_PATH and inputs_path != path:
+            raise ValueError("path and inputs_path identify different report input files")
+        inputs_path = path
+
     _ensure_dirs(images_dir, code_dir)
 
     image_meta: list[dict[str, str]] = []
@@ -343,5 +380,5 @@ def _default_code_paths(explicit: Iterable[str] | None) -> list[str]:
     """Prefer explicit paths; otherwise copy the executed job for the audit appendix."""
     if explicit is not None:
         return list(explicit)
-    job = Path("/work/job.py")
+    job = Path(WORK_DIR) / "job.py"
     return [str(job)] if job.is_file() else []
