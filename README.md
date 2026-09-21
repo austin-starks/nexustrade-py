@@ -767,6 +767,41 @@ the result says when a component set is incomplete or requires review. SEC
 CompanyFacts does not expose inline-XBRL dimensional contexts, so candidates
 also say that their consolidated-versus-dimensional scope is not proven.
 
+The audited SEC Financial Statement and Notes lake exposes exact filing facts
+without downloading or parsing filing HTML during a compute run. Start with
+discovery, then query only exact returned concepts:
+
+```python
+concepts = nt.sec.dimensioned_concepts(
+    ticker="GOOGL",
+    as_of="2026-08-28",
+    forms=["10-K", "10-Q"],
+    limit=100,
+)
+
+facts = nt.sec.fact_instances(
+    ticker="GOOGL",
+    as_of="2026-08-28",
+    concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+    dimensional="all",
+    limit=500,
+)
+
+breakdown_candidates = nt.sec.business_breakdowns(
+    ticker="GOOGL",
+    as_of="2026-08-28",
+    concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+)
+```
+
+Each result carries the immutable dataset snapshot, exact accession and filing
+URL, point-in-time availability, raw dimension strings, and an explicit status.
+`business_breakdowns` is a bounded dimensional-fact query; a successful row set
+is deliberately labeled `unreconciled`. Treat it as a complete business split
+only after executable analysis selects a non-overlapping disclosure set and
+reconciles it to the matching consolidated fact. Truncation, incomplete source
+metadata, no matching facts, and uncovered dates remain distinct outcomes.
+
 ## Financial-model arithmetic
 
 The base install includes dependency-free accounting and valuation helpers.
@@ -1170,11 +1205,14 @@ Successful research calls still append shared durable receipt/cache rows.
   describes. Equality is a miss.
 - `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
   to the current model when `report.write(inputs=inputs, model=model)` runs.
-  `model=` is reference resolution, not automatic model export. Include full
-  required sections in the payload, for example
-  `statistics={"history": report.ref("history"), "forecast": report.ref("forecast"),
-  "sensitivity": report.ref("valuation", "sensitivity")}` for a model with those
-  paths. Preserve year labels, units and grid axes. Re-read the emitted JSON;
+  `model=` is reference resolution, not automatic model export. Every number
+  intended for report prose or a report table must be an exact scalar reference
+  stored at a semantically named input field with its unit, period, and definition
+  alongside it. Broad references such as
+  `statistics={"forecast": report.ref("forecast")}` preserve evidence for the
+  grader, but their nested numeric arrays are deliberately unavailable to the
+  report author because array position does not establish meaning. Preserve year
+  labels, units and grid axes. Re-read the emitted JSON;
   a code appendix or chart does not supply omitted numerical series to the author.
   The host authors report prose from the resulting JSON.
 

@@ -218,6 +218,80 @@ class SecSdkTests(unittest.TestCase):
             payload,
         )
 
+    def test_notes_queries_send_exact_bounded_contracts(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        def urlopen(req: Request, timeout: int = 0) -> io.BytesIO:
+            del timeout
+            payload = json.loads(req.data.decode("utf-8"))
+            requests.append(payload)
+            return io.BytesIO(
+                json.dumps(
+                    {
+                        "id": payload["id"],
+                        "ok": True,
+                        "data": {"action": payload["action"], "status": "fixture"},
+                    }
+                ).encode("utf-8")
+            )
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://gateway.example.test/v1",
+                "OPENAI_API_KEY": "sandbox-key",
+            },
+        ), patch.object(host.urllib.request, "urlopen", side_effect=urlopen):
+            nt.sec.dimensioned_concepts(
+                ticker="googl",
+                as_of="2026-08-28",
+                forms=["10-K", "10-Q"],
+                max_filings=12,
+                limit=25,
+            )
+            nt.sec.business_breakdowns(
+                ticker="GOOGL",
+                as_of="2026-08-28",
+                concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+                period_end_from="2024-01-01",
+                period_end_to="2025-12-31",
+            )
+            nt.sec.fact_instances(
+                ticker="GOOGL",
+                as_of="2026-08-28",
+                concepts=["Assets"],
+                dimensional="none",
+            )
+
+        self.assertEqual(
+            [{key: value for key, value in request.items() if key != "id"} for request in requests],
+            [
+                {
+                    "action": "dimensioned_concepts",
+                    "ticker": "GOOGL",
+                    "asOf": "2026-08-28",
+                    "forms": ["10-K", "10-Q"],
+                    "maxFilings": 12,
+                    "limit": 25,
+                },
+                {
+                    "action": "business_breakdowns",
+                    "ticker": "GOOGL",
+                    "asOf": "2026-08-28",
+                    "periodEndFrom": "2024-01-01",
+                    "periodEndTo": "2025-12-31",
+                    "concepts": ["RevenueFromContractWithCustomerExcludingAssessedTax"],
+                },
+                {
+                    "action": "fact_instances",
+                    "ticker": "GOOGL",
+                    "asOf": "2026-08-28",
+                    "concepts": ["Assets"],
+                    "dimensional": "none",
+                },
+            ],
+        )
+
     def test_no_gateway_raises_without_staging_a_broker_request(self) -> None:
         with patch.dict(os.environ, {"OPENAI_BASE_URL": "", "OPENAI_API_KEY": ""}):
             with self.assertRaisesRegex(RuntimeError, "public blocking transport"):
@@ -232,6 +306,10 @@ class SecSdkTests(unittest.TestCase):
                 ticker="GOOGL",
                 roles=["magic_number"],  # type: ignore[list-item]
             )
+        with self.assertRaisesRegex(ValueError, "as_of is required"):
+            nt.sec.dimensioned_concepts(ticker="GOOGL", as_of=None)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "concepts must contain"):
+            nt.sec.business_breakdowns(ticker="GOOGL", as_of="2026-08-28", concepts=[])
         self.assertFalse(os.path.exists(self.requests_path))
 
 

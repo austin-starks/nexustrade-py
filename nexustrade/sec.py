@@ -14,6 +14,14 @@ from typing import Any, Literal
 from nexustrade import host
 
 Cadence = Literal["annual", "quarterly"]
+DimensionalFilter = Literal["all", "only", "none"]
+SecAction = Literal[
+    "statement",
+    "fact_candidates",
+    "fact_instances",
+    "dimensioned_concepts",
+    "business_breakdowns",
+]
 FactRole = Literal[
     "pretax_income",
     "income_tax_expense",
@@ -48,6 +56,12 @@ FACT_ROLES: tuple[FactRole, ...] = (
 
 _TICKER_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9.-]{0,14}$")
 _MAX_PERIODS = 40
+_MAX_CONCEPTS = 100
+_MAX_FORMS = 20
+_MAX_FILINGS = 80
+_MAX_ROWS = 500
+_CONCEPT_PATTERN = re.compile(r"^[^\x00-\x1f\x7f]{1,512}$")
+_FORM_PATTERN = re.compile(r"^[A-Z0-9-]+(?:/A)?$")
 
 # The host may expose the same annual filing as both FY and a derived Q4 row.
 # These duration fields differ legitimately; its balance/ownership provenance does not.
@@ -93,11 +107,83 @@ def _validated_as_of(as_of: str | None) -> str | None:
     return as_of
 
 
+def _required_as_of(as_of: str | None) -> str:
+    value = _validated_as_of(as_of)
+    if value is None:
+        raise ValueError("as_of is required for SEC Notes queries")
+    return value
+
+
+def _validated_string_list(
+    values: Sequence[str] | None,
+    *,
+    field: str,
+    maximum: int,
+    pattern: re.Pattern[str],
+    required: bool,
+) -> list[str] | None:
+    if values is None:
+        if required:
+            raise ValueError(f"{field} must contain at least one value")
+        return None
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"{field} must be a sequence of strings")
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or pattern.fullmatch(value) is None:
+            raise ValueError(f"{field} contains an invalid value")
+        if value not in result:
+            result.append(value)
+    if not result or len(result) > maximum:
+        raise ValueError(f"{field} must contain 1 through {maximum} values")
+    return result
+
+
+def _validated_positive_integer(value: int | None, *, field: str, maximum: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > maximum:
+        raise ValueError(f"{field} must be an integer from 1 through {maximum}")
+    return value
+
+
 def _stable_request_id(payload: dict[str, Any]) -> str:
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:16]
     return f"sec:{digest}"
+
+
+def _run_payload(
+    *,
+    action: SecAction,
+    ticker: str,
+    payload: dict[str, Any],
+    request_id: str | None,
+    _exit: bool,
+) -> dict[str, Any]:
+    stable_payload = {"action": action, "ticker": ticker, **payload}
+    rid = request_id or _stable_request_id(stable_payload)
+    result = host.read_result(rid)
+    if result is None:
+        request: dict[str, Any] = {"id": rid, **stable_payload}
+        field_names = {
+            "as_of": "asOf",
+            "period_end_from": "periodEndFrom",
+            "period_end_to": "periodEndTo",
+            "max_filings": "maxFilings",
+        }
+        for source, target in field_names.items():
+            if source in request:
+                request[target] = request.pop(source)
+        result = host.run_sec(request)
+    del _exit
+    if not result.get("ok"):
+        raise RuntimeError(f"sec.{action}({ticker!r}) failed: {result.get('error')}")
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError(f"sec.{action}({ticker!r}) returned an invalid payload")
+    return data
 
 
 def _run(
@@ -111,32 +197,18 @@ def _run(
     request_id: str | None = None,
     _exit: bool = True,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "action": action,
-        "ticker": ticker,
-        "periods": periods,
-        "cadence": cadence,
-    }
+    payload: dict[str, Any] = {"periods": periods, "cadence": cadence}
     if as_of is not None:
         payload["as_of"] = as_of
     if roles is not None:
         payload["roles"] = list(roles)
-    rid = request_id or _stable_request_id(payload)
-    result = host.read_result(rid)
-    if result is None:
-        request: dict[str, Any] = {"id": rid, **payload}
-        if "as_of" in request:
-            request["asOf"] = request.pop("as_of")
-        result = host.run_sec(request)
-    # Kept for source compatibility with earlier SDKs. Public SEC calls are now
-    # blocking, so neither value changes execution behavior.
-    del _exit
-    if not result.get("ok"):
-        raise RuntimeError(f"sec.{action}({ticker!r}) failed: {result.get('error')}")
-    data = result.get("data")
-    if not isinstance(data, dict):
-        raise RuntimeError(f"sec.{action}({ticker!r}) returned an invalid payload")
-    return data
+    return _run_payload(
+        action=action,
+        ticker=ticker,
+        payload=payload,
+        request_id=request_id,
+        _exit=_exit,
+    )
 
 
 def resolved_fact(
@@ -315,11 +387,180 @@ def fact_candidates(
     )
 
 
+def _notes_payload(
+    *,
+    as_of: str | None,
+    period_end_from: str | None,
+    period_end_to: str | None,
+    forms: Sequence[str] | None,
+    max_filings: int | None,
+    limit: int | None,
+) -> dict[str, Any]:
+    normalized_from = _validated_as_of(period_end_from)
+    normalized_to = _validated_as_of(period_end_to)
+    if normalized_from is not None and normalized_to is not None and normalized_from > normalized_to:
+        raise ValueError("period_end_from cannot follow period_end_to")
+    normalized_forms = _validated_string_list(
+        forms,
+        field="forms",
+        maximum=_MAX_FORMS,
+        pattern=_FORM_PATTERN,
+        required=False,
+    )
+    payload: dict[str, Any] = {"as_of": _required_as_of(as_of)}
+    if normalized_from is not None:
+        payload["period_end_from"] = normalized_from
+    if normalized_to is not None:
+        payload["period_end_to"] = normalized_to
+    if normalized_forms is not None:
+        payload["forms"] = normalized_forms
+    normalized_max_filings = _validated_positive_integer(
+        max_filings,
+        field="max_filings",
+        maximum=_MAX_FILINGS,
+    )
+    if normalized_max_filings is not None:
+        payload["max_filings"] = normalized_max_filings
+    normalized_limit = _validated_positive_integer(limit, field="limit", maximum=_MAX_ROWS)
+    if normalized_limit is not None:
+        payload["limit"] = normalized_limit
+    return payload
+
+
+def fact_instances(
+    *,
+    ticker: str,
+    as_of: str,
+    concepts: Sequence[str] | None = None,
+    period_end_from: str | None = None,
+    period_end_to: str | None = None,
+    forms: Sequence[str] | None = None,
+    dimensional: DimensionalFilter = "all",
+    max_filings: int | None = None,
+    limit: int | None = None,
+    request_id: str | None = None,
+    _exit: bool = True,
+) -> dict[str, Any]:
+    """Return exact numeric filing facts from the pinned SEC Notes snapshot.
+
+    Rows retain fact IDs, accession, concept, period, unit, raw dimensions,
+    availability, immutable snapshot identity, and the exact SEC filing URL.
+    No web fallback or semantic segment classification occurs.
+    """
+    if dimensional not in ("all", "only", "none"):
+        raise ValueError("dimensional must be 'all', 'only', or 'none'")
+    payload = _notes_payload(
+        as_of=as_of,
+        period_end_from=period_end_from,
+        period_end_to=period_end_to,
+        forms=forms,
+        max_filings=max_filings,
+        limit=limit,
+    )
+    normalized_concepts = _validated_string_list(
+        concepts,
+        field="concepts",
+        maximum=_MAX_CONCEPTS,
+        pattern=_CONCEPT_PATTERN,
+        required=False,
+    )
+    if normalized_concepts is not None:
+        payload["concepts"] = normalized_concepts
+    payload["dimensional"] = dimensional
+    return _run_payload(
+        action="fact_instances",
+        ticker=_normalized_ticker(ticker),
+        payload=payload,
+        request_id=request_id,
+        _exit=_exit,
+    )
+
+
+def dimensioned_concepts(
+    *,
+    ticker: str,
+    as_of: str,
+    period_end_from: str | None = None,
+    period_end_to: str | None = None,
+    forms: Sequence[str] | None = None,
+    max_filings: int | None = None,
+    limit: int | None = None,
+    request_id: str | None = None,
+    _exit: bool = True,
+) -> dict[str, Any]:
+    """Discover exact filer tags that carry dimensional facts.
+
+    Discovery reports the filed grain and labels without asserting that any
+    axis is a reportable segment.
+    """
+    return _run_payload(
+        action="dimensioned_concepts",
+        ticker=_normalized_ticker(ticker),
+        payload=_notes_payload(
+            as_of=as_of,
+            period_end_from=period_end_from,
+            period_end_to=period_end_to,
+            forms=forms,
+            max_filings=max_filings,
+            limit=limit,
+        ),
+        request_id=request_id,
+        _exit=_exit,
+    )
+
+
+def business_breakdowns(
+    *,
+    ticker: str,
+    as_of: str,
+    concepts: Sequence[str],
+    period_end_from: str | None = None,
+    period_end_to: str | None = None,
+    forms: Sequence[str] | None = None,
+    max_filings: int | None = None,
+    limit: int | None = None,
+    request_id: str | None = None,
+    _exit: bool = True,
+) -> dict[str, Any]:
+    """Return filed dimensional facts for exact discovered concepts.
+
+    A successful row set has status ``unreconciled`` until executable analysis
+    selects a non-overlapping disclosure set and reconciles it to a matching
+    consolidated fact. The SDK never labels every SEC dimension as a segment.
+    """
+    payload = _notes_payload(
+        as_of=as_of,
+        period_end_from=period_end_from,
+        period_end_to=period_end_to,
+        forms=forms,
+        max_filings=max_filings,
+        limit=limit,
+    )
+    payload["concepts"] = _validated_string_list(
+        concepts,
+        field="concepts",
+        maximum=_MAX_CONCEPTS,
+        pattern=_CONCEPT_PATTERN,
+        required=True,
+    )
+    return _run_payload(
+        action="business_breakdowns",
+        ticker=_normalized_ticker(ticker),
+        payload=payload,
+        request_id=request_id,
+        _exit=_exit,
+    )
+
+
 __all__ = [
     "Cadence",
+    "DimensionalFilter",
     "FACT_ROLES",
     "FactRole",
+    "business_breakdowns",
+    "dimensioned_concepts",
     "fact_candidates",
+    "fact_instances",
     "latest_statement",
     "resolved_fact",
     "statement",
