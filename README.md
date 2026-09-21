@@ -775,7 +775,9 @@ discovery, then query only exact returned concepts:
 concepts = nt.sec.dimensioned_concepts(
     ticker="GOOGL",
     as_of="2026-08-28",
-    forms=["10-K", "10-Q"],
+    period_end_from="2022-01-01",
+    forms=["10-K"],
+    max_filings=4,
     limit=100,
 )
 
@@ -783,7 +785,10 @@ facts = nt.sec.fact_instances(
     ticker="GOOGL",
     as_of="2026-08-28",
     concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+    period_end_from="2022-01-01",
+    forms=["10-K"],
     dimensional="all",
+    max_filings=4,
     limit=500,
 )
 
@@ -791,11 +796,17 @@ breakdown_candidates = nt.sec.business_breakdowns(
     ticker="GOOGL",
     as_of="2026-08-28",
     concepts=["RevenueFromContractWithCustomerExcludingAssessedTax"],
+    period_end_from="2022-01-01",
+    forms=["10-K"],
+    max_filings=4,
 )
 ```
 
 Each result carries the immutable dataset snapshot, exact accession and filing
 URL, point-in-time availability, raw dimension strings, and an explicit status.
+Each Notes call opens at most four filing generations so it remains inside the
+host deadline. Use explicit non-overlapping period windows for a longer history;
+query a current 10-Q separately when the annual filing window is insufficient.
 `business_breakdowns` is a bounded dimensional-fact query; a successful row set
 is deliberately labeled `unreconciled`. Treat it as a complete business split
 only after executable analysis selects a non-overlapping disclosure set and

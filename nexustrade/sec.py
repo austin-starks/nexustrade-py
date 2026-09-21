@@ -58,7 +58,7 @@ _TICKER_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9.-]{0,14}$")
 _MAX_PERIODS = 40
 _MAX_CONCEPTS = 100
 _MAX_FORMS = 20
-_MAX_FILINGS = 80
+_MAX_FILINGS = 4
 _MAX_ROWS = 500
 _CONCEPT_PATTERN = re.compile(r"^[^\x00-\x1f\x7f]{1,512}$")
 _FORM_PATTERN = re.compile(r"^[A-Z0-9-]+(?:/A)?$")
@@ -436,7 +436,7 @@ def fact_instances(
     period_end_to: str | None = None,
     forms: Sequence[str] | None = None,
     dimensional: DimensionalFilter = "all",
-    max_filings: int | None = None,
+    max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
     request_id: str | None = None,
     _exit: bool = True,
@@ -483,7 +483,7 @@ def dimensioned_concepts(
     period_end_from: str | None = None,
     period_end_to: str | None = None,
     forms: Sequence[str] | None = None,
-    max_filings: int | None = None,
+    max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
     request_id: str | None = None,
     _exit: bool = True,
@@ -517,7 +517,7 @@ def business_breakdowns(
     period_end_from: str | None = None,
     period_end_to: str | None = None,
     forms: Sequence[str] | None = None,
-    max_filings: int | None = None,
+    max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
     request_id: str | None = None,
     _exit: bool = True,
