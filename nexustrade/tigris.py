@@ -375,12 +375,15 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
     "political_filings": _ds(
         "political_filings",
         "year",
-        "filerLast",
+        "memberId",
         (
             "chamber",
             "docId",
             "filerFirst",
             "filerLast",
+            "memberId",
+            "displayName",
+            "identitySource",
             "stateDistrict",
             "filingDate",
             "availableAt",
@@ -391,7 +394,9 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
             "amendedReportDate",
             "reportDate",
         ),
-        "House and Senate periodic transaction reports, one row per filing. Point-in-time: filter availableAt.",
+        "House and Senate periodic transaction reports, one row per filing. Point-in-time: filter availableAt. "
+        "memberId is the Bioguide ID, one per person across name spellings and chambers; identitySource "
+        "non_member marks staff or candidate filings.",
     ),
     "political_trades": _ds(
         "political_trades",
@@ -403,6 +408,9 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
             "rowIndex",
             "filerFirst",
             "filerLast",
+            "memberId",
+            "displayName",
+            "identitySource",
             "owner",
             "action",
             "partialSale",
@@ -416,7 +424,8 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
             "amountHigh",
             "sourceUrl",
         ),
-        "Every congressional trade row as printed; a repeated or amended report repeats rows, so count trades in political_trade_events.",
+        "Every congressional trade row as printed; a repeated or amended report repeats rows, so count trades in political_trade_events. "
+        "Group politicians by memberId, not filerFirst/filerLast.",
     ),
     "political_trade_events": _ds(
         "political_trade_events",
@@ -428,6 +437,8 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
             "chamber",
             "filerFirst",
             "filerLast",
+            "memberId",
+            "displayName",
             "owner",
             "action",
             "transactionDate",
@@ -439,7 +450,8 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
             "supersededAt",
             "sourceUrl",
         ),
-        "Congressional trades with amendments folded into versions. A trade counts from firstAvailableAt; a version holds from availableAt until supersededAt (NULL means current).",
+        "Congressional trades with amendments folded into versions. A trade counts from firstAvailableAt; a version holds from availableAt until supersededAt (NULL means current). "
+        "Events exist only for members: group politicians by memberId (Bioguide ID) and show displayName.",
     ),
     "economic": _ds(
         "economic",
