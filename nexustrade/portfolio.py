@@ -1056,6 +1056,26 @@ def AbsoluteValue(
 
 __all__.append("AbsoluteValue")
 
+def AverageDirectionalIndex(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 14,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    line: Literal["adx", "plusDi", "minusDi"] = "adx",
+) -> Indicator:
+    """AverageDirectionalIndex indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    line: Which ADX-system line to evaluate
+    """
+    d: Dict[str, Any] = {"type": "AverageDirectionalIndex"}
+    _set_asset(d, "targetAsset", asset)
+    d["line"] = _enum(line, ["adx","plusDi","minusDi"], "line")
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("AverageDirectionalIndex")
+
 def AverageTrueRange(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
@@ -2043,6 +2063,33 @@ def Month() -> Indicator:
 
 __all__.append("Month")
 
+def MovingAverageConvergenceDivergence(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    fast_length: float = 12,
+    slow_length: float = 26,
+    signal_length: float = 9,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    line: Literal["macd", "signal", "histogram"] = "macd",
+) -> Indicator:
+    """MovingAverageConvergenceDivergence indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    fast_length: Period of the fast EMA
+    slow_length: Period of the slow EMA (must exceed the fast length)
+    signal_length: Period of the EMA applied to the MACD line
+    interval: Bar interval the MACD is computed on
+    line: Which MACD line to evaluate
+    """
+    d: Dict[str, Any] = {"type": "MovingAverageConvergenceDivergence"}
+    _set_asset(d, "targetAsset", asset)
+    d["fastLength"] = fast_length
+    d["slowLength"] = slow_length
+    d["signalLength"] = signal_length
+    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    d["line"] = _enum(line, ["macd","signal","histogram"], "line")
+    return Indicator(d)
+
+__all__.append("MovingAverageConvergenceDivergence")
+
 def Multiply(
     left: Indicator,
     right: Indicator,
@@ -2560,6 +2607,23 @@ def RelativeStrengthIndex(
 RSI = RelativeStrengthIndex
 __all__.append("RelativeStrengthIndex")
 __all__.append("RSI")
+
+def RelativeVolume(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 14,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """RelativeVolume indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "RelativeVolume"}
+    _set_asset(d, "targetAsset", asset)
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("RelativeVolume")
 
 def SimpleMovingAverage(
     asset: Union[str, Dict[str, Any], _Candidate],
