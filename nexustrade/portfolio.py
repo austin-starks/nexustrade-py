@@ -1056,6 +1056,21 @@ def AbsoluteValue(
 
 __all__.append("AbsoluteValue")
 
+def AccumulationDistribution(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """AccumulationDistribution indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    interval: Bar interval the line is accumulated on
+    """
+    d: Dict[str, Any] = {"type": "AccumulationDistribution"}
+    _set_asset(d, "targetAsset", asset)
+    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    return Indicator(d)
+
+__all__.append("AccumulationDistribution")
+
 def AverageDirectionalIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
@@ -1146,6 +1161,43 @@ def BuyingPower() -> Indicator:
     return Indicator(d)
 
 __all__.append("BuyingPower")
+
+def ChaikinMoneyFlow(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 20,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """ChaikinMoneyFlow indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "ChaikinMoneyFlow"}
+    _set_asset(d, "targetAsset", asset)
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("ChaikinMoneyFlow")
+
+def CommodityChannelIndex(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 20,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    constant: float = 0.015,
+) -> Indicator:
+    """CommodityChannelIndex indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    constant: Divisor scaling the mean deviation
+    """
+    d: Dict[str, Any] = {"type": "CommodityChannelIndex"}
+    _set_asset(d, "targetAsset", asset)
+    d["constant"] = constant
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("CommodityChannelIndex")
 
 def CompoundAnnualGrowthRate(
     asset: Union[str, Dict[str, Any], _Candidate],
@@ -1415,6 +1467,26 @@ def Divide(
 
 __all__.append("Divide")
 
+def DonchianChannel(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 20,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    line: Literal["upper", "lower", "middle"] = "upper",
+) -> Indicator:
+    """DonchianChannel indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    line: Which Donchian line to evaluate
+    """
+    d: Dict[str, Any] = {"type": "DonchianChannel"}
+    _set_asset(d, "targetAsset", asset)
+    d["line"] = _enum(line, ["upper","lower","middle"], "line")
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("DonchianChannel")
+
 def Economic(
     metric: Literal["NonfarmPayrolls", "UnemploymentRate", "MoneySupply", "TreasuryYield3Month", "CPI"],
 ) -> Indicator:
@@ -1510,6 +1582,29 @@ def HighOfDay(
     return Indicator(d)
 
 __all__.append("HighOfDay")
+
+def IchimokuCloud(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 9,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    span_length: float = 52,
+    line: Literal["tenkan", "kijun", "senkouA", "senkouB", "chikou"] = "tenkan",
+) -> Indicator:
+    """IchimokuCloud indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    span_length: Senkou B lookback in bars (Kijun scales from conversion)
+    line: Which Ichimoku line to evaluate (unshifted)
+    """
+    d: Dict[str, Any] = {"type": "IchimokuCloud"}
+    _set_asset(d, "targetAsset", asset)
+    d["spanLength"] = span_length
+    d["line"] = _enum(line, ["tenkan","kijun","senkouA","senkouB","chikou"], "line")
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("IchimokuCloud")
 
 def ImpliedVolatility(
     asset: Union[str, Dict[str, Any], _Candidate],
@@ -1821,6 +1916,29 @@ def IVRank(
 
 __all__.append("IVRank")
 
+def KeltnerChannel(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 20,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    multiplier: float = 2,
+    line: Literal["upper", "middle", "lower"] = "middle",
+) -> Indicator:
+    """KeltnerChannel indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    multiplier: How many ATRs from the EMA midline
+    line: Which Keltner line to evaluate
+    """
+    d: Dict[str, Any] = {"type": "KeltnerChannel"}
+    _set_asset(d, "targetAsset", asset)
+    d["multiplier"] = multiplier
+    d["line"] = _enum(line, ["upper","middle","lower"], "line")
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("KeltnerChannel")
+
 def LastOrderPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
     side: Literal["Buy", "Sell"],
@@ -2055,6 +2173,23 @@ def MinutesUntilClose() -> Indicator:
 
 __all__.append("MinutesUntilClose")
 
+def MoneyFlowIndex(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 14,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """MoneyFlowIndex indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "MoneyFlowIndex"}
+    _set_asset(d, "targetAsset", asset)
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("MoneyFlowIndex")
+
 def Month() -> Indicator:
     """Month indicator.
     """
@@ -2112,6 +2247,21 @@ def Negative(
     return Indicator(d)
 
 __all__.append("Negative")
+
+def OnBalanceVolume(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """OnBalanceVolume indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    interval: Bar interval the volume is accumulated on
+    """
+    d: Dict[str, Any] = {"type": "OnBalanceVolume"}
+    _set_asset(d, "targetAsset", asset)
+    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    return Indicator(d)
+
+__all__.append("OnBalanceVolume")
 
 def OpeningPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
@@ -2390,6 +2540,27 @@ def OptionUnrealizedPnL(
 
 __all__.append("OptionUnrealizedPnL")
 
+def ParabolicSar(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    step: float = 0.02,
+    maximum: float = 0.2,
+) -> Indicator:
+    """ParabolicSar indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    interval: Bar interval the SAR trails on
+    step: AF increment per new extreme
+    maximum: AF cap
+    """
+    d: Dict[str, Any] = {"type": "ParabolicSar"}
+    _set_asset(d, "targetAsset", asset)
+    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    d["step"] = step
+    d["maximum"] = maximum
+    return Indicator(d)
+
+__all__.append("ParabolicSar")
+
 def Plus(
     left: Indicator,
     right: Indicator,
@@ -2655,6 +2826,32 @@ def SquareRoot(
 
 __all__.append("SquareRoot")
 
+def Stochastic(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 14,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    smooth_k: float = 3,
+    smooth_d: float = 3,
+    line: Literal["k", "d"] = "k",
+) -> Indicator:
+    """Stochastic indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    smooth_k: Moving-average length applied to raw %K
+    smooth_d: Moving-average length applied to smoothed %K
+    line: Which stochastic line to evaluate
+    """
+    d: Dict[str, Any] = {"type": "Stochastic"}
+    _set_asset(d, "targetAsset", asset)
+    d["smoothK"] = smooth_k
+    d["smoothD"] = smooth_d
+    d["line"] = _enum(line, ["k","d"], "line")
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("Stochastic")
+
 def StockReport(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
@@ -2712,6 +2909,29 @@ def SumOrderQuantity(
     return Indicator(d)
 
 __all__.append("SumOrderQuantity")
+
+def Supertrend(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 10,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    multiplier: float = 3,
+    line: Literal["value", "direction"] = "value",
+) -> Indicator:
+    """Supertrend indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    multiplier: How many ATRs from HL2
+    line: Band value or trend direction (+1 up, -1 down)
+    """
+    d: Dict[str, Any] = {"type": "Supertrend"}
+    _set_asset(d, "targetAsset", asset)
+    d["multiplier"] = multiplier
+    d["line"] = _enum(line, ["value","direction"], "line")
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("Supertrend")
 
 def TrailingSum(
     operand: Indicator,
@@ -2790,6 +3010,23 @@ def VWAP(
 
 __all__.append("VWAP")
 
+def WilliamsR(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    length: float = 14,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """WilliamsR indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "WilliamsR"}
+    _set_asset(d, "targetAsset", asset)
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("WilliamsR")
+
 def Year() -> Indicator:
     """Year indicator.
     """
@@ -2859,7 +3096,7 @@ def walk_forward(
     num_windows: Optional[float] = None,
     training_percent: Optional[float] = None,
     window_overlap_percent: Optional[float] = None,
-    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
+    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "winRate", "profitFactor", "calmarRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
     selection_policy: Optional[SelectionPolicy] = None,
     fold_selection_policy: Optional[SelectionPolicy] = None,
     fee_config: Optional[FeeConfig] = None,
@@ -2958,7 +3195,7 @@ def optimization(
     *,
     start_date: str,
     end_date: str,
-    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
+    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "winRate", "profitFactor", "calmarRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
     population_size: Optional[float] = None,
     num_generations: Optional[float] = None,
     num_windows: Optional[float] = None,
@@ -2972,7 +3209,7 @@ def optimization(
     """Submit a genetic optimization over the portfolio's tunable genes.
     start_date: Optimization start date (ISO format, e.g. 2024-01-01). Minute has ONE cap: 730 days of minute data, counting minute-indicator warmup. The 90-day first look is a default for callers who name no dates, not a ceiling — pass the window the question needs.
     end_date: Optimization end date (ISO format, e.g. 2024-12-31). Minute selected range plus minute-indicator warmup cannot exceed 730 days of minute data.
-    fitness_functions: Fitness functions: sharpeRatio, sortinoRatio, maxDrawdown, avgDrawdown, percentChange, dollarsSold, ulcerPerformanceIndex, participationRate, distinctUnderlyingsTraded, medianDeployment
+    fitness_functions: Fitness functions: sharpeRatio, sortinoRatio, winRate, profitFactor, calmarRatio, maxDrawdown, avgDrawdown, percentChange, dollarsSold, ulcerPerformanceIndex, participationRate, distinctUnderlyingsTraded, medianDeployment
     population_size: Population size for genetic algorithm (default 6, range 3-12) Range 3..12.
     num_generations: Number of generations (default 6, max 10) Range 1..10.
     num_windows: Number of rolling training windows (default 3, max 20) Range 1..20.
