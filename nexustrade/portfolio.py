@@ -1234,6 +1234,23 @@ def ConsecutiveTrue(
 
 __all__.append("ConsecutiveTrue")
 
+def Correlation(
+    operands: Sequence[Indicator],
+    length: float = 60,
+    interval: Literal["Day", "Hour", "Minute"] = "Day",
+) -> Indicator:
+    """Correlation indicator.
+    operands: Sub-indicators this compound operates on.
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "Correlation"}
+    d["indicators"] = [i.d for i in operands]
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    return Indicator(d)
+
+__all__.append("Correlation")
+
 def CountTrue(
     condition: Condition,
     length: float = 1,
