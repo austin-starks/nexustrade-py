@@ -297,22 +297,6 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
         "SEC source-of-truth annual mirror incl. filing metadata. "
         "Coverage may be narrower; follow get_manifest role/years.",
     ),
-    "quarterly_financials": _ds(
-        "quarterly_financials",
-        "year",
-        "ticker",
-        _FINANCIALS_COLS,
-        "Primary broad-coverage vendor quarterly financials. "
-        "This is not a deprecated table; follow get_manifest role/years.",
-    ),
-    "annual_financials": _ds(
-        "annual_financials",
-        "year",
-        "ticker",
-        _FINANCIALS_COLS,
-        "Primary broad-coverage vendor annual financials. "
-        "This is not a deprecated table; follow get_manifest role/years.",
-    ),
     "sec_quarterly_earnings": _ds(
         "sec_quarterly_earnings",
         "year",
@@ -873,8 +857,24 @@ def _read_union(
     return frame
 
 
+# Vendor fundamentals, dated at period end, so an as-of read looks ahead. They
+# stay in the lake only as build input for canonical's 1983-2009 history.
+_RETIRED_PREFIXES: dict[str, str] = {
+    "quarterly_financials": "canonical_quarterly_financials",
+    "annual_financials": "canonical_annual_financials",
+}
+
+
 def _dataset(prefix: str) -> LakeDataset | None:
-    return LAKE_CATALOG.get(prefix.strip("/"))
+    """Catalog entry for ``prefix``; refuses a retired prefix outright."""
+    name = prefix.strip("/")
+    replacement = _RETIRED_PREFIXES.get(name)
+    if replacement is not None:
+        raise ValueError(
+            f"{name!r} is period-end dated and not readable (it would look "
+            f"ahead); use {replacement!r}"
+        )
+    return LAKE_CATALOG.get(name)
 
 
 def read_year_shards(
