@@ -240,8 +240,24 @@ def write_inputs(
     """
     Write structured report inputs for the host-side Sandbox Report Generator prompt.
 
-    Required-ish keys (all optional but recommended):
+    Common keys:
       title, request, sources, methodology, statistics, images, findings, caveats
+
+    For a staged method, use the structural delivery contract:
+      reportEvidence — [{id, paragraphs=[[text, ref(...), ...]], referenceIds?}]
+      reportViews — [{id, type='table'|'metricGrid', ...typed text segments...}]
+      requirements — [{requirement=<staged id>, evidenceIds=[...], viewIds=[...]}]
+      validationChecks — [{id, kind='independent'|'reconciliation', left, right,
+                           evidenceId}]
+
+    Every numeric or digit-bearing segment in reportEvidence/reportViews must be
+    an exact scalar ref (or a labeled scalar assumption). The host copies these
+    blocks exactly and refuses a generated report that omits a mapped id. This is
+    a delivery contract, not a semantic claim that the evidence is sufficient.
+    Each validation side names an exact scalar inputPath. The host derives that
+    scalar's sourceIds from its bound model provenance and verifies fetch/lake
+    lineage. Independent sides must be disjoint; same-lineage comparisons are
+    reconciliation checks. Never place free values or sourceIds on the check.
 
     Supply structured research and calculation outputs. The host authors the report.
     Pass model= to resolve report.ref fields at write time and export the complete
