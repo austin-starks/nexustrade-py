@@ -3096,7 +3096,7 @@ def walk_forward(
     num_windows: Optional[float] = None,
     training_percent: Optional[float] = None,
     window_overlap_percent: Optional[float] = None,
-    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
+    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "winRate", "profitFactor", "calmarRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
     selection_policy: Optional[SelectionPolicy] = None,
     fold_selection_policy: Optional[SelectionPolicy] = None,
     fee_config: Optional[FeeConfig] = None,
@@ -3195,7 +3195,7 @@ def optimization(
     *,
     start_date: str,
     end_date: str,
-    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
+    fitness_functions: Optional[Sequence[Literal["sharpeRatio", "sortinoRatio", "winRate", "profitFactor", "calmarRatio", "maxDrawdown", "avgDrawdown", "percentChange", "dollarsSold", "ulcerPerformanceIndex", "participationRate", "distinctUnderlyingsTraded", "medianDeployment"]]] = None,
     population_size: Optional[float] = None,
     num_generations: Optional[float] = None,
     num_windows: Optional[float] = None,
@@ -3209,7 +3209,7 @@ def optimization(
     """Submit a genetic optimization over the portfolio's tunable genes.
     start_date: Optimization start date (ISO format, e.g. 2024-01-01). Minute has ONE cap: 730 days of minute data, counting minute-indicator warmup. The 90-day first look is a default for callers who name no dates, not a ceiling — pass the window the question needs.
     end_date: Optimization end date (ISO format, e.g. 2024-12-31). Minute selected range plus minute-indicator warmup cannot exceed 730 days of minute data.
-    fitness_functions: Fitness functions: sharpeRatio, sortinoRatio, maxDrawdown, avgDrawdown, percentChange, dollarsSold, ulcerPerformanceIndex, participationRate, distinctUnderlyingsTraded, medianDeployment
+    fitness_functions: Fitness functions: sharpeRatio, sortinoRatio, winRate, profitFactor, calmarRatio, maxDrawdown, avgDrawdown, percentChange, dollarsSold, ulcerPerformanceIndex, participationRate, distinctUnderlyingsTraded, medianDeployment
     population_size: Population size for genetic algorithm (default 6, range 3-12) Range 3..12.
     num_generations: Number of generations (default 6, max 10) Range 1..10.
     num_windows: Number of rolling training windows (default 3, max 20) Range 1..20.
