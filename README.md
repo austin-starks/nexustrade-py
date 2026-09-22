@@ -729,6 +729,10 @@ filing selection in ad hoc SQL:
 ```python
 import nexustrade as nt
 
+# Batch the documented supported roles once for each ticker/cadence/as-of
+# combination. Do not probe roles one at a time or guess role names; inspect
+# the returned reconciliation entries to decide which facts are usable.
+
 statement = nt.sec.statement(
     ticker="GOOGL",
     periods=10,
