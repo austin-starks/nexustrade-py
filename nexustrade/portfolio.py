@@ -1809,6 +1809,24 @@ def InsiderTrades(
 
 __all__.append("InsiderTrades")
 
+def InstitutionalHoldings(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    metric: Literal["HolderCount", "TotalShares", "TotalValue", "ConcentrationTop5", "NetShareChange", "NetHolderChange", "NewHolders", "ClosedHolders"] = "HolderCount",
+    window_days: float = 90,
+) -> Indicator:
+    """InstitutionalHoldings indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    metric: Managers holding, shares or value held, concentration, or the change since the previous quarter
+    window_days: Read a disclosed period only if its filing became public within this many trailing days
+    """
+    d: Dict[str, Any] = {"type": "InstitutionalHoldings"}
+    _set_asset(d, "targetAsset", asset)
+    d["metric"] = _enum(metric, ["HolderCount","TotalShares","TotalValue","ConcentrationTop5","NetShareChange","NetHolderChange","NewHolders","ClosedHolders"], "metric")
+    d["windowDays"] = window_days
+    return Indicator(d)
+
+__all__.append("InstitutionalHoldings")
+
 def IsAsset(
     match_asset: Union[str, Dict[str, Any], _Candidate],
     asset: Union[str, Dict[str, Any], _Candidate],
