@@ -242,6 +242,14 @@ class SecSdkTests(unittest.TestCase):
                 "OPENAI_API_KEY": "sandbox-key",
             },
         ), patch.object(host.urllib.request, "urlopen", side_effect=urlopen):
+            nt.sec.filed_concepts(
+                ticker="googl",
+                as_of="2026-08-28",
+                name_contains=" Preferred ",
+                period_end_from="2025-12-31",
+                period_end_to="2025-12-31",
+                forms=["10-K"],
+            )
             nt.sec.dimensioned_concepts(
                 ticker="googl",
                 as_of="2026-08-28",
@@ -266,6 +274,16 @@ class SecSdkTests(unittest.TestCase):
         self.assertEqual(
             [{key: value for key, value in request.items() if key != "id"} for request in requests],
             [
+                {
+                    "action": "filed_concepts",
+                    "ticker": "GOOGL",
+                    "asOf": "2026-08-28",
+                    "periodEndFrom": "2025-12-31",
+                    "periodEndTo": "2025-12-31",
+                    "forms": ["10-K"],
+                    "maxFilings": 1,
+                    "nameContains": "Preferred",
+                },
                 {
                     "action": "dimensioned_concepts",
                     "ticker": "GOOGL",
@@ -310,6 +328,8 @@ class SecSdkTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "as_of is required"):
             nt.sec.dimensioned_concepts(ticker="GOOGL", as_of=None)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "name_contains"):
+            nt.sec.filed_concepts(ticker="GOOGL", as_of="2026-08-28", name_contains="  ")
         with self.assertRaisesRegex(ValueError, "concepts must contain"):
             nt.sec.business_breakdowns(ticker="GOOGL", as_of="2026-08-28", concepts=[])
         with self.assertRaisesRegex(ValueError, "1 through 4"):

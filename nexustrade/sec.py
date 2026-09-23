@@ -19,6 +19,7 @@ SecAction = Literal[
     "statement",
     "fact_candidates",
     "fact_instances",
+    "filed_concepts",
     "dimensioned_concepts",
     "business_breakdowns",
 ]
@@ -172,6 +173,7 @@ def _run_payload(
             "period_end_from": "periodEndFrom",
             "period_end_to": "periodEndTo",
             "max_filings": "maxFilings",
+            "name_contains": "nameContains",
         }
         for source, target in field_names.items():
             if source in request:
@@ -476,6 +478,49 @@ def fact_instances(
     )
 
 
+def filed_concepts(
+    *,
+    ticker: str,
+    as_of: str,
+    name_contains: str | None = None,
+    period_end_from: str | None = None,
+    period_end_to: str | None = None,
+    forms: Sequence[str] | None = None,
+    max_filings: int | None = 1,
+    limit: int | None = None,
+    request_id: str | None = None,
+    _exit: bool = True,
+) -> dict[str, Any]:
+    """Find exact numeric filing tags, including facts without dimensions.
+
+    Search is over filed tag names and labels, not prose extraction or semantic
+    classification. The response retains filing and snapshot identity. Query one
+    filing window when researching one filing, then use an exact returned tag
+    with ``fact_instances`` to inspect its raw values and units.
+    """
+    payload = _notes_payload(
+        as_of=as_of,
+        period_end_from=period_end_from,
+        period_end_to=period_end_to,
+        forms=forms,
+        max_filings=max_filings,
+        limit=limit,
+    )
+    if name_contains is not None:
+        if (not isinstance(name_contains, str) or
+                not 1 <= len(name_contains.strip()) <= 128 or
+                any(ord(char) < 32 or ord(char) == 127 for char in name_contains)):
+            raise ValueError("name_contains must be 1 through 128 printable characters")
+        payload["name_contains"] = name_contains.strip()
+    return _run_payload(
+        action="filed_concepts",
+        ticker=_normalized_ticker(ticker),
+        payload=payload,
+        request_id=request_id,
+        _exit=_exit,
+    )
+
+
 def dimensioned_concepts(
     *,
     ticker: str,
@@ -561,6 +606,7 @@ __all__ = [
     "dimensioned_concepts",
     "fact_candidates",
     "fact_instances",
+    "filed_concepts",
     "latest_statement",
     "resolved_fact",
     "statement",
