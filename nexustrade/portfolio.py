@@ -2616,6 +2616,7 @@ def PoliticalTrades(
     amount_basis: Literal["LowerBound", "Midpoint", "UpperBound"] = "LowerBound",
     instrument: Literal["Equity", "Option", "All"] = "Equity",
     chamber: Literal["All", "House", "Senate"] = "All",
+    member_id: str = "",
 ) -> Indicator:
     """PoliticalTrades indicator.
     asset: Pass CANDIDATE inside a rebalance pipeline to bind each stock.
@@ -2625,6 +2626,7 @@ def PoliticalTrades(
     amount_basis: Range endpoint used by amount metrics; LowerBound is conservative.
     instrument: Equity excludes confirmed option disclosures; Option selects them explicitly.
     chamber: Optional advanced cohort filter; named-member requests should normally use All.
+    member_id: Bioguide id such as P000197. Matches exactly and overrides filer, because names collide.
     """
     d: Dict[str, Any] = {"type": "PoliticalTrades"}
     _set_asset(d, "targetAsset", asset)
@@ -2634,6 +2636,7 @@ def PoliticalTrades(
     d["amountBasis"] = _enum(amount_basis, ["LowerBound","Midpoint","UpperBound"], "amount_basis")
     d["instrument"] = _enum(instrument, ["Equity","Option","All"], "instrument")
     d["chamber"] = _enum(chamber, ["All","House","Senate"], "chamber")
+    d["memberId"] = member_id
     return Indicator(d)
 
 __all__.append("PoliticalTrades")
