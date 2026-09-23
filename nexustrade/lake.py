@@ -778,11 +778,13 @@ def daily_close_as_of(
     *,
     client: NexusTradeClient | None = None,
 ) -> dict[str, Any]:
-    """Select the latest canonical daily close on/before a calendar date.
+    """Select the latest canonical daily row on/before a calendar date.
 
     The lake stores session-close timestamps. Comparing one to an uncast
     YYYY-MM-DD string drops that day's close at midnight; this query casts
     both sides to DATE and returns the exact row plus its durable query ID.
+    The row includes the observed market cap, share count, and source fields
+    so a single-date equity analysis need not issue a second raw SQL query.
     """
     if not isinstance(ticker, str) or not ticker.strip():
         raise ValueError("ticker must be a nonempty string")
@@ -794,7 +796,11 @@ def daily_close_as_of(
         raise ValueError("as_of must be a YYYY-MM-DD calendar date") from error
     symbol = ticker.strip().upper()
     result = sql(
-        'SELECT ticker, "date", "closingPrice" FROM lake.sec_daily_ohlc '
+        'SELECT ticker, "date", "closingPrice", "unadjustedClose", '
+        '"marketCap", "sharesOutstanding", "sharesAsOf", '
+        '"source", "priceSource", "marketCapSource", '
+        '"statementAccession", "statementSourceFilingUrl" '
+        'FROM lake.sec_daily_ohlc '
         'WHERE ticker = ? AND CAST("date" AS DATE) <= CAST(? AS DATE) '
         'ORDER BY "date" DESC LIMIT 1',
         [symbol, as_of],
