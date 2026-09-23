@@ -1237,6 +1237,93 @@ def equity_return_case(
     return result
 
 
+def future_common_equity_return_case(
+    *,
+    entry_price: Number,
+    entry_date: str,
+    exit_date: str,
+    undiscounted_exit_enterprise_value: Number,
+    exit_nonoperating_assets: Number,
+    exit_debt_and_debt_like_liabilities: Number,
+    exit_other_senior_claims: Number,
+    exit_diluted_shares: Number,
+    shareholder_distributions: Sequence[Mapping[str, Any]] = (),
+    required_return: Number | None = None,
+) -> dict[str, Any]:
+    """Value a common holder's dated payouts and *future* claimant bridge.
+
+    The terminal enterprise value and balance/share inputs must describe the
+    exit date. A present-value DCF equity result is not a future exit value.
+    This helper checks arithmetic and dates; it cannot establish the forecast
+    or the evidentiary basis of future financing and ownership assumptions.
+    Each distribution is {"date": YYYY-MM-DD, "per_share": amount} and must
+    be payable to the entry holder. Same-day distributions are combined.
+    """
+    entry = _finite("entry_price", entry_price)
+    if entry <= 0.0:
+        raise ValueError("entry_price must be positive")
+    start = _calendar_date("entry_date", entry_date)
+    end = _calendar_date("exit_date", exit_date)
+    if end <= start:
+        raise ValueError("exit_date must follow entry_date")
+    exit_equity = enterprise_to_equity_value(
+        undiscounted_exit_enterprise_value,
+        exit_nonoperating_assets,
+        exit_debt_and_debt_like_liabilities,
+        exit_other_senior_claims,
+    )
+    exit_price = per_share_value(exit_equity, exit_diluted_shares)
+    if exit_price < 0.0:
+        raise ValueError("future common equity exit cannot be negative")
+    if isinstance(shareholder_distributions, (str, bytes)):
+        raise ValueError("shareholder_distributions must be dated records")
+    dated_payments: dict[str, float] = {}
+    for index, distribution in enumerate(shareholder_distributions):
+        if not isinstance(distribution, Mapping):
+            raise ValueError(f"shareholder_distributions[{index}] must be a record")
+        payment_date = distribution.get("date")
+        when = _calendar_date(f"shareholder_distributions[{index}].date", payment_date)
+        if not start < when <= end:
+            raise ValueError("shareholder distributions must occur after entry and by exit")
+        amount = _finite(
+            f"shareholder_distributions[{index}].per_share",
+            distribution.get("per_share"),
+        )
+        if amount < 0.0:
+            raise ValueError("shareholder distributions must be non-negative")
+        dated_payments[payment_date] = dated_payments.get(payment_date, 0.0) + amount
+    dated_payments[exit_date] = dated_payments.get(exit_date, 0.0) + exit_price
+    dates = sorted(dated_payments)
+    payments = [dated_payments[when] for when in dates]
+    result: dict[str, Any] = {
+        "exit_bridge": {
+            "undiscounted_enterprise_value": _finite(
+                "undiscounted_exit_enterprise_value", undiscounted_exit_enterprise_value
+            ),
+            "nonoperating_assets": _finite("exit_nonoperating_assets", exit_nonoperating_assets),
+            "debt_and_debt_like_liabilities": _finite(
+                "exit_debt_and_debt_like_liabilities", exit_debt_and_debt_like_liabilities
+            ),
+            "other_senior_claims": _finite("exit_other_senior_claims", exit_other_senior_claims),
+            "diluted_shares": _finite("exit_diluted_shares", exit_diluted_shares),
+            "equity_value": exit_equity,
+            "per_share_value": exit_price,
+            "date": exit_date,
+        },
+        "cash_flow_dates": dates,
+        "cash_flows": [-entry, *payments],
+        "irr": internal_rate_of_return(
+            [-entry, *payments], valuation_date=entry_date, cash_flow_dates=dates
+        ),
+    }
+    if required_return is not None:
+        hurdle = _rate("required_return", required_return)
+        result["hurdle_entry_price"] = present_value_cash_flows(
+            payments, hurdle, valuation_date=entry_date, cash_flow_dates=dates
+        )
+    return result
+
+
 __all__ = [
     "capm_cost_of_equity",
     "change_in_operating_nwc",
@@ -1246,6 +1333,7 @@ __all__ = [
     "enterprise_value_from_fcff",
     "economic_value_added",
     "equity_return_case",
+    "future_common_equity_return_case",
     "fcff",
     "fcff_valuation_case",
     "flow_basis",

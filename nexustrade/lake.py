@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping, Union
 
@@ -770,6 +772,51 @@ def sql(
     return handle.wait(timeout_seconds=wait_timeout_seconds)
 
 
+def daily_close_as_of(
+    ticker: str,
+    as_of: str,
+    *,
+    client: NexusTradeClient | None = None,
+) -> dict[str, Any]:
+    """Select the latest canonical daily close on/before a calendar date.
+
+    The lake stores session-close timestamps. Comparing one to an uncast
+    YYYY-MM-DD string drops that day's close at midnight; this query casts
+    both sides to DATE and returns the exact row plus its durable query ID.
+    """
+    if not isinstance(ticker, str) or not ticker.strip():
+        raise ValueError("ticker must be a nonempty string")
+    try:
+        cutoff = date.fromisoformat(as_of)
+        if cutoff.isoformat() != as_of:
+            raise ValueError()
+    except (TypeError, ValueError) as error:
+        raise ValueError("as_of must be a YYYY-MM-DD calendar date") from error
+    symbol = ticker.strip().upper()
+    result = sql(
+        'SELECT ticker, "date", "closingPrice" FROM lake.sec_daily_ohlc '
+        'WHERE ticker = ? AND CAST("date" AS DATE) <= CAST(? AS DATE) '
+        'ORDER BY "date" DESC LIMIT 1',
+        [symbol, as_of],
+        max_rows=1,
+        client=client,
+    )
+    if not isinstance(result, LakeQueryResult):
+        raise LakeQueryFailed("invalid_response", "daily close query did not complete")
+    from nexustrade import finance
+
+    observation = finance.observation_as_of(
+        result.to_pandas(max_rows=1).to_dict("records"),
+        as_of=as_of,
+        timestamp_field="date",
+        value_field="closingPrice",
+    )
+    value = observation["value"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError("selected daily closingPrice must be a positive finite number")
+    return {"ticker": symbol, "source_id": result.source_id, **observation}
+
+
 def catalog(*, client: NexusTradeClient | None = None) -> list[LakeTable]:
     nt = _client(client)
     tables = nt.get_lake_catalog()
@@ -905,6 +952,7 @@ __all__ = [
     "ask",
     "catalog",
     "describe",
+    "daily_close_as_of",
     "get",
     "sql",
     "submit",

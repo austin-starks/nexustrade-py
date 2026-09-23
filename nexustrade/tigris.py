@@ -372,6 +372,62 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
         ),
         "SEC Form 3/4/5 transactions; join owners on accession. transactionCode P is an open-market buy.",
     ),
+    "institutional_filings": _ds(
+        "institutional_filings",
+        "year",
+        "cik",
+        (
+            "accession",
+            "filingDate",
+            "availableAt",
+            "availabilitySource",
+            "submissionType",
+            "cik",
+            "managerName",
+            "periodOfReport",
+            "reportCalendarOrQuarter",
+            "isAmendment",
+            "amendmentNo",
+            "amendmentType",
+            "dateReported",
+            "rawArchiveKey",
+            "sourceUrl",
+        ),
+        "One row per 13F submission. Point-in-time: filter availableAt, never periodOfReport "
+        "\u2014 originals file a median 42 days after period-end. cik is the filing MANAGER, not an "
+        "issuer. Amendments (13F-HR/A) are versioned rows with their own availableAt; originals are "
+        "never overwritten.",
+    ),
+    "institutional_holdings": _ds(
+        "institutional_holdings",
+        "year",
+        "cusip",
+        (
+            "accession",
+            "infoTableSk",
+            "availableAt",
+            "availabilitySource",
+            "issuerName",
+            "titleOfClass",
+            "cusip",
+            "figi",
+            "value",
+            "sharesAmount",
+            "sharesType",
+            "putCall",
+            "discretion",
+            "otherManager",
+            "votingSole",
+            "votingShared",
+            "votingNone",
+            "rawArchiveKey",
+        ),
+        "One row per (accession, infoTableSk); join institutional_filings on accession for the manager "
+        "and period. Long-only quarterly snapshots with up to 45 days of lag \u2014 they measure "
+        "accumulation, never entry timing. cusip is the security key (no ticker yet). value is as "
+        "reported in THOUSANDS of USD. Zero-position rows are preserved, so exclude them explicitly "
+        "(value > 0) when they would pollute an aggregation.",
+    ),
     "political_filings": _ds(
         "political_filings",
         "year",
