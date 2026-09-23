@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import nexustrade as nt
@@ -14,6 +15,24 @@ from nexustrade.client import wait_for_operation
 
 
 class LakePackagingTests(unittest.TestCase):
+    def test_daily_close_includes_cutoff_day_and_keeps_query_provenance(self) -> None:
+        result = nt.lake.LakeQueryResult(
+            id="lq_close", status="completed", result={},
+            _client=object(),  # type: ignore[arg-type]
+        )
+        frame = SimpleNamespace(to_dict=lambda orientation: [
+            {"ticker": "GOOGL", "date": "2026-09-09 20:00:00", "closingPrice": 330.65}
+        ] if orientation == "records" else None)
+        with mock.patch.object(nt.lake, "sql", return_value=result) as query, \
+             mock.patch.object(result, "to_pandas", return_value=frame):
+            quote = nt.lake.daily_close_as_of("googl", "2026-09-09")
+        self.assertIn('CAST("date" AS DATE) <= CAST(? AS DATE)', query.call_args.args[0])
+        self.assertEqual(query.call_args.args[1], ["GOOGL", "2026-09-09"])
+        self.assertEqual(query.call_args.kwargs["max_rows"], 1)
+        self.assertEqual(quote["value"], 330.65)
+        self.assertEqual(quote["observed_date"], "2026-09-09")
+        self.assertEqual(quote["source_id"], "lake-query:lq_close")
+
     def test_lake_is_lazy_not_in_all(self) -> None:
         self.assertNotIn("lake", nt.__all__)
         self.assertEqual(nt._LAZY_EXPORTS["lake"], ("nexustrade.lake", None))

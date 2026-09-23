@@ -6,6 +6,46 @@ import nexustrade as nt
 
 
 class FinanceSdkTests(unittest.TestCase):
+    def test_future_common_return_uses_exit_date_bridge_not_present_dcf_value(self) -> None:
+        result = nt.finance.future_common_equity_return_case(
+            entry_price=100, entry_date="2027-06-30", exit_date="2029-12-31",
+            undiscounted_exit_enterprise_value=1300,
+            exit_nonoperating_assets=100,
+            exit_debt_and_debt_like_liabilities=200,
+            exit_other_senior_claims=0, exit_diluted_shares=10,
+            shareholder_distributions=[
+                {"date": "2028-12-31", "per_share": 2},
+                {"date": "2029-12-31", "per_share": 3},
+            ], required_return=0.1,
+        )
+        self.assertEqual(result["exit_bridge"]["equity_value"], 1200)
+        self.assertEqual(result["exit_bridge"]["per_share_value"], 120)
+        self.assertEqual(result["cash_flows"], [-100, 2, 123])
+        self.assertEqual(result["cash_flow_dates"], ["2028-12-31", "2029-12-31"])
+        self.assertAlmostEqual(result["irr"], nt.finance.internal_rate_of_return(
+            [-100, 2, 123], valuation_date="2027-06-30",
+            cash_flow_dates=["2028-12-31", "2029-12-31"],
+        ))
+        self.assertAlmostEqual(result["hurdle_entry_price"],
+            nt.finance.present_value_cash_flows(
+                [2, 123], 0.1, valuation_date="2027-06-30",
+                cash_flow_dates=["2028-12-31", "2029-12-31"],
+            ))
+
+    def test_future_common_return_rejects_elapsed_or_unfunded_exit(self) -> None:
+        base = dict(entry_price=100, entry_date="2027-06-30", exit_date="2029-12-31",
+            undiscounted_exit_enterprise_value=1300,
+            exit_nonoperating_assets=100, exit_debt_and_debt_like_liabilities=200,
+            exit_other_senior_claims=0, exit_diluted_shares=10)
+        with self.assertRaises(ValueError):
+            nt.finance.future_common_equity_return_case(**base,
+                shareholder_distributions=[{"date": "2027-06-30", "per_share": 2}])
+        with self.assertRaises(ValueError):
+            nt.finance.future_common_equity_return_case(**{**base, "exit_date": "2027-06-30"})
+        with self.assertRaises(ValueError):
+            nt.finance.future_common_equity_return_case(**{**base,
+                "exit_debt_and_debt_like_liabilities": 1500})
+
     def test_dated_valuation_and_irr_share_the_remaining_cash_flow_timeline(self) -> None:
         # A midyear valuation: only the remaining 30 is future cash, not the
         # full-year 100 that includes 70 already earned before the valuation.
