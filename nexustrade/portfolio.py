@@ -1811,16 +1811,19 @@ __all__.append("InsiderTrades")
 
 def InstitutionalHoldings(
     asset: Union[str, Dict[str, Any], _Candidate],
+    manager: str,
     metric: Literal["HolderCount", "TotalShares", "TotalValue", "ConcentrationTop5", "NetShareChange", "NetHolderChange", "NewHolders", "ClosedHolders"] = "HolderCount",
-    window_days: float = 90,
+    window_days: float = 180,
 ) -> Indicator:
     """InstitutionalHoldings indicator.
     asset: Ticker name (ex. SPY, BTC)
+    manager: Optional: a CIK such as 1067983, or part of a manager's name such as Renaissance Technologies. Leave empty for every manager. A CIK is exact; a name can match several firms
     metric: Managers holding, shares or value held, concentration, or the change since the previous quarter
     window_days: Read a disclosed period only if its filing became public within this many trailing days
     """
     d: Dict[str, Any] = {"type": "InstitutionalHoldings"}
     _set_asset(d, "targetAsset", asset)
+    d["manager"] = manager
     d["metric"] = _enum(metric, ["HolderCount","TotalShares","TotalValue","ConcentrationTop5","NetShareChange","NetHolderChange","NewHolders","ClosedHolders"], "metric")
     d["windowDays"] = window_days
     return Indicator(d)
