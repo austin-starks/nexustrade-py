@@ -161,6 +161,37 @@ class ReportWriteTests(unittest.TestCase):
                 model_source='/work/out/model.json', path=str(target))
             self.assertEqual(json.loads(target.read_text())['statistics']['claim'], 42)
 
+    def test_manifest_paths_resolve_from_emitted_inputs_not_saved_model(self):
+        model = {'assumptions': {'tax_rate': {'value': 0.16}}}
+        payload = {
+            'statistics': {'tax_rate': 0.16},
+            'provenance_manifest': [{
+                'path': 'statistics.tax_rate', 'kind': 'assumption',
+                'label': 'Analyst tax-rate assumption',
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            report.write_inputs(payload, model=model, path=str(target))
+            original = target.read_bytes()
+            self.assertEqual(json.loads(original)['statistics']['tax_rate'], 0.16)
+            for invalid in ('assumptions.tax_rate.value', 'statistics.missing',
+                            'statistics.tax_rate[0]', 'statistics..tax_rate'):
+                with self.subTest(path=invalid), self.assertRaisesRegex(
+                        ValueError, 'provenance_manifest\\[0\\]'):
+                    report.write_inputs({**payload, 'provenance_manifest': [{
+                        **payload['provenance_manifest'][0], 'path': invalid,
+                    }]}, model=model, path=str(target))
+                self.assertEqual(target.read_bytes(), original)
+            report.write_inputs({
+                'findings': [{'assumption': {'value': 0.16}}],
+                'provenance_manifest': [{
+                    'path': 'findings[0].assumption.value', 'kind': 'assumption',
+                    'label': 'Analyst tax-rate assumption',
+                }],
+            }, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['findings'][0]['assumption']['value'], 0.16)
+
     def test_validation_checks_require_canonical_bound_source_ids_before_write(self):
         model = {
             'values': {'left': 12, 'right': 12},

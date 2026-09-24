@@ -1283,7 +1283,9 @@ meaning. Omitting `preserve_references` keeps legacy JSON output unchanged.
 For direct numeric assumptions outside the saved model, a
 `provenance_manifest` path starts at the emitted `report_inputs.json` root. An
 assumption at `inputs["statistics"]["discount_rate"]` has path
-`statistics.discount_rate`; a bare path into the separate model is invalid.
+`statistics.discount_rate`; a bare path into the separate model is invalid. The
+SDK resolves each manifest path before writing, so a missing or nonnumeric
+target fails during authoring rather than at `sandbox_finish`.
 
 ## License
 

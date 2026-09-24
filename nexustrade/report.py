@@ -280,6 +280,67 @@ def _validation_scalar(inputs: Mapping[str, Any], path: tuple[str | int, ...]) -
     return value is not None and type(value) in (str, int, float, bool)
 
 
+def _manifest_path_segments(path: str) -> tuple[str | int, ...] | None:
+    """Parse the host manifest's object-key/list-index path syntax."""
+    if not path:
+        return None
+    segments: list[str | int] = []
+    for part in path.split('.'):
+        if not part:
+            return None
+        cursor = 0
+        while cursor < len(part):
+            if part[cursor] == '[':
+                close = part.find(']', cursor + 1)
+                if close < 0:
+                    return None
+                index = part[cursor + 1:close]
+                if not index or any(character < '0' or character > '9' for character in index):
+                    return None
+                segments.append(int(index))
+                cursor = close + 1
+            else:
+                start = cursor
+                while cursor < len(part) and part[cursor] not in '[]':
+                    cursor += 1
+                if start == cursor:
+                    return None
+                segments.append(part[start:cursor])
+    return tuple(segments)
+
+
+def _validate_manifest_paths(inputs: Mapping[str, Any]) -> None:
+    """Refuse assumption paths that do not resolve in the emitted report inputs."""
+    manifest = inputs.get('provenance_manifest')
+    if manifest is None:
+        return
+    if not isinstance(manifest, list):
+        raise ValueError('provenance_manifest must be a list of assumption entries')
+    for index, entry in enumerate(manifest):
+        if not isinstance(entry, Mapping) or entry.get('kind') != 'assumption':
+            raise ValueError(f'provenance_manifest[{index}] must be an assumption entry')
+        if not isinstance(entry.get('label'), str) or not entry['label'].strip():
+            raise ValueError(f'provenance_manifest[{index}] needs an assumption label')
+        path = entry.get('path')
+        segments = _manifest_path_segments(path) if isinstance(path, str) else None
+        value: Any = inputs
+        if segments is None:
+            raise ValueError(f'provenance_manifest[{index}] needs a valid report_inputs path')
+        for segment in segments:
+            if isinstance(segment, str) and isinstance(value, Mapping) and segment in value:
+                value = value[segment]
+            elif type(segment) is int and isinstance(value, list) and segment < len(value):
+                value = value[segment]
+            else:
+                value = None
+                break
+        if not ((type(value) is int) or (type(value) is float and math.isfinite(value))):
+            raise ValueError(
+                f'provenance_manifest[{index}] path {path!r} must resolve to one '
+                'numeric assumption leaf in emitted report_inputs'
+            )
+
+
 def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
     """Check local reference shape; only the host can authenticate source lineage."""
     checks = inputs.get("validationChecks")
@@ -405,6 +466,7 @@ def write_inputs(
         inputs["calculationModel"] = _resolve(model, None)
     if references is not None:
         inputs["modelReferences"] = references
+    _validate_manifest_paths(inputs)
     _validate_validation_references(inputs)
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)
