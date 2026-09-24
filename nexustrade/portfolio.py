@@ -2131,6 +2131,30 @@ def Minus(
 
 __all__.append("Minus")
 
+def MinuteBarHigh(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """MinuteBarHigh indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "MinuteBarHigh"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("MinuteBarHigh")
+
+def MinuteBarLow(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """MinuteBarLow indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "MinuteBarLow"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("MinuteBarLow")
+
 def MinutesAfterOpen() -> Indicator:
     """MinutesAfterOpen indicator.
     """
