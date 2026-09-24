@@ -429,6 +429,10 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
     for index, check in enumerate(checks):
         if not isinstance(check, Mapping):
             raise ValueError(f"validationChecks[{index}] must be an object")
+        kind = check.get("kind")
+        if kind not in ("independent", "reconciliation"):
+            raise ValueError(f"validationChecks[{index}].kind must be independent or reconciliation")
+        side_sources: dict[str, set[str]] = {}
         for side_name in ("left", "right"):
             side_name_path = f"validationChecks[{index}].{side_name}"
             side = check.get(side_name)
@@ -452,6 +456,53 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
                     f"{side_name_path}.inputPath reference at {list(path)!r} needs "
                     "provenance.sourceIds as a non-empty list of source IDs"
                 )
+            side_sources[side_name] = {source_id.strip() for source_id in source_ids}
+        if kind == "independent" and side_sources["left"] & side_sources["right"]:
+            raise ValueError(
+                f"validationChecks[{index}] reuses a declared source on both sides; "
+                "label it reconciliation or supply independent evidence"
+            )
+
+
+def _validate_delivery_references(inputs: Mapping[str, Any]) -> None:
+    """Reject dangling typed report links before the host finalization call."""
+    catalog: dict[str, set[str]] = {}
+    for collection in ("reportEvidence", "reportViews"):
+        entries = inputs.get(collection)
+        if entries is None:
+            catalog[collection] = set()
+            continue
+        if not isinstance(entries, list):
+            raise ValueError(f"{collection} must be a list")
+        ids: set[str] = set()
+        for index, entry in enumerate(entries):
+            identifier = entry.get("id") if isinstance(entry, Mapping) else None
+            if not isinstance(identifier, str) or not identifier.strip():
+                raise ValueError(f"{collection}[{index}].id must be a non-empty string")
+            identifier = identifier.strip()
+            if identifier in ids:
+                raise ValueError(f"{collection}[{index}].id duplicates {identifier}")
+            ids.add(identifier)
+        catalog[collection] = ids
+    requirements = inputs.get("requirements")
+    if requirements is None:
+        return
+    if not isinstance(requirements, list):
+        raise ValueError("requirements must be a list")
+    for index, requirement in enumerate(requirements):
+        if not isinstance(requirement, Mapping):
+            raise ValueError(f"requirements[{index}] must be an object")
+        name = requirement.get("requirement")
+        label = name if isinstance(name, str) and name.strip() else f"requirements[{index}]"
+        for field, collection in (("evidenceIds", "reportEvidence"),
+                                  ("viewIds", "reportViews")):
+            references = requirement.get(field, [])
+            if not isinstance(references, list):
+                raise ValueError(f"{label}.{field} must be a list")
+            for reference in references:
+                if not isinstance(reference, str) or reference.strip() not in catalog[collection]:
+                    kind = "evidence" if collection == "reportEvidence" else "view"
+                    raise ValueError(f"{label}: unknown {kind} id {reference}")
 
 
 def write_inputs(
@@ -538,6 +589,7 @@ def write_inputs(
     _validate_manifest_paths(inputs)
     if preserve_references:
         _validate_delivery_numbers(inputs)
+    _validate_delivery_references(inputs)
     _validate_validation_references(inputs)
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)

@@ -57,6 +57,24 @@ class ReportWriteTests(unittest.TestCase):
                 report.write_inputs({'requirements': [], 'method_requirements': requirements},
                                     path=str(target))
 
+    def test_delivery_references_reject_view_used_as_evidence_before_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            payload = {
+                'reportEvidence': [{'id': 'valuation', 'paragraphs': [['Valuation.']]}],
+                'reportViews': [{'id': 'scenarios', 'type': 'table',
+                                 'columns': [['Case']], 'rows': [[['Base']]]}],
+                'requirements': [{'requirement': 'method:dcf',
+                                  'evidenceIds': ['scenarios'], 'viewIds': []}],
+            }
+            with self.assertRaisesRegex(ValueError, 'unknown evidence id scenarios'):
+                report.write_inputs(payload, path=str(target))
+            self.assertFalse(target.exists())
+            payload['requirements'][0]['evidenceIds'] = ['valuation']
+            payload['requirements'][0]['viewIds'] = ['scenarios']
+            report.write_inputs(payload, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['requirements'], payload['requirements'])
+
     def test_local_model_source_is_recorded_in_logical_work_namespace(self):
         original_work_dir = report.WORK_DIR
         try:
@@ -227,6 +245,7 @@ class ReportWriteTests(unittest.TestCase):
             },
         }
         payload = {
+            'reportEvidence': [{'id': 'conclusion', 'paragraphs': [['Values agree.']]}],
             'findings': {
                 'left': report.ref('values', 'left', provenance_path=('provenance', 'left')),
                 'right': report.ref('values', 'right', provenance_path=('provenance', 'right')),
@@ -262,6 +281,26 @@ class ReportWriteTests(unittest.TestCase):
                 report.write_inputs(payload, model=model, preserve_references=True,
                                     model_source='/work/out/model.json', path=str(target))
             self.assertEqual(json.loads(target.read_text()), saved)
+
+    def test_independent_validation_rejects_shared_declared_source(self):
+        model = {'left': 12, 'right': 12,
+                 'provenance': {'sourceIds': ['sec:one']}}
+        payload = {
+            'left': report.ref('left', provenance_path=('provenance',)),
+            'right': report.ref('right', provenance_path=('provenance',)),
+            'validationChecks': [{'id': 'comparison', 'kind': 'independent',
+                                  'left': {'label': 'Left', 'inputPath': ['left']},
+                                  'right': {'label': 'Right', 'inputPath': ['right']}}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            with self.assertRaisesRegex(ValueError, 'label it reconciliation'):
+                report.write_inputs(payload, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+            self.assertFalse(target.exists())
+            payload['validationChecks'][0]['kind'] = 'reconciliation'
+            report.write_inputs(payload, model=model, preserve_references=True,
+                                model_source='/work/out/model.json', path=str(target))
 
     def test_current_model_drives_repeated_values_and_sources(self):
         model = {'case': {'value': 72}, 'sources': [{'id': 'filing', 'url': 'https://example.test/filing'}]}
