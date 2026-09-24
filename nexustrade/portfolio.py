@@ -1027,7 +1027,12 @@ def portfolio(
     supports_fractional_shares: Optional[bool] = None,
     supports_crypto: Optional[bool] = None,
     alerts_enabled: Optional[bool] = None,
+    policy: Optional[Dict[str, Any]] = None,
 ) -> Portfolio:
+    """policy takes only {"stockEligibility": {...}} (market-cap bounds,
+    industryFilter, missingMarketCapBehavior, shareClassBehavior). Automated
+    trading is never authored; only the owner enables it in the NexusTrade UI.
+    """
     return Portfolio(
         _compact(
             {
@@ -1040,6 +1045,7 @@ def portfolio(
                 "supportsFractionalShares": supports_fractional_shares,
                 "supportsCrypto": supports_crypto,
                 "alertsEnabled": alerts_enabled,
+                "policy": policy,
             }
         )
     )

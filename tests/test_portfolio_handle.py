@@ -65,7 +65,7 @@ class PortfolioHandleTests(unittest.TestCase):
         self.assertNotIn("id", transport.calls[0]["body"])
         self.assertNotIn("portfolioId", transport.calls[0]["body"])
 
-    def test_fetched_policy_is_readable_but_never_authored(self) -> None:
+    def test_fetched_policy_sends_eligibility_and_never_automation(self) -> None:
         policy = {
             "schemaVersion": 2,
             "revision": 4,
@@ -100,7 +100,62 @@ class PortfolioHandleTests(unittest.TestCase):
 
         self.assertEqual(book.policy, policy)
         book.save(idempotency_key="policy-v1")
-        self.assertNotIn("policy", transport.calls[0]["body"])
+        self.assertEqual(
+            transport.calls[0]["body"]["policy"],
+            {
+                "stockEligibility": {
+                    "minimumMarketCapUsd": 500_000_000,
+                    "maximumMarketCapUsd": None,
+                    "industryFilter": {
+                        "mode": "INCLUDE_ONLY",
+                        "match": "ALL",
+                        "industries": ["artificialIntelligence", "biotechnology"],
+                    },
+                    "missingMarketCapBehavior": "EXCLUDE",
+                    "shareClassBehavior": "ONE_PER_COMPANY",
+                }
+            },
+        )
+
+    def test_authors_a_pairs_book_through_the_builder(self) -> None:
+        transport = FakeTransport(
+            [{"portfolio": {"portfolioId": "chat-9", "portfolioName": "GOOG/GOOGL pair"}}]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+        book = build_portfolio(
+            "GOOG/GOOGL pair",
+            [],
+            policy={"stockEligibility": {"shareClassBehavior": "ALL_CLASSES"}},
+        )
+
+        book.save(idempotency_key="pair-v1", client=client)
+
+        self.assertEqual(
+            transport.calls[0]["body"]["policy"],
+            {"stockEligibility": {"shareClassBehavior": "ALL_CLASSES"}},
+        )
+
+    def test_set_stock_eligibility_replaces_the_authored_eligibility(self) -> None:
+        book = Portfolio({"name": "Small caps", "strategies": []})
+        self.assertNotIn("policy", book._authoring_payload())
+
+        book.set_stock_eligibility({"minimumMarketCapUsd": 300_000_000})
+
+        self.assertEqual(
+            book._authoring_payload()["policy"],
+            {"stockEligibility": {"minimumMarketCapUsd": 300_000_000}},
+        )
+
+    def test_refuses_to_author_automation(self) -> None:
+        for policy in (
+            {"automatedApproval": {"enabled": True}},
+            {"stockEligibility": {"minimumMarketCapUsd": 0}, "automatedApproval": {"enabled": True}},
+            {"stockEligibility": {"minimumMarketCapUsd": 0}, "automationAcknowledged": True},
+            {"stockEligibility": {}, "revision": 3},
+        ):
+            with self.subTest(policy=policy):
+                with self.assertRaises(ValueError):
+                    Portfolio({"name": "Book", "strategies": [], "policy": policy})
 
     def test_fetched_policy_can_keep_names_without_a_market_cap(self) -> None:
         # The politician copy bots: no floor, and ETFs and unsized filers kept.

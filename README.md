@@ -478,10 +478,25 @@ list is deleted. Carry unchanged strategies through verbatim, including the
 Market. `removeStrategies` takes strategy ids from a fetched portfolio; removal
 by name is rejected.
 
-Fetched portfolios include a read-only `policy` snapshot. Trading policy
-changes are intentionally unavailable through the SDK; edit them in Portfolio
-Settings. Portfolio authoring and backtest payloads omit this server-owned
-snapshot even when they start from a fetched handle.
+Stock eligibility is part of what you author. Pass
+`policy={"stockEligibility": {...}}` to `portfolio(...)`, or call
+`set_stock_eligibility(...)` on a portfolio, to set market-cap bounds, an
+industry filter, `missingMarketCapBehavior`, or `shareClassBehavior`. Omitted
+fields take the defaults. A GOOG/GOOGL pairs book needs `ALL_CLASSES`, because
+the default keeps one share class per company:
+
+```python
+pair = portfolio(
+    "GOOG/GOOGL pair",
+    strategies,
+    policy={"stockEligibility": {"shareClassBehavior": "ALL_CLASSES"}},
+)
+```
+
+Automated trading is never authored. Only the owner enables it, in Portfolio
+Settings, and a policy that names `automatedApproval` raises before anything is
+sent. Fetched portfolios include a read-only `policy` snapshot; saving or
+backtesting a copy of one sends its stock eligibility and nothing else.
 
 `list_portfolios` filters with `include_paper`, `include_live`,
 `include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
@@ -1014,6 +1029,7 @@ is missing here, so this list cannot drift from the code.
 | `backtest(start_date=…, end_date=…, idempotency_key=…, …)` | Backtest it, preferring the saved id   |
 | `deploy(frequency=…, client=…)`                            | Mint the real paper portfolio (new id) |
 | `undeploy(client=…)`                                       | Deactivate its deployment              |
+| `set_stock_eligibility(eligibility)`                       | Set the stock eligibility it will send |
 
 ## Authentication
 
