@@ -1027,7 +1027,12 @@ def portfolio(
     supports_fractional_shares: Optional[bool] = None,
     supports_crypto: Optional[bool] = None,
     alerts_enabled: Optional[bool] = None,
+    policy: Optional[Dict[str, Any]] = None,
 ) -> Portfolio:
+    """policy takes only {"stockEligibility": {...}} (market-cap bounds,
+    industryFilter, missingMarketCapBehavior, shareClassBehavior). Automated
+    trading is never authored; only the owner enables it in the NexusTrade UI.
+    """
     return Portfolio(
         _compact(
             {
@@ -1040,6 +1045,7 @@ def portfolio(
                 "supportsFractionalShares": supports_fractional_shares,
                 "supportsCrypto": supports_crypto,
                 "alertsEnabled": alerts_enabled,
+                "policy": policy,
             }
         )
     )
@@ -2124,6 +2130,30 @@ def Minus(
     return Indicator(d)
 
 __all__.append("Minus")
+
+def MinuteBarHigh(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """MinuteBarHigh indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "MinuteBarHigh"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("MinuteBarHigh")
+
+def MinuteBarLow(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """MinuteBarLow indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "MinuteBarLow"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("MinuteBarLow")
 
 def MinutesAfterOpen() -> Indicator:
     """MinutesAfterOpen indicator.

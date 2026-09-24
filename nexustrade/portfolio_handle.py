@@ -38,6 +38,9 @@ class PortfolioStockEligibility(TypedDict):
     # INCLUDE keeps names with no known market cap (ETFs, unsized filers); the
     # politician copy bots use it.
     missingMarketCapBehavior: Literal["EXCLUDE", "INCLUDE"]
+    # ONE_PER_COMPANY keeps one share class per company in a selection; ALL_CLASSES allows
+    # pairs such as GOOG/GOOGL.
+    shareClassBehavior: Literal["ONE_PER_COMPANY", "ALL_CLASSES"]
     missingIndustryBehavior: Literal["EXCLUDE_WHEN_FILTER_SET"]
     appliesTo: Literal["DYNAMIC_STOCK_UNIVERSES"]
 
@@ -52,12 +55,52 @@ class PortfolioAutomatedApproval(TypedDict):
 
 
 class PortfolioPolicy(TypedDict):
-    """Server-owned trading policy. SDK authoring calls never submit it."""
+    """Server trading policy. Authoring sends its stockEligibility and never its automation."""
 
     schemaVersion: Literal[2]
     revision: int
     stockEligibility: PortfolioStockEligibility
     automatedApproval: PortfolioAutomatedApproval
+
+
+_AUTOMATION_POLICY_KEYS = ("automatedApproval", "automationAcknowledged")
+_AUTHORED_ELIGIBILITY_KEYS = (
+    "minimumMarketCapUsd",
+    "maximumMarketCapUsd",
+    "industryFilter",
+    "missingMarketCapBehavior",
+    "shareClassBehavior",
+)
+
+
+def _authored_policy(policy: Mapping[str, Any]) -> dict[str, Any]:
+    """The part of a policy an author may send: stock eligibility, never automation.
+
+    A fetched server policy (it carries ``schemaVersion``) is reduced to its
+    authorable eligibility fields, so a copy keeps its eligibility. Anything
+    else must be exactly ``{"stockEligibility": {...}}``.
+    """
+    if "schemaVersion" not in policy and any(
+        key in policy for key in _AUTOMATION_POLICY_KEYS
+    ):
+        raise ValueError(
+            "Automated trading can only be changed by the portfolio owner in the "
+            "NexusTrade UI; an authored policy may set only stockEligibility."
+        )
+    stock = policy.get("stockEligibility")
+    if not isinstance(stock, Mapping):
+        raise ValueError("An authored policy must be {'stockEligibility': {...}}.")
+    if "schemaVersion" in policy:
+        return {
+            "stockEligibility": {
+                key: stock[key] for key in _AUTHORED_ELIGIBILITY_KEYS if key in stock
+            }
+        }
+    if set(policy) != {"stockEligibility"}:
+        raise ValueError(
+            "An authored policy must be {'stockEligibility': {...}} and nothing else."
+        )
+    return {"stockEligibility": dict(stock)}
 
 
 class DeployResult(dict):
@@ -110,6 +153,9 @@ class Portfolio(dict):
         # Prefer an explicit id; otherwise absorb wire ids without keeping them
         # as dict keys (they must not round-trip into create/backtest bodies).
         wire_id = payload.pop("portfolioId", None) or payload.pop("id", None)
+        if isinstance(payload.get("policy"), Mapping):
+            # Refuse an authored automation field at construction, not at save.
+            _authored_policy(payload["policy"])
         super().__init__(payload)
         object.__setattr__(self, "id", id or (str(wire_id) if wire_id else None))
         object.__setattr__(self, "_client", client)
@@ -130,9 +176,25 @@ class Portfolio(dict):
         value = self.get("policy")
         return cast(PortfolioPolicy, value) if isinstance(value, Mapping) else None
 
+    @property
+    def authored_policy(self) -> dict[str, Any] | None:
+        """Stock eligibility this portfolio will send; automated trading is never sent."""
+        value = self.get("policy")
+        return _authored_policy(value) if isinstance(value, Mapping) else None
+
+    def set_stock_eligibility(self, stock_eligibility: Mapping[str, Any]) -> "Portfolio":
+        """Replace the stock eligibility this portfolio will send. Omitted fields take the defaults."""
+        policy = {"stockEligibility": dict(stock_eligibility)}
+        _authored_policy(policy)
+        self["policy"] = policy
+        return self
+
     def _authoring_payload(self) -> dict[str, Any]:
         payload = dict(self)
         payload.pop("policy", None)
+        authored = self.authored_policy
+        if authored is not None:
+            payload["policy"] = authored
         return payload
 
     def _resolve_client(self, client: Any = None) -> Any:

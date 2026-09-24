@@ -12,6 +12,7 @@ Deep Research pattern:
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 from dataclasses import dataclass
@@ -143,12 +144,15 @@ def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) ->
 
     Example: ref('scenarios', 'base', 'per_share'). Pass the current model to
     write(inputs=..., model=...). References resolve at write time; the host gets
-    ordinary JSON, never templates or OpenCode-authored report prose. Optional
+    ordinary JSON, never templates or OpenCode-authored report prose.
     provenance_path points to current model metadata (source IDs, status, dates,
-    definition). With preserve_references=True it survives in modelReferences.
-    For report authorship, place each displayable number or digit-bearing string
-    (including dates and filing forms) in an exact scalar ref under a
-    semantically named input field. A broad object/array ref remains grader
+    definition). Numeric and digit-bearing references require it, along with
+    model_source, when preserve_references=True; the metadata survives in
+    modelReferences.
+    For report authorship, place each displayable numeric value in an exact
+    scalar ref under a semantically named input field. Bind material dates and
+    filing identities too, so the reviewer can trace them to source context.
+    A broad object/array ref remains grader
     evidence, but its nested values are not prose-ready claims because the host
     will not infer meaning from array position.
     """
@@ -162,6 +166,23 @@ def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) ->
             raise ValueError("provenance_path must be a sequence of model keys")
         metadata_path = ref(*provenance_path).path
     return _ModelReference(path, metadata_path)
+
+
+def _contains_claim_number(value: Any) -> bool:
+    """Mirror the host's numeric-claim boundary before writing the handoff."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        return any('0' <= character <= '9' for character in value)
+    if isinstance(value, Mapping):
+        return any(_contains_claim_number(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_claim_number(item) for item in value)
+    return False
 
 
 def _resolve(value: Any, model: Mapping[str, Any] | None, *,
@@ -181,6 +202,17 @@ def _resolve(value: Any, model: Mapping[str, Any] | None, *,
         # The model contains data, not another template/reference graph.
         resolved = _resolve(target, None)
         if references is not None:
+            if _contains_claim_number(resolved):
+                if model_source is None:
+                    raise ValueError(
+                        f"numeric report.ref {value.path!r} needs model_source "
+                        "naming the saved model artifact"
+                    )
+                if value.provenance_path is None:
+                    raise ValueError(
+                        f"numeric report.ref {value.path!r} needs provenance_path "
+                        "to a provenance object in the saved model"
+                    )
             record: dict[str, Any] = {"inputPath": list(input_path), "modelPath": list(value.path)}
             if model_source is not None:
                 record["modelSource"] = model_source
@@ -249,6 +281,135 @@ def _validation_scalar(inputs: Mapping[str, Any], path: tuple[str | int, ...]) -
     return value is not None and type(value) in (str, int, float, bool)
 
 
+def _manifest_path_segments(path: str) -> tuple[str | int, ...] | None:
+    """Parse the host manifest's object-key/list-index path syntax."""
+    if not path:
+        return None
+    segments: list[str | int] = []
+    for part in path.split('.'):
+        if not part:
+            return None
+        cursor = 0
+        while cursor < len(part):
+            if part[cursor] == '[':
+                close = part.find(']', cursor + 1)
+                if close < 0:
+                    return None
+                index = part[cursor + 1:close]
+                if not index or any(character < '0' or character > '9' for character in index):
+                    return None
+                segments.append(int(index))
+                cursor = close + 1
+            else:
+                start = cursor
+                while cursor < len(part) and part[cursor] not in '[]':
+                    cursor += 1
+                if start == cursor:
+                    return None
+                segments.append(part[start:cursor])
+    return tuple(segments)
+
+
+def _validate_manifest_paths(inputs: Mapping[str, Any]) -> None:
+    """Refuse assumption paths that do not resolve in the emitted report inputs."""
+    manifest = inputs.get('provenance_manifest')
+    if manifest is None:
+        return
+    if not isinstance(manifest, list):
+        raise ValueError('provenance_manifest must be a list of assumption entries')
+    for index, entry in enumerate(manifest):
+        if not isinstance(entry, Mapping) or entry.get('kind') != 'assumption':
+            raise ValueError(f'provenance_manifest[{index}] must be an assumption entry')
+        if not isinstance(entry.get('label'), str) or not entry['label'].strip():
+            raise ValueError(f'provenance_manifest[{index}] needs an assumption label')
+        path = entry.get('path')
+        segments = _manifest_path_segments(path) if isinstance(path, str) else None
+        value: Any = inputs
+        if segments is None:
+            raise ValueError(f'provenance_manifest[{index}] needs a valid report_inputs path')
+        for segment in segments:
+            if isinstance(segment, str) and isinstance(value, Mapping) and segment in value:
+                value = value[segment]
+            elif type(segment) is int and isinstance(value, list) and segment < len(value):
+                value = value[segment]
+            else:
+                value = None
+                break
+        if not ((type(value) is int) or (type(value) is float and math.isfinite(value))):
+            raise ValueError(
+                f'provenance_manifest[{index}] path {path!r} must resolve to one '
+                'numeric assumption leaf in emitted report_inputs'
+            )
+
+
+def _validate_delivery_numbers(inputs: Mapping[str, Any]) -> None:
+    """Require exact bindings for typed numeric values selected for delivery.
+
+    Text is left to the report reviewer: a digit in a date, filing name, or
+    ordinary sentence is not enough to classify its financial meaning.
+    """
+    reference_paths: set[tuple[str | int, ...]] = set()
+    references = inputs.get('modelReferences')
+    if isinstance(references, list):
+        for item in references:
+            if isinstance(item, Mapping):
+                path = item.get('inputPath')
+                if isinstance(path, list) and all(
+                    type(part) is int or isinstance(part, str) for part in path
+                ):
+                    reference_paths.add(tuple(path))
+    assumption_paths: set[tuple[str | int, ...]] = set()
+    manifest = inputs.get('provenance_manifest')
+    if isinstance(manifest, list):
+        for item in manifest:
+            if isinstance(item, Mapping) and isinstance(item.get('path'), str):
+                segments = _manifest_path_segments(item['path'])
+                if segments is not None:
+                    assumption_paths.add(segments)
+
+    def visit(value: Any, path: tuple[str | int, ...]) -> None:
+        if isinstance(value, bool):
+            return
+        if isinstance(value, (int, float)):
+            if not math.isfinite(value):
+                raise ValueError(f'delivery number at {path!r} must be finite')
+            if path not in reference_paths and path not in assumption_paths:
+                raise ValueError(
+                    f'delivery number at {path!r} needs an exact report.ref '
+                    'or labeled assumption'
+                )
+            return
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                visit(child, (*path, key))
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                visit(child, (*path, index))
+
+    evidence = inputs.get('reportEvidence')
+    if isinstance(evidence, list):
+        for index, entry in enumerate(evidence):
+            if isinstance(entry, Mapping) and 'paragraphs' in entry:
+                visit(entry['paragraphs'], ('reportEvidence', index, 'paragraphs'))
+    views = inputs.get('reportViews')
+    if isinstance(views, list):
+        for index, entry in enumerate(views):
+            if not isinstance(entry, Mapping):
+                continue
+            if 'caption' in entry:
+                visit(entry['caption'], ('reportViews', index, 'caption'))
+            if entry.get('type') == 'table':
+                for field in ('columns', 'rows', 'note'):
+                    if field in entry:
+                        visit(entry[field], ('reportViews', index, field))
+            elif entry.get('type') == 'metricGrid' and isinstance(entry.get('items'), list):
+                for item_index, item in enumerate(entry['items']):
+                    if isinstance(item, Mapping):
+                        for field in ('label', 'value', 'context'):
+                            if field in item:
+                                visit(item[field], ('reportViews', index, 'items', item_index, field))
+
+
 def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
     """Check local reference shape; only the host can authenticate source lineage."""
     checks = inputs.get("validationChecks")
@@ -268,6 +429,10 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
     for index, check in enumerate(checks):
         if not isinstance(check, Mapping):
             raise ValueError(f"validationChecks[{index}] must be an object")
+        kind = check.get("kind")
+        if kind not in ("independent", "reconciliation"):
+            raise ValueError(f"validationChecks[{index}].kind must be independent or reconciliation")
+        side_sources: dict[str, set[str]] = {}
         for side_name in ("left", "right"):
             side_name_path = f"validationChecks[{index}].{side_name}"
             side = check.get(side_name)
@@ -291,6 +456,53 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
                     f"{side_name_path}.inputPath reference at {list(path)!r} needs "
                     "provenance.sourceIds as a non-empty list of source IDs"
                 )
+            side_sources[side_name] = {source_id.strip() for source_id in source_ids}
+        if kind == "independent" and side_sources["left"] & side_sources["right"]:
+            raise ValueError(
+                f"validationChecks[{index}] reuses a declared source on both sides; "
+                "label it reconciliation or supply independent evidence"
+            )
+
+
+def _validate_delivery_references(inputs: Mapping[str, Any]) -> None:
+    """Reject dangling typed report links before the host finalization call."""
+    catalog: dict[str, set[str]] = {}
+    for collection in ("reportEvidence", "reportViews"):
+        entries = inputs.get(collection)
+        if entries is None:
+            catalog[collection] = set()
+            continue
+        if not isinstance(entries, list):
+            raise ValueError(f"{collection} must be a list")
+        ids: set[str] = set()
+        for index, entry in enumerate(entries):
+            identifier = entry.get("id") if isinstance(entry, Mapping) else None
+            if not isinstance(identifier, str) or not identifier.strip():
+                raise ValueError(f"{collection}[{index}].id must be a non-empty string")
+            identifier = identifier.strip()
+            if identifier in ids:
+                raise ValueError(f"{collection}[{index}].id duplicates {identifier}")
+            ids.add(identifier)
+        catalog[collection] = ids
+    requirements = inputs.get("requirements")
+    if requirements is None:
+        return
+    if not isinstance(requirements, list):
+        raise ValueError("requirements must be a list")
+    for index, requirement in enumerate(requirements):
+        if not isinstance(requirement, Mapping):
+            raise ValueError(f"requirements[{index}] must be an object")
+        name = requirement.get("requirement")
+        label = name if isinstance(name, str) and name.strip() else f"requirements[{index}]"
+        for field, collection in (("evidenceIds", "reportEvidence"),
+                                  ("viewIds", "reportViews")):
+            references = requirement.get(field, [])
+            if not isinstance(references, list):
+                raise ValueError(f"{label}.{field} must be a list")
+            for reference in references:
+                if not isinstance(reference, str) or reference.strip() not in catalog[collection]:
+                    kind = "evidence" if collection == "reportEvidence" else "view"
+                    raise ValueError(f"{label}: unknown {kind} id {reference}")
 
 
 def write_inputs(
@@ -315,9 +527,9 @@ def write_inputs(
       validationChecks — [{id, kind='independent'|'reconciliation', left, right,
                            evidenceId}]
 
-    Every numeric or digit-bearing segment in reportEvidence/reportViews must be
-    an exact scalar ref (or a labeled scalar assumption). The host copies these
-    blocks exactly and refuses a generated report that omits a mapped id. This is
+    Every typed numeric segment in reportEvidence/reportViews must be an exact
+    scalar ref (or a labeled scalar assumption). The host copies these blocks
+    exactly and refuses a generated report that omits a mapped id. This is
     a delivery contract, not a semantic claim that the evidence is sufficient.
     Each validation side names an exact scalar inputPath. The host derives that
     scalar's sourceIds from its bound model provenance and verifies fetch/lake
@@ -336,9 +548,9 @@ def write_inputs(
     {} checks an intentionally shared namespace. Legacy calls leave receipt
     verification to the host. This does not verify the content of source claims.
     preserve_references adds modelReferences linking output paths to current model
-    paths and optional provenance objects. Supply model_source with the actual
-    model artifact path when file-backed; without it paths refer only to this
-    in-memory model argument. The map is executor-declared lineage, never proof
+    paths and provenance objects. Numeric and digit-bearing references require
+    model_source naming the saved model artifact and provenance_path resolving
+    to model metadata. The map is executor-declared lineage, never proof
     of source authority. A supplied modelReferences map cannot replace fresh
     references in this mode.
 
@@ -374,6 +586,10 @@ def write_inputs(
         inputs["calculationModel"] = _resolve(model, None)
     if references is not None:
         inputs["modelReferences"] = references
+    _validate_manifest_paths(inputs)
+    if preserve_references:
+        _validate_delivery_numbers(inputs)
+    _validate_delivery_references(inputs)
     _validate_validation_references(inputs)
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)

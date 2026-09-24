@@ -321,7 +321,7 @@ policy.
 
 | Group               | Examples                                                                                       |
 | ------------------- | ---------------------------------------------------------------------------------------------- |
-| **Price & volume**  | `Price` `OpeningPrice` `HighOfDay` `VWAP` `Volume` `GapPercentage`                             |
+| **Price & volume**  | `Price` `OpeningPrice` `HighOfDay` `MinuteBarHigh` `MinuteBarLow` `VWAP` `Volume` `GapPercentage` |
 | **Technicals**      | `SMA` `EMA` `RSI` `BollingerBand` `AverageTrueRange` `CrossAbove`                              |
 | **Position state**  | `PositionValue` `PositionPercentChange` `PositionMaxDrawdown`                                  |
 | **Portfolio state** | `PortfolioValue` `BuyingPower` `MaxDrawdown` `InitialValue`                                    |
@@ -478,10 +478,25 @@ list is deleted. Carry unchanged strategies through verbatim, including the
 Market. `removeStrategies` takes strategy ids from a fetched portfolio; removal
 by name is rejected.
 
-Fetched portfolios include a read-only `policy` snapshot. Trading policy
-changes are intentionally unavailable through the SDK; edit them in Portfolio
-Settings. Portfolio authoring and backtest payloads omit this server-owned
-snapshot even when they start from a fetched handle.
+Stock eligibility is part of what you author. Pass
+`policy={"stockEligibility": {...}}` to `portfolio(...)`, or call
+`set_stock_eligibility(...)` on a portfolio, to set market-cap bounds, an
+industry filter, `missingMarketCapBehavior`, or `shareClassBehavior`. Omitted
+fields take the defaults. A GOOG/GOOGL pairs book needs `ALL_CLASSES`, because
+the default keeps one share class per company:
+
+```python
+pair = portfolio(
+    "GOOG/GOOGL pair",
+    strategies,
+    policy={"stockEligibility": {"shareClassBehavior": "ALL_CLASSES"}},
+)
+```
+
+Automated trading is never authored. Only the owner enables it, in Portfolio
+Settings, and a policy that names `automatedApproval` raises before anything is
+sent. Fetched portfolios include a read-only `policy` snapshot; saving or
+backtesting a copy of one sends its stock eligibility and nothing else.
 
 `list_portfolios` filters with `include_paper`, `include_live`,
 `include_inactive`, `include_chat_portfolios`, `search`, `limit`, and `page`.
@@ -1014,6 +1029,7 @@ is missing here, so this list cannot drift from the code.
 | `backtest(start_date=…, end_date=…, idempotency_key=…, …)` | Backtest it, preferring the saved id   |
 | `deploy(frequency=…, client=…)`                            | Mint the real paper portfolio (new id) |
 | `undeploy(client=…)`                                       | Deactivate its deployment              |
+| `set_stock_eligibility(eligibility)`                       | Set the stock eligibility it will send |
 
 ## Authentication
 
@@ -1146,6 +1162,10 @@ The compute helpers keep evidence and arithmetic separate from investment judgme
 General `host.search(query)` keeps neutral research search terms. Use
 `host.search(query, prefer_machine_readable=True)` for dataset/API discovery;
 `host.queue_search` has the same neutral default.
+The returned payload is unwrapped: read `result["candidates"]`. The durable
+`host_results.jsonl` receipt has a separate `data` envelope; accessing
+`result.get("data")` on the direct search result raises to prevent silent
+loss of candidate URLs.
 
 Native research investigators may call `host.search(query,
 allow_broker_fallback=False)`. Pending or unavailable gateway work then raises
@@ -1218,7 +1238,8 @@ Successful research calls still append shared durable receipt/cache rows.
   cases clear a hurdle from the same numbers the table prints, so a sentence
   like "only the bull case clears" cannot survive a change to the numbers it
   describes. Equality is a miss.
-- `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
+- `report.ref("scenarios", "base", "per_share_value",
+  provenance_path=("scenarios", "base", "provenance"))` binds a structured finding
   to the current model when `report.write(inputs=inputs, model=model)` runs.
   `model=` is reference resolution, not automatic model export. Every number
   intended for report prose or a report table must be an exact scalar reference
@@ -1270,13 +1291,22 @@ report.write_inputs(inputs, model=model, preserve_references=True,
                     model_source="/work/out/model.json")
 ```
 
-`modelReferences` contains `inputPath`, `modelPath`, optional `modelSource`, and
-the current `provenancePath`/`provenance` object. It refreshes when the model changes.
-Paths are arrays of object keys/list indices. Supply the actual artifact path for
-a file-backed model; without `model_source`, paths identify only the in-memory
-model argument. This is executor-declared lineage, **not independently verified
+`modelReferences` contains `inputPath`, `modelPath`, `modelSource`, and
+the current `provenancePath`/`provenance` object for numeric claims. It refreshes
+when the model changes. With `preserve_references=True`, references to numeric
+values or digit-bearing strings require both `model_source` and
+`provenance_path`; the SDK raises before writing incomplete reference metadata.
+Unbound prose strings are assessed by semantic review. Paths are arrays of object
+keys/list indices. Supply the actual saved artifact path. This is
+executor-declared lineage, **not independently verified
 source authority**. The host must still check source support and accounting
 meaning. Omitting `preserve_references` keeps legacy JSON output unchanged.
+For direct numeric assumptions outside the saved model, a
+`provenance_manifest` path starts at the emitted `report_inputs.json` root. An
+assumption at `inputs["statistics"]["discount_rate"]` has path
+`statistics.discount_rate`; a bare path into the separate model is invalid. The
+SDK resolves each manifest path before writing, so a missing or nonnumeric
+target fails during authoring rather than at `sandbox_finish`.
 
 ## License
 

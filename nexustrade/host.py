@@ -1538,6 +1538,25 @@ def _gateway_search(
     return None
 
 
+class SearchPayload(dict[str, Any]):
+    """Unwrapped search result with a clear error for the durable receipt shape.
+
+    The durable host-results row has ``data.candidates``, but ``search`` returns
+    that data directly. A normal dict silently turns ``get('data', {})`` into an
+    empty discovery result even when candidates exist.
+    """
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "data":
+            raise KeyError("host.search returns candidates directly; use result['candidates']")
+        return super().__getitem__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "data":
+            raise KeyError("host.search returns candidates directly; use result['candidates']")
+        return super().get(key, default)
+
+
 def search(
     query: str,
     *,
@@ -1581,7 +1600,7 @@ def search(
         gateway = _gateway_search(q, prefer_machine_readable)
         if gateway is not None:
             _record_host_result({"id": rid, "ok": True, "data": gateway})
-            return gateway
+            return SearchPayload(gateway)
     if result is None:
         if not allow_broker_fallback:
             raise RuntimeError(
@@ -1597,8 +1616,8 @@ def search(
         raise RuntimeError(f"search({q!r}) failed: {result.get('error')}")
     data = result.get("data")
     if not isinstance(data, dict):
-        return {"candidates": []}
-    return data
+        return SearchPayload({"candidates": []})
+    return SearchPayload(data)
 
 
 def gateway_fetch_json(url: str, timeout_sec: int = 120) -> dict[str, Any]:
