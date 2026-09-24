@@ -101,6 +101,31 @@ class PortfolioHandleTests(unittest.TestCase):
         book.save(idempotency_key="policy-v1")
         self.assertNotIn("policy", transport.calls[0]["body"])
 
+    def test_fetched_policy_can_keep_names_without_a_market_cap(self) -> None:
+        # The politician copy bots: no floor, and ETFs and unsized filers kept.
+        policy = {
+            "schemaVersion": 2,
+            "revision": 1,
+            "stockEligibility": {
+                "minimumMarketCapUsd": 0,
+                "maximumMarketCapUsd": None,
+                "industryFilter": {"mode": "ALL", "match": "ANY", "industries": []},
+                "missingMarketCapBehavior": "INCLUDE",
+                "missingIndustryBehavior": "EXCLUDE_WHEN_FILTER_SET",
+                "appliesTo": "DYNAMIC_STOCK_UNIVERSES",
+            },
+            "automatedApproval": {
+                "enabled": False,
+                "maxAutomatedTradesPerDay": 2,
+                "countingUnit": "TRADE_ACTION",
+                "dailyWindow": "AMERICA_NEW_YORK_CALENDAR_DAY",
+            },
+        }
+        book = Portfolio({"name": "Copy Nancy Pelosi", "strategies": [], "policy": policy})
+
+        self.assertEqual(book.policy, policy)
+        self.assertEqual(book.policy["stockEligibility"]["missingMarketCapBehavior"], "INCLUDE")
+
     def test_backtest_uses_portfolio_id_once_saved(self) -> None:
         transport = FakeTransport(
             [
