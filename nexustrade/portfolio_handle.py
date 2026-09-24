@@ -38,6 +38,9 @@ class PortfolioStockEligibility(TypedDict):
     # INCLUDE keeps names with no known market cap (ETFs, unsized filers); the
     # politician copy bots use it.
     missingMarketCapBehavior: Literal["EXCLUDE", "INCLUDE"]
+    # ONE_PER_COMPANY keeps one share class per company in a selection; ALL_CLASSES allows
+    # pairs such as GOOG/GOOGL.
+    shareClassBehavior: Literal["ONE_PER_COMPANY", "ALL_CLASSES"]
     missingIndustryBehavior: Literal["EXCLUDE_WHEN_FILTER_SET"]
     appliesTo: Literal["DYNAMIC_STOCK_UNIVERSES"]
 
