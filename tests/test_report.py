@@ -7,6 +7,32 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_delivery_binds_typed_numbers_without_treating_dates_as_financial_claims(self):
+        model = {'value': 12.5, 'provenance': {'sourceIds': ['lake:one']}}
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            report.write_inputs({
+                'reportEvidence': [{'id': 'dated', 'paragraphs': [[
+                    'Filed on 2026-08-14; measured value ',
+                    report.ref('value', provenance_path=('provenance',)),
+                ]]}],
+            }, model=model, preserve_references=True,
+                model_source='/work/out/model.json', path=str(target))
+            saved = target.read_bytes()
+            self.assertEqual(json.loads(saved)['reportEvidence'][0]['paragraphs'][0][1], 12.5)
+            with self.assertRaisesRegex(ValueError, 'exact report.ref'):
+                report.write_inputs({
+                    'reportEvidence': [{'id': 'dated', 'paragraphs': [[42]]}],
+                }, model=model, preserve_references=True,
+                    model_source='/work/out/model.json', path=str(target))
+            with self.assertRaisesRegex(ValueError, 'exact report.ref'):
+                report.write_inputs({
+                    'reportViews': [{'id': 'metric', 'type': 'metricGrid',
+                                     'items': [{'label': ['Value'], 'value': [42]}]}],
+                }, model=model, preserve_references=True,
+                    model_source='/work/out/model.json', path=str(target))
+            self.assertEqual(target.read_bytes(), saved)
+
     def test_write_accepts_path_alias_and_rejects_conflicting_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

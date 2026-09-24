@@ -149,9 +149,10 @@ def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) ->
     definition). Numeric and digit-bearing references require it, along with
     model_source, when preserve_references=True; the metadata survives in
     modelReferences.
-    For report authorship, place each displayable number or digit-bearing string
-    (including dates and filing forms) in an exact scalar ref under a
-    semantically named input field. A broad object/array ref remains grader
+    For report authorship, place each displayable numeric value in an exact
+    scalar ref under a semantically named input field. Bind material dates and
+    filing identities too, so the reviewer can trace them to source context.
+    A broad object/array ref remains grader
     evidence, but its nested values are not prose-ready claims because the host
     will not infer meaning from array position.
     """
@@ -341,6 +342,74 @@ def _validate_manifest_paths(inputs: Mapping[str, Any]) -> None:
             )
 
 
+def _validate_delivery_numbers(inputs: Mapping[str, Any]) -> None:
+    """Require exact bindings for typed numeric values selected for delivery.
+
+    Text is left to the report reviewer: a digit in a date, filing name, or
+    ordinary sentence is not enough to classify its financial meaning.
+    """
+    reference_paths: set[tuple[str | int, ...]] = set()
+    references = inputs.get('modelReferences')
+    if isinstance(references, list):
+        for item in references:
+            if isinstance(item, Mapping):
+                path = item.get('inputPath')
+                if isinstance(path, list) and all(
+                    type(part) is int or isinstance(part, str) for part in path
+                ):
+                    reference_paths.add(tuple(path))
+    assumption_paths: set[tuple[str | int, ...]] = set()
+    manifest = inputs.get('provenance_manifest')
+    if isinstance(manifest, list):
+        for item in manifest:
+            if isinstance(item, Mapping) and isinstance(item.get('path'), str):
+                segments = _manifest_path_segments(item['path'])
+                if segments is not None:
+                    assumption_paths.add(segments)
+
+    def visit(value: Any, path: tuple[str | int, ...]) -> None:
+        if isinstance(value, bool):
+            return
+        if isinstance(value, (int, float)):
+            if not math.isfinite(value):
+                raise ValueError(f'delivery number at {path!r} must be finite')
+            if path not in reference_paths and path not in assumption_paths:
+                raise ValueError(
+                    f'delivery number at {path!r} needs an exact report.ref '
+                    'or labeled assumption'
+                )
+            return
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                visit(child, (*path, key))
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                visit(child, (*path, index))
+
+    evidence = inputs.get('reportEvidence')
+    if isinstance(evidence, list):
+        for index, entry in enumerate(evidence):
+            if isinstance(entry, Mapping) and 'paragraphs' in entry:
+                visit(entry['paragraphs'], ('reportEvidence', index, 'paragraphs'))
+    views = inputs.get('reportViews')
+    if isinstance(views, list):
+        for index, entry in enumerate(views):
+            if not isinstance(entry, Mapping):
+                continue
+            if 'caption' in entry:
+                visit(entry['caption'], ('reportViews', index, 'caption'))
+            if entry.get('type') == 'table':
+                for field in ('columns', 'rows', 'note'):
+                    if field in entry:
+                        visit(entry[field], ('reportViews', index, field))
+            elif entry.get('type') == 'metricGrid' and isinstance(entry.get('items'), list):
+                for item_index, item in enumerate(entry['items']):
+                    if isinstance(item, Mapping):
+                        for field in ('label', 'value', 'context'):
+                            if field in item:
+                                visit(item[field], ('reportViews', index, 'items', item_index, field))
+
+
 def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
     """Check local reference shape; only the host can authenticate source lineage."""
     checks = inputs.get("validationChecks")
@@ -407,9 +476,9 @@ def write_inputs(
       validationChecks — [{id, kind='independent'|'reconciliation', left, right,
                            evidenceId}]
 
-    Every numeric or digit-bearing segment in reportEvidence/reportViews must be
-    an exact scalar ref (or a labeled scalar assumption). The host copies these
-    blocks exactly and refuses a generated report that omits a mapped id. This is
+    Every typed numeric segment in reportEvidence/reportViews must be an exact
+    scalar ref (or a labeled scalar assumption). The host copies these blocks
+    exactly and refuses a generated report that omits a mapped id. This is
     a delivery contract, not a semantic claim that the evidence is sufficient.
     Each validation side names an exact scalar inputPath. The host derives that
     scalar's sourceIds from its bound model provenance and verifies fetch/lake
@@ -467,6 +536,8 @@ def write_inputs(
     if references is not None:
         inputs["modelReferences"] = references
     _validate_manifest_paths(inputs)
+    if preserve_references:
+        _validate_delivery_numbers(inputs)
     _validate_validation_references(inputs)
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)

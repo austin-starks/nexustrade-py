@@ -1273,9 +1273,10 @@ report.write_inputs(inputs, model=model, preserve_references=True,
 
 `modelReferences` contains `inputPath`, `modelPath`, `modelSource`, and
 the current `provenancePath`/`provenance` object for numeric claims. It refreshes
-when the model changes. With `preserve_references=True`, numeric or digit-bearing
-references require both `model_source` and `provenance_path`; the SDK raises
-before writing a handoff that the host would reject. Paths are arrays of object
+when the model changes. With `preserve_references=True`, references to numeric
+values or digit-bearing strings require both `model_source` and
+`provenance_path`; the SDK raises before writing incomplete reference metadata.
+Unbound prose strings are assessed by semantic review. Paths are arrays of object
 keys/list indices. Supply the actual saved artifact path. This is
 executor-declared lineage, **not independently verified
 source authority**. The host must still check source support and accounting
