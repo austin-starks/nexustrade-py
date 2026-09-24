@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -42,8 +43,10 @@ def read_rows(
     re-runs your script from the top. On the re-run the rows are returned directly.
 
       - First call queues, flushes, and raises SystemExit(0) when _exit=True (default).
-      - On the re-run this returns the rows: [{"timestamp": "YYYY-MM-DD",
-        "value": float, "ticker": str|absent}, ...] sorted by timestamp.
+      - On the re-run this returns the rows: [{"timestamp": str, "value": float,
+        "ticker": str|absent}, ...] sorted by timestamp. `timestamp` is the
+        point's availability: "YYYY-MM-DD" for a UTC-midnight point, otherwise
+        the full ISO instant (a 1min bar's point is available at bar close).
 
         rows = signal.read_rows("6a5323cd842a9fcdeb9a3e78")
         df = pd.DataFrame(rows)
@@ -65,10 +68,32 @@ def read_rows(
     return rows if isinstance(rows, list) else []
 
 
+def _is_zoned_instant(value: str) -> bool:
+    if "T" not in value:
+        return False
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
 def validate_row(row: dict[str, Any]) -> None:
+    """A timestamp is a calendar date, or a zoned instant for intraday rows.
+
+    Intraday rows are one point per bar only when the run declares
+    point_kind=period_aggregate with aggregate_period=1min (timestamp = the bar
+    open, e.g. "2026-09-21T13:30:00Z"); the host rejects any other intraday
+    declaration rather than summing a date's bars into one point.
+    """
     ts = row.get("timestamp")
-    if not isinstance(ts, str) or not ts or not _DATE_RE.match(ts):
-        raise ValueError(f"invalid timestamp (expected YYYY-MM-DD): {ts!r}")
+    if not isinstance(ts, str) or not ts or not (
+        _DATE_RE.match(ts) or _is_zoned_instant(ts)
+    ):
+        raise ValueError(
+            "invalid timestamp (expected YYYY-MM-DD, or a zoned ISO instant such "
+            f"as 2026-09-21T13:30:00Z for 1min bars): {ts!r}"
+        )
     value = row.get("value")
     if value is None or isinstance(value, bool):
         raise ValueError(f"invalid value (expected number): {value!r}")

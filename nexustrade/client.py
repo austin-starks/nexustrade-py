@@ -617,7 +617,7 @@ def _custom_indicator_points(points: Any) -> list[dict[str, Any]]:
 
 
 _POINT_KINDS = {"observation", "period_aggregate", "disclosed"}
-_AGGREGATE_PERIODS = {"1d", "1w", "1mo", "1q"}
+_AGGREGATE_PERIODS = {"1min", "1d", "1w", "1mo", "1q"}
 
 
 def _date_only(value: Any) -> datetime.date | None:
@@ -672,7 +672,7 @@ def _point_kind_points(
     if point_kind == "period_aggregate":
         if aggregate_period not in _AGGREGATE_PERIODS:
             raise ValueError(
-                "period_aggregate requires aggregate_period: 1d, 1w, 1mo, or 1q."
+                "period_aggregate requires aggregate_period: 1min, 1d, 1w, 1mo, or 1q."
             )
     elif aggregate_period is not None:
         raise ValueError("aggregate_period is only valid for period_aggregate.")
@@ -706,6 +706,28 @@ def _point_kind_points(
                 )
             if available_day:
                 row["availableAt"] = _normalize_date_only_availability(available_at)
+        elif aggregate_period == "1min":
+            # One completed bar: timestamp is the bar open, available at bar close.
+            if event_day or not event_time or event_time.second or event_time.microsecond:
+                raise ValueError(
+                    f"Point {index + 1}: 1min timestamp must be the bar-open instant "
+                    "with an explicit UTC offset and no seconds."
+                )
+            bar_close = event_time + datetime.timedelta(minutes=1)
+            if available_at is None:
+                row["availableAt"] = bar_close.isoformat().replace("+00:00", "Z")
+            else:
+                explicit = (
+                    _utc_datetime(_normalize_date_only_availability(available_at))
+                    if available_day
+                    else available_time
+                )
+                if not explicit or explicit < bar_close:
+                    raise ValueError(
+                        f"Point {index + 1}: available_at precedes the 1min bar close."
+                    )
+                if available_day:
+                    row["availableAt"] = _normalize_date_only_availability(available_at)
         else:
             if not event_time:
                 raise ValueError(
