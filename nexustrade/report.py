@@ -228,6 +228,71 @@ def validate_source_references(payload: Mapping[str, Any], *, aliases: Mapping[s
             raise ValueError("used fetch record does not resolve to the source registry")
 
 
+def _validation_input_path(value: Any) -> tuple[str | int, ...] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    if any(not ((isinstance(part, str) and part) or
+                (type(part) is int and part >= 0)) for part in value):
+        return None
+    return tuple(value)
+
+
+def _validation_scalar(inputs: Mapping[str, Any], path: tuple[str | int, ...]) -> bool:
+    value: Any = inputs
+    for part in path:
+        if isinstance(value, Mapping) and isinstance(part, str) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and type(part) is int and part < len(value):
+            value = value[part]
+        else:
+            return False
+    return value is not None and type(value) in (str, int, float, bool)
+
+
+def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
+    """Check local reference shape; only the host can authenticate source lineage."""
+    checks = inputs.get("validationChecks")
+    if checks is None:
+        return
+    if not isinstance(checks, list):
+        raise ValueError("validationChecks must be a list")
+    references = inputs.get("modelReferences")
+    if not isinstance(references, list):
+        raise ValueError("validationChecks requires preserve_references=True and report.ref values")
+    by_path: dict[tuple[str | int, ...], list[Mapping[str, Any]]] = {}
+    for reference in references:
+        if isinstance(reference, Mapping):
+            path = _validation_input_path(reference.get("inputPath"))
+            if path is not None:
+                by_path.setdefault(path, []).append(reference)
+    for index, check in enumerate(checks):
+        if not isinstance(check, Mapping):
+            raise ValueError(f"validationChecks[{index}] must be an object")
+        for side_name in ("left", "right"):
+            side_name_path = f"validationChecks[{index}].{side_name}"
+            side = check.get(side_name)
+            path = _validation_input_path(side.get("inputPath")) if isinstance(side, Mapping) else None
+            if path is None:
+                raise ValueError(f"{side_name_path}.inputPath must be a non-empty report.ref path")
+            matches = by_path.get(path, [])
+            if len(matches) != 1:
+                raise ValueError(
+                    f"{side_name_path}.inputPath must name exactly one generated report.ref; "
+                    f"found {len(matches)} references at {list(path)!r}"
+                )
+            if not _validation_scalar(inputs, path):
+                raise ValueError(f"{side_name_path}.inputPath must resolve to an exact scalar report.ref")
+            provenance = matches[0].get("provenance")
+            source_ids = provenance.get("sourceIds") if isinstance(provenance, Mapping) else None
+            if (not isinstance(source_ids, list) or not source_ids or
+                    any(not isinstance(source_id, str) or not source_id.strip()
+                        for source_id in source_ids)):
+                raise ValueError(
+                    f"{side_name_path}.inputPath reference at {list(path)!r} needs "
+                    "provenance.sourceIds as a non-empty list of source IDs"
+                )
+
+
 def write_inputs(
     payload: Mapping[str, Any],
     *,
@@ -309,6 +374,7 @@ def write_inputs(
         inputs["calculationModel"] = _resolve(model, None)
     if references is not None:
         inputs["modelReferences"] = references
+    _validate_validation_references(inputs)
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)
     Path(path).write_text(json.dumps(inputs, indent=2, default=str) + "\n", encoding="utf-8")
