@@ -86,11 +86,17 @@ class NexusTradeApiError(RuntimeError):
         code: str,
         message: str,
         operation_id: str | None = None,
+        *,
+        retryable: bool = False,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.status = status
         self.code = code
         self.message = message
+        # The server's verdict that the same work may succeed if resubmitted
+        # (a transient storage or network failure), as opposed to a defect in
+        # the request itself.
+        self.retryable = retryable
         # Set for operation errors (timeout / failure). A timed-out job is
         # still running, so the caller needs the id to resume waiting without
         # resubmitting — reading it out of the message is not an interface.
@@ -958,10 +964,14 @@ def _operation_failure(
     error = operation.get("error")
     code = "operation_cancelled" if status == "cancelled" else "operation_failed"
     message = f"Operation {operation_id} {status}."
+    retryable = False
     if isinstance(error, Mapping):
         code = str(error.get("code") or code)
         message = str(error.get("message") or message)
-    return NexusTradeApiError(_NO_HTTP_STATUS, code, message, operation_id)
+        retryable = error.get("retryable") is True
+    return NexusTradeApiError(
+        _NO_HTTP_STATUS, code, message, operation_id, retryable=retryable
+    )
 
 
 class NexusTradeClient:
