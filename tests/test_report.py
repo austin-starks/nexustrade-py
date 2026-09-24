@@ -75,6 +75,32 @@ class ReportWriteTests(unittest.TestCase):
             report.write_inputs(payload, path=str(target))
             self.assertEqual(json.loads(target.read_text())['requirements'], payload['requirements'])
 
+    def test_delivery_citations_require_reader_facing_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            payload = {
+                'reportEvidence': [{'id': 'finding', 'paragraphs': [['Finding.']],
+                                    'referenceIds': ['discovery-only']}],
+                'reportViews': [{'id': 'figure', 'type': 'table',
+                                 'columns': [['Value']], 'rows': [[['Observed']]],
+                                 'referenceIds': ['filing']}],
+            }
+            with self.assertRaisesRegex(ValueError, 'discovery-only has no matching sources entry'):
+                report.write_inputs(payload, path=str(target))
+            self.assertFalse(target.exists())
+            payload['sources'] = [{'id': 'discovery-only', 'url': 'https://example.test/source'}]
+            with self.assertRaisesRegex(ValueError, 'filing has no matching sources entry'):
+                report.write_inputs(payload, path=str(target))
+            payload['sources'].append({'id': 'filing', 'url': 'https://example.test/filing'})
+            report.write_inputs(payload, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['sources'], payload['sources'])
+            payload['sources'] = {
+                'lead': {'id': 'discovery-only', 'title': 'Retrieved source'},
+                'filing': {'url': 'https://example.test/filing'},
+            }
+            report.write_inputs(payload, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['sources'], payload['sources'])
+
     def test_local_model_source_is_recorded_in_logical_work_namespace(self):
         original_work_dir = report.WORK_DIR
         try:

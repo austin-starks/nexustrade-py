@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -153,10 +154,11 @@ class LakeResultLimitError(RuntimeError):
 
 
 class LakeQueryFailed(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+        self.retryable = retryable
 
 
 class LakeSubmitFailed(NexusTradeApiError):
@@ -394,7 +396,9 @@ class LakeQueryHandle:
                 **options,
             )
         except NexusTradeApiError as error:
-            raise LakeQueryFailed(error.code, error.message) from error
+            raise LakeQueryFailed(
+                error.code, error.message, retryable=error.retryable
+            ) from error
         result = _from_operation(operation, self._client)
         if isinstance(result, LakeQueryResult):
             return result
@@ -712,10 +716,27 @@ def get(
     return _from_operation(nt.get_lake_query(query_id), nt)
 
 
+#: Attempts for a query the server reports as failed-but-retryable (a transient
+#: storage or network error during execution). A loop of hundreds of bounded
+#: queries otherwise dies on the first flake: at a 1.5% transient rate, 351
+#: sequential queries fail ~99% of the time. Successful queries pay nothing.
+RETRYABLE_QUERY_ATTEMPTS = 3
+RETRYABLE_QUERY_BACKOFF_SECONDS = (1.0, 3.0)
+
+
 #: How long the client keeps polling beyond the server's execution budget, to
 #: cover queue time plus a little slack. A query can sit queued behind others;
 #: that wait is not part of its execution allowance.
 DEFAULT_QUEUE_ALLOWANCE_SECONDS = 300
+
+
+def _retry_idempotency_key(base_key: str | None, attempt: int) -> str:
+    """A fresh, deterministic key per retry, within the server's 160-char limit."""
+    base = base_key or f"lake-{uuid.uuid4()}"
+    suffix = f":retry-{attempt}"
+    if len(base) + len(suffix) > 160:
+        base = hashlib.sha256(base.encode()).hexdigest()
+    return f"{base}{suffix}"
 
 
 def sql(
@@ -769,7 +790,27 @@ def sql(
         wait_timeout_seconds = float(
             query_timeout_seconds + DEFAULT_QUEUE_ALLOWANCE_SECONDS
         )
-    return handle.wait(timeout_seconds=wait_timeout_seconds)
+    base_key = handle.idempotency_key
+    for attempt in range(1, RETRYABLE_QUERY_ATTEMPTS + 1):
+        try:
+            return handle.wait(timeout_seconds=wait_timeout_seconds)
+        except LakeQueryFailed as error:
+            if not error.retryable or attempt == RETRYABLE_QUERY_ATTEMPTS:
+                raise
+        # The failed job is terminal and unbilled for results, so resubmit
+        # under a derived key: reusing the original would return the same
+        # failed job.
+        time.sleep(RETRYABLE_QUERY_BACKOFF_SECONDS[attempt - 1])
+        handle = submit(
+            query,
+            params,
+            timeout_seconds=query_timeout_seconds,
+            max_rows=max_rows,
+            max_result_bytes=max_result_bytes,
+            idempotency_key=_retry_idempotency_key(base_key, attempt),
+            client=client,
+        )
+    raise AssertionError("unreachable: the final attempt returns or raises")
 
 
 def daily_close_as_of(

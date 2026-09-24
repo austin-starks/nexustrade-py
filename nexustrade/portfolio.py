@@ -1594,6 +1594,21 @@ def GapSize(
 
 __all__.append("GapSize")
 
+def HeikinAshi(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    line: Literal["open", "high", "low", "close", "streak"] = "close",
+) -> Indicator:
+    """HeikinAshi indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    line: Which one-minute Heikin-Ashi value to evaluate. streak is the signed length of the current same-color run (0 once it shows an opposite-direction wick, and on a doji)
+    """
+    d: Dict[str, Any] = {"type": "HeikinAshi"}
+    _set_asset(d, "targetAsset", asset)
+    d["line"] = _enum(line, ["open","high","low","close","streak"], "line")
+    return Indicator(d)
+
+__all__.append("HeikinAshi")
+
 def HighOfDay(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:

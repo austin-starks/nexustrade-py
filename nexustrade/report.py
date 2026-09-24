@@ -484,6 +484,38 @@ def _validate_delivery_references(inputs: Mapping[str, Any]) -> None:
                 raise ValueError(f"{collection}[{index}].id duplicates {identifier}")
             ids.add(identifier)
         catalog[collection] = ids
+    sources = inputs.get("sources")
+    source_ids: set[str] = set()
+    if isinstance(sources, list):
+        source_ids = {item["id"].strip() for item in sources
+                      if isinstance(item, Mapping) and
+                      isinstance(item.get("id"), str) and item["id"].strip()}
+    elif isinstance(sources, Mapping):
+        if isinstance(sources.get("id"), str) and sources["id"].strip():
+            source_ids.add(sources["id"].strip())
+        else:
+            for key, item in sources.items():
+                if isinstance(item, Mapping) and any(
+                    isinstance(item.get(field), str) and item[field].strip()
+                    for field in ("id", "url", "title", "name", "label", "description", "desc")
+                ):
+                    identifier = item.get("id", key)
+                    if isinstance(identifier, str) and identifier.strip():
+                        source_ids.add(identifier.strip())
+    for collection in ("reportEvidence", "reportViews"):
+        for index, entry in enumerate(inputs.get(collection) or []):
+            if not isinstance(entry, Mapping):
+                continue
+            references = entry.get("referenceIds") or []
+            if not isinstance(references, list):
+                raise ValueError(f"{collection}[{index}].referenceIds must be a list")
+            for source_id in references:
+                if not isinstance(source_id, str) or not source_id.strip():
+                    raise ValueError(f"{collection}[{index}].referenceIds must contain non-empty strings")
+                if source_id.strip() not in source_ids:
+                    raise ValueError(
+                        f"{collection}[{index}].referenceIds: {source_id} has no matching sources entry"
+                    )
     requirements = inputs.get("requirements")
     if requirements is None:
         return
