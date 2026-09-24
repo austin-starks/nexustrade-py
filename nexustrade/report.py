@@ -12,6 +12,7 @@ Deep Research pattern:
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 from dataclasses import dataclass
@@ -143,9 +144,11 @@ def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) ->
 
     Example: ref('scenarios', 'base', 'per_share'). Pass the current model to
     write(inputs=..., model=...). References resolve at write time; the host gets
-    ordinary JSON, never templates or OpenCode-authored report prose. Optional
+    ordinary JSON, never templates or OpenCode-authored report prose.
     provenance_path points to current model metadata (source IDs, status, dates,
-    definition). With preserve_references=True it survives in modelReferences.
+    definition). Numeric and digit-bearing references require it, along with
+    model_source, when preserve_references=True; the metadata survives in
+    modelReferences.
     For report authorship, place each displayable number or digit-bearing string
     (including dates and filing forms) in an exact scalar ref under a
     semantically named input field. A broad object/array ref remains grader
@@ -162,6 +165,23 @@ def ref(*path: str | int, provenance_path: Sequence[str | int] | None = None) ->
             raise ValueError("provenance_path must be a sequence of model keys")
         metadata_path = ref(*provenance_path).path
     return _ModelReference(path, metadata_path)
+
+
+def _contains_claim_number(value: Any) -> bool:
+    """Mirror the host's numeric-claim boundary before writing the handoff."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        return any('0' <= character <= '9' for character in value)
+    if isinstance(value, Mapping):
+        return any(_contains_claim_number(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_claim_number(item) for item in value)
+    return False
 
 
 def _resolve(value: Any, model: Mapping[str, Any] | None, *,
@@ -181,6 +201,17 @@ def _resolve(value: Any, model: Mapping[str, Any] | None, *,
         # The model contains data, not another template/reference graph.
         resolved = _resolve(target, None)
         if references is not None:
+            if _contains_claim_number(resolved):
+                if model_source is None:
+                    raise ValueError(
+                        f"numeric report.ref {value.path!r} needs model_source "
+                        "naming the saved model artifact"
+                    )
+                if value.provenance_path is None:
+                    raise ValueError(
+                        f"numeric report.ref {value.path!r} needs provenance_path "
+                        "to a provenance object in the saved model"
+                    )
             record: dict[str, Any] = {"inputPath": list(input_path), "modelPath": list(value.path)}
             if model_source is not None:
                 record["modelSource"] = model_source
@@ -336,9 +367,9 @@ def write_inputs(
     {} checks an intentionally shared namespace. Legacy calls leave receipt
     verification to the host. This does not verify the content of source claims.
     preserve_references adds modelReferences linking output paths to current model
-    paths and optional provenance objects. Supply model_source with the actual
-    model artifact path when file-backed; without it paths refer only to this
-    in-memory model argument. The map is executor-declared lineage, never proof
+    paths and provenance objects. Numeric and digit-bearing references require
+    model_source naming the saved model artifact and provenance_path resolving
+    to model metadata. The map is executor-declared lineage, never proof
     of source authority. A supplied modelReferences map cannot replace fresh
     references in this mode.
 

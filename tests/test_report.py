@@ -39,7 +39,8 @@ class ReportWriteTests(unittest.TestCase):
                 target = Path(directory) / 'inputs.json'
                 model_path = Path(directory) / 'out' / 'model.json'
                 report.write_inputs(
-                    {'value': report.ref('value')}, model={'value': 7},
+                    {'value': report.ref('value', provenance_path=('provenance',))},
+                    model={'value': 7, 'provenance': {'definition': 'example scalar'}},
                     preserve_references=True, model_source=str(model_path), path=str(target)
                 )
                 saved = json.loads(target.read_text())
@@ -134,10 +135,31 @@ class ReportWriteTests(unittest.TestCase):
                     report.write_inputs({'x': report.ref('value', provenance_path=('metadata',))},
                                         model={'value': 2, 'metadata': metadata},
                                         preserve_references=True, path=target)
-            report.write_inputs({'values': [report.ref('value')]},
-                                model={'value': 2}, preserve_references=True, path=target)
+            report.write_inputs({'values': [report.ref('label')]},
+                                model={'label': 'plain text'}, preserve_references=True, path=target)
             output = json.loads(Path(target).read_text())
-            self.assertEqual(output['modelReferences'], [{'inputPath': ['values', 0], 'modelPath': ['value']}])
+            self.assertEqual(output['modelReferences'], [{'inputPath': ['values', 0], 'modelPath': ['label']}])
+
+    def test_numeric_references_fail_at_write_without_model_source_and_provenance(self):
+        model = {'value': 42, 'period': 'FY 2026', 'group': {'value': 42},
+                 'provenance': {'sourceIds': ['lake:one']}}
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            for key in ('value', 'period', 'group'):
+                with self.subTest(key=key):
+                    payload = {'statistics': {'claim': report.ref(key)}}
+                    with self.assertRaisesRegex(ValueError, 'model_source'):
+                        report.write_inputs(payload, model=model, preserve_references=True,
+                                            path=str(target))
+                    with self.assertRaisesRegex(ValueError, 'provenance_path'):
+                        report.write_inputs(payload, model=model, preserve_references=True,
+                                            model_source='/work/out/model.json', path=str(target))
+                    self.assertFalse(target.exists())
+            report.write_inputs(
+                {'statistics': {'claim': report.ref('value', provenance_path=('provenance',))}},
+                model=model, preserve_references=True,
+                model_source='/work/out/model.json', path=str(target))
+            self.assertEqual(json.loads(target.read_text())['statistics']['claim'], 42)
 
     def test_validation_checks_require_canonical_bound_source_ids_before_write(self):
         model = {

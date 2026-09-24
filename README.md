@@ -1218,7 +1218,8 @@ Successful research calls still append shared durable receipt/cache rows.
   cases clear a hurdle from the same numbers the table prints, so a sentence
   like "only the bull case clears" cannot survive a change to the numbers it
   describes. Equality is a miss.
-- `report.ref("scenarios", "base", "per_share_value")` binds a structured finding
+- `report.ref("scenarios", "base", "per_share_value",
+  provenance_path=("scenarios", "base", "provenance"))` binds a structured finding
   to the current model when `report.write(inputs=inputs, model=model)` runs.
   `model=` is reference resolution, not automatic model export. Every number
   intended for report prose or a report table must be an exact scalar reference
@@ -1270,13 +1271,19 @@ report.write_inputs(inputs, model=model, preserve_references=True,
                     model_source="/work/out/model.json")
 ```
 
-`modelReferences` contains `inputPath`, `modelPath`, optional `modelSource`, and
-the current `provenancePath`/`provenance` object. It refreshes when the model changes.
-Paths are arrays of object keys/list indices. Supply the actual artifact path for
-a file-backed model; without `model_source`, paths identify only the in-memory
-model argument. This is executor-declared lineage, **not independently verified
+`modelReferences` contains `inputPath`, `modelPath`, `modelSource`, and
+the current `provenancePath`/`provenance` object for numeric claims. It refreshes
+when the model changes. With `preserve_references=True`, numeric or digit-bearing
+references require both `model_source` and `provenance_path`; the SDK raises
+before writing a handoff that the host would reject. Paths are arrays of object
+keys/list indices. Supply the actual saved artifact path. This is
+executor-declared lineage, **not independently verified
 source authority**. The host must still check source support and accounting
 meaning. Omitting `preserve_references` keeps legacy JSON output unchanged.
+For direct numeric assumptions outside the saved model, a
+`provenance_manifest` path starts at the emitted `report_inputs.json` root. An
+assumption at `inputs["statistics"]["discount_rate"]` has path
+`statistics.discount_rate`; a bare path into the separate model is invalid.
 
 ## License
 
