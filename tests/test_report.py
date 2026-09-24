@@ -139,6 +139,51 @@ class ReportWriteTests(unittest.TestCase):
             output = json.loads(Path(target).read_text())
             self.assertEqual(output['modelReferences'], [{'inputPath': ['values', 0], 'modelPath': ['value']}])
 
+    def test_validation_checks_require_canonical_bound_source_ids_before_write(self):
+        model = {
+            'values': {'left': 12, 'right': 12},
+            'provenance': {
+                'left': {'source_ids': ['lake:one']},
+                'right': {'sourceIds': ['lake:two']},
+            },
+        }
+        payload = {
+            'findings': {
+                'left': report.ref('values', 'left', provenance_path=('provenance', 'left')),
+                'right': report.ref('values', 'right', provenance_path=('provenance', 'right')),
+            },
+            'validationChecks': [{
+                'id': 'check', 'kind': 'reconciliation', 'evidenceId': 'conclusion',
+                'left': {'label': 'Calculated', 'inputPath': ['findings', 'left']},
+                'right': {'label': 'Observed', 'inputPath': ['findings', 'right']},
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            with self.assertRaisesRegex(ValueError, r'validationChecks\[0\]\.left.*provenance\.sourceIds'):
+                report.write_inputs(payload, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+            self.assertFalse(target.exists())
+            model['provenance']['left'] = {'sourceIds': ['lake:one']}
+            report.write_inputs(payload, model=model, preserve_references=True,
+                                model_source='/work/out/model.json', path=str(target))
+            saved = json.loads(target.read_text())
+            self.assertEqual(saved['modelReferences'][0]['provenance']['sourceIds'], ['lake:one'])
+            self.assertEqual(saved['validationChecks'], payload['validationChecks'])
+            self.assertNotIn('modelReferences', payload)
+
+            model['values']['left'] = {'value': 12}
+            with self.assertRaisesRegex(ValueError, 'exact scalar report.ref'):
+                report.write_inputs(payload, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+            model['values']['left'] = 12
+
+            payload['validationChecks'][0]['left']['inputPath'] = ['findings', 'missing']
+            with self.assertRaisesRegex(ValueError, 'found 0 references'):
+                report.write_inputs(payload, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+            self.assertEqual(json.loads(target.read_text()), saved)
+
     def test_current_model_drives_repeated_values_and_sources(self):
         model = {'case': {'value': 72}, 'sources': [{'id': 'filing', 'url': 'https://example.test/filing'}]}
         payload = {'statistics': report.ref('case'),

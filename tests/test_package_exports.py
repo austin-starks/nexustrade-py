@@ -241,6 +241,7 @@ class PackageExportTests(unittest.TestCase):
         self.assertTrue(callable(nt.sec.statement))
         self.assertTrue(callable(nt.sec.fact_candidates))
         self.assertTrue(callable(nt.sec.fact_instances))
+        self.assertTrue(callable(nt.sec.filed_concepts))
         self.assertTrue(callable(nt.sec.dimensioned_concepts))
         self.assertTrue(callable(nt.sec.business_breakdowns))
         self.assertTrue(callable(nt.finance.fcff))

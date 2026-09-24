@@ -21,7 +21,10 @@ class LakePackagingTests(unittest.TestCase):
             _client=object(),  # type: ignore[arg-type]
         )
         frame = SimpleNamespace(to_dict=lambda orientation: [
-            {"ticker": "GOOGL", "date": "2026-09-09 20:00:00", "closingPrice": 330.65}
+            {"ticker": "GOOGL", "date": "2026-09-09 20:00:00", "closingPrice": 330.65,
+             "unadjustedClose": 330.65, "marketCap": 4_030_000_000_000,
+             "sharesOutstanding": 12_190_000_000, "sharesAsOf": "2026-06-30",
+             "source": "SEC", "priceSource": "Polygon", "marketCapSource": "SEC"}
         ] if orientation == "records" else None)
         with mock.patch.object(nt.lake, "sql", return_value=result) as query, \
              mock.patch.object(result, "to_pandas", return_value=frame):
@@ -32,6 +35,9 @@ class LakePackagingTests(unittest.TestCase):
         self.assertEqual(quote["value"], 330.65)
         self.assertEqual(quote["observed_date"], "2026-09-09")
         self.assertEqual(quote["source_id"], "lake-query:lq_close")
+        self.assertEqual(quote["row"]["marketCap"], 4_030_000_000_000)
+        self.assertEqual(quote["row"]["sharesOutstanding"], 12_190_000_000)
+        self.assertIn('"marketCap"', query.call_args.args[0])
 
     def test_lake_is_lazy_not_in_all(self) -> None:
         self.assertNotIn("lake", nt.__all__)

@@ -35,7 +35,9 @@ class PortfolioStockEligibility(TypedDict):
     minimumMarketCapUsd: int
     maximumMarketCapUsd: int | None
     industryFilter: PortfolioIndustryFilter
-    missingMarketCapBehavior: Literal["EXCLUDE"]
+    # INCLUDE keeps names with no known market cap (ETFs, unsized filers); the
+    # politician copy bots use it.
+    missingMarketCapBehavior: Literal["EXCLUDE", "INCLUDE"]
     missingIndustryBehavior: Literal["EXCLUDE_WHEN_FILTER_SET"]
     appliesTo: Literal["DYNAMIC_STOCK_UNIVERSES"]
 
