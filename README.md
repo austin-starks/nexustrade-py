@@ -1162,6 +1162,10 @@ The compute helpers keep evidence and arithmetic separate from investment judgme
 General `host.search(query)` keeps neutral research search terms. Use
 `host.search(query, prefer_machine_readable=True)` for dataset/API discovery;
 `host.queue_search` has the same neutral default.
+The returned payload is unwrapped: read `result["candidates"]`. The durable
+`host_results.jsonl` receipt has a separate `data` envelope; accessing
+`result.get("data")` on the direct search result raises to prevent silent
+loss of candidate URLs.
 
 Native research investigators may call `host.search(query,
 allow_broker_fallback=False)`. Pending or unavailable gateway work then raises

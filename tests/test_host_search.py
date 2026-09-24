@@ -10,6 +10,20 @@ from nexustrade import host
 
 
 class DirectSearchTests(unittest.TestCase):
+    def test_search_rejects_durable_receipt_envelope_access(self):
+        payload = {'query': 'research', 'candidates': [{'url': 'https://example.com'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            results = Path(directory) / 'results.jsonl'
+            with patch.object(host, 'HOST_RESULTS_PATH', str(results)), \
+                 patch.object(host, '_gateway_search', return_value=payload):
+                direct = host.search('research')
+                self.assertEqual(direct['candidates'], payload['candidates'])
+                with self.assertRaisesRegex(KeyError, "result\\['candidates'\\]"):
+                    direct.get('data', {}).get('candidates', [])
+                cached = host.search('research')
+                with self.assertRaisesRegex(KeyError, "result\\['candidates'\\]"):
+                    cached['data']
+
     def test_neutral_default_and_explicit_dataset_preference_have_separate_cached_results(self):
         with tempfile.TemporaryDirectory() as directory:
             results = Path(directory) / 'results.jsonl'
