@@ -95,6 +95,25 @@ class ReportWriteTests(unittest.TestCase):
                 report.write_inputs({'requirements': [], 'method_requirements': requirements},
                                     path=str(target))
 
+    def test_requirement_navigation_rejects_id_content_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            payload = {
+                'reportEvidence': [{'id': 'decision', 'paragraphs': [['Decision.']]}],
+                'requirements': [{'id': 'method:brief:decision_objective',
+                                  'content': 'decision'}],
+            }
+            with self.assertRaisesRegex(ValueError, r'requirements\[0\]\.requirement.*id, content'):
+                report.write_inputs(payload, path=str(target))
+            self.assertFalse(target.exists())
+
+            payload['requirements'] = [{
+                'requirement': 'method:brief:decision_objective',
+                'evidenceIds': ['decision'],
+            }]
+            report.write_inputs(payload, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['requirements'], payload['requirements'])
+
     def test_delivery_references_reject_view_used_as_evidence_before_write(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / 'report_inputs.json'

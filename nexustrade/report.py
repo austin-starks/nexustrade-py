@@ -597,7 +597,14 @@ def _validate_delivery_references(inputs: Mapping[str, Any]) -> None:
         if not isinstance(requirement, Mapping):
             raise ValueError(f"requirements[{index}] must be an object")
         name = requirement.get("requirement")
-        label = name if isinstance(name, str) and name.strip() else f"requirements[{index}]"
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"requirements[{index}].requirement must be a non-empty staged method ID; "
+                "map it with evidenceIds and/or viewIds to delivered reportEvidence/reportViews "
+                "(for example, {'requirement': 'method:...', 'evidenceIds': ['finding']}). "
+                "An {id, content} entry is not a requirements map."
+            )
+        label = name.strip()
         for field, collection in (("evidenceIds", "reportEvidence"),
                                   ("viewIds", "reportViews")):
             references = requirement.get(field, [])
