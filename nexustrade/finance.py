@@ -202,7 +202,11 @@ def economic_value_added(
     invested_capital: Number,
     cost_of_capital: Number,
 ) -> float:
-    """Return NOPAT less the dollar capital charge."""
+    """Return annual NOPAT less the annual dollar capital charge.
+
+    For a shorter operating period, use operating_period_metrics with its
+    explicit period dates so the annual capital rate is matched to that period.
+    """
     capital = _finite("invested_capital", invested_capital)
     if capital < 0.0:
         raise ValueError("invested_capital must be non-negative")
@@ -616,13 +620,36 @@ def operating_period_metrics(
     current_invested_capital: Number,
     prior_invested_capital: Number,
     cost_of_capital: Number,
+    period_start: str | None = None,
+    period_end: str | None = None,
 ) -> dict[str, float]:
     """Return one reproducible operating-period bridge from explicit inputs.
 
     This composes the public primitives; it does not decide which filing facts
     are operating, normalize capex, capitalize R&D, or choose a tax rate/WACC.
-    ROIC and EVA use average beginning/ending invested capital.
+    ROIC and EVA use average beginning/ending invested capital. Annual WACC is
+    matched to the actual period when both inclusive dates are supplied. ROIC
+    is then annualized so it can be compared with annual WACC; the unannualized
+    period return and period fraction are also returned.
     """
+    if (period_start is None) != (period_end is None):
+        raise ValueError("period_start and period_end must be supplied together")
+    period_years = 1.0
+    if period_start is not None and period_end is not None:
+        start = _calendar_date("period_start", period_start)
+        end = _calendar_date("period_end", period_end)
+        if end < start:
+            raise ValueError("period_end must not precede period_start")
+        period_years = 0.0
+        cursor = start
+        while cursor <= end:
+            year_end = min(end, date(cursor.year, 12, 31))
+            period_years += ((year_end - cursor).days + 1) / date(
+                cursor.year, 12, 31
+            ).timetuple().tm_yday
+            if year_end == end:
+                break
+            cursor = year_end + timedelta(days=1)
     current_capital = _finite("current_invested_capital", current_invested_capital)
     prior_capital = _finite("prior_invested_capital", prior_invested_capital)
     average_capital = (current_capital + prior_capital) / 2.0
@@ -638,7 +665,11 @@ def operating_period_metrics(
         depreciation_and_amortization,
         nwc_change,
     )
-    return {
+    period_roic = return_on_invested_capital(
+        operating_profit_after_tax, average_capital
+    )
+    capital_charge = average_capital * _rate("cost_of_capital", cost_of_capital) * period_years
+    result = {
         "nopat": operating_profit_after_tax,
         "change_in_operating_nwc": nwc_change,
         "fcff": fcff(
@@ -648,21 +679,18 @@ def operating_period_metrics(
             nwc_change,
         ),
         "average_invested_capital": average_capital,
-        "roic": return_on_invested_capital(
-            operating_profit_after_tax,
-            average_capital,
-        ),
+        "roic": period_roic / period_years,
         "net_investment": investment,
         "reinvestment_rate": reinvestment_rate(
             investment,
             operating_profit_after_tax,
         ),
-        "eva": economic_value_added(
-            operating_profit_after_tax,
-            average_capital,
-            cost_of_capital,
-        ),
+        "eva": operating_profit_after_tax - capital_charge,
     }
+    if period_start is not None:
+        result.update(period_years=period_years, period_roic=period_roic,
+                      period_capital_charge=capital_charge)
+    return result
 
 
 def fcff_valuation_case(
@@ -1164,6 +1192,8 @@ def operating_forecast_period(
     prior_operating_nwc: Number,
     prior_invested_capital: Number,
     cost_of_capital: Number,
+    period_start: str | None = None,
+    period_end: str | None = None,
     additional_cash_investment: Number = 0.0,
     noncash_invested_capital_changes: Number = 0.0,
 ) -> dict[str, float]:
@@ -1188,7 +1218,7 @@ def operating_forecast_period(
         capital_expenditures=capital_expenditures,
         current_operating_nwc=current_operating_nwc, prior_operating_nwc=prior_operating_nwc,
         current_invested_capital=current_capital, prior_invested_capital=prior_invested_capital,
-        cost_of_capital=cost_of_capital,
+        cost_of_capital=cost_of_capital, period_start=period_start, period_end=period_end,
     )
     return {**metrics, "current_invested_capital": current_capital,
             "fcff": metrics["fcff"] - cash_investment,

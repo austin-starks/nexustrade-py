@@ -312,6 +312,35 @@ class FinanceSdkTests(unittest.TestCase):
         self.assertEqual(result["reinvestment_rate"], 0.2)
         self.assertEqual(result["eva"], 60.0)
 
+    def test_stub_operating_return_matches_annual_capital_cost_to_stub_period(self) -> None:
+        inputs = dict(
+            operating_income=50.76987835616439,
+            tax_rate=0.16,
+            depreciation_and_amortization=10.0,
+            capital_expenditures=20.0,
+            current_operating_nwc=10.0,
+            prior_operating_nwc=10.0,
+            current_invested_capital=521.6655606027397,
+            prior_invested_capital=498.17,
+            cost_of_capital=0.085,
+        )
+        stub = nt.finance.operating_period_metrics(
+            **inputs, period_start="2026-09-10", period_end="2026-12-31"
+        )
+        self.assertAlmostEqual(stub["period_years"], 113 / 365)
+        self.assertAlmostEqual(stub["period_roic"],
+                               stub["nopat"] / stub["average_invested_capital"])
+        self.assertAlmostEqual(stub["roic"], stub["period_roic"] / (113 / 365))
+        self.assertAlmostEqual(stub["eva"], stub["nopat"] -
+                               stub["average_invested_capital"] * 0.085 * (113 / 365))
+        self.assertGreater(stub["eva"], 0)
+        full_leap_year = nt.finance.operating_period_metrics(
+            **inputs, period_start="2028-01-01", period_end="2028-12-31"
+        )
+        self.assertEqual(full_leap_year["period_years"], 1.0)
+        with self.assertRaisesRegex(ValueError, "supplied together"):
+            nt.finance.operating_period_metrics(**inputs, period_start="2026-09-10")
+
     def test_composed_valuation_and_return_cases_are_reproducible(self) -> None:
         valuation = nt.finance.fcff_valuation_case(
             forecast_fcff=[100.0, 110.0, 120.0],
