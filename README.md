@@ -240,7 +240,7 @@ book = nt.portfolio("Momentum", [
             ],
             weight_indicator=nt.RSI(nt.CANDIDATE, 14),
             limit=10,
-            deployment_percent=80,
+            deployment_percent=nt.Value(80),
         ),
     ),
 ], initial_value=100_000)

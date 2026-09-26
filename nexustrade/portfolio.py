@@ -340,6 +340,14 @@ def _indicator_dict(value: Indicator) -> Dict[str, Any]:
     return value.d
 
 
+def _deployment_budget(value: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TypeError("total_budget must be a dict")
+    if value.get("type") not in ("percent of portfolio", "dollars"):
+        raise ValueError("total_budget.type must be percent of portfolio or dollars")
+    return {**value, "amount": _indicator_dict(value.get("amount"))}
+
+
 def _condition_dict(value: Condition) -> Dict[str, Any]:
     if not isinstance(value, Condition):
         raise TypeError(f"expected Condition, got {value!r}")
@@ -608,7 +616,7 @@ def dynamic_rebalance(
     *,
     universe_config: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = None,
-    deployment_percent: Optional[float] = None,
+    deployment_percent: Optional[Indicator] = None,
     per_name_allocation: Optional[Dict[str, Any]] = None,
     can_sell: Optional[Condition] = None,
     allow_shorts: Optional[bool] = None,
@@ -633,7 +641,10 @@ def dynamic_rebalance(
             "pipeline": list(pipeline),
             "weightIndicator": _indicator_dict(weight_indicator),
             "limit": limit,
-            "deploymentPercent": deployment_percent,
+            "deploymentPercent": (
+                _indicator_dict(deployment_percent)
+                if deployment_percent is not None else None
+            ),
             "perNameAllocation": per_name_allocation,
             "canSell": (
                 _condition_dict(can_sell)
@@ -823,11 +834,13 @@ def rebalance_option(
     limit: Optional[int] = None,
     total_budget: Optional[Dict[str, Any]] = None,
     per_name_allocation: Optional[Dict[str, Any]] = None,
+    sizing_mode: Optional[Literal["fixedPerName", "proportionalToWeight"]] = None,
     position_scope: Optional[str] = None,
     sleeves: Optional[Sequence[Dict[str, Any]]] = None,
     allocation_policy: Optional[Dict[str, Any]] = None,
     exposure_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    _enum(sizing_mode, ["fixedPerName", "proportionalToWeight"], "sizing_mode")
     return _compact(
         {
             "type": "RebalanceOption",
@@ -836,8 +849,12 @@ def rebalance_option(
             "weightIndicator": _indicator_dict(weight_indicator),
             "structureTemplates": list(structure_templates),
             "limit": limit,
-            "totalBudget": total_budget,
+            "totalBudget": (
+                _deployment_budget(total_budget)
+                if total_budget is not None else None
+            ),
             "perNameAllocation": per_name_allocation,
+            "sizingMode": sizing_mode,
             "positionScope": position_scope,
             "sleeves": list(sleeves) if sleeves is not None else None,
             "allocationPolicy": allocation_policy,
@@ -2655,6 +2672,24 @@ def Plus(
     return Indicator(d)
 
 __all__.append("Plus")
+
+def PoliticalPurchaseShare(
+    member_id: str,
+    instrument: Literal["Equity", "Option"] = "Equity",
+    amount_basis: Literal["LowerBound", "Midpoint", "UpperBound"] = "Midpoint",
+) -> Indicator:
+    """PoliticalPurchaseShare indicator.
+    member_id: Bioguide member id, for example P000197. The share uses the member's whole public purchase record.
+    instrument: Which side of the equity/option purchase mix to return, as a percent from 0 to 100.
+    amount_basis: Estimate for disclosed purchase ranges. Midpoint is the default.
+    """
+    d: Dict[str, Any] = {"type": "PoliticalPurchaseShare"}
+    d["memberId"] = member_id
+    d["instrument"] = _enum(instrument, ["Equity","Option"], "instrument")
+    d["amountBasis"] = _enum(amount_basis, ["LowerBound","Midpoint","UpperBound"], "amount_basis")
+    return Indicator(d)
+
+__all__.append("PoliticalPurchaseShare")
 
 def PoliticalTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
