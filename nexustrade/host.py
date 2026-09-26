@@ -738,7 +738,7 @@ BACKTESTS_RECORD_PATH = os.path.join(WORK_DIR, "backtests.json")
 _PORTFOLIO_EXAMPLE = (
     'pf.portfolio("My book", [pf.strategy("Rebalance", pf.always(), '
     'pf.dynamic_rebalance(universe=pf.universe("SP500"), pipeline=[], '
-    'weight_indicator=pf.Value(1), limit=10, deployment_percent=100))])'
+    'weight_indicator=pf.Value(1), limit=10, deployment_percent=pf.Value(100)))])'
 )
 
 

@@ -7,6 +7,44 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_flat_report_table_cells_keep_exact_model_reference_paths(self):
+        model = {
+            'case': {'value': 251.08, 'provenance': {'sourceIds': ['lake:filing']}},
+        }
+        payload = {
+            'reportViews': [{
+                'id': 'scenario-grid', 'type': 'table',
+                'columns': ['Scenario', 'Per-share value'],
+                'rows': [['base', report.ref('case', 'value',
+                    provenance_path=('case', 'provenance'))]],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            report.write_inputs(payload, model=model, preserve_references=True,
+                                model_source='/work/out/model.json', path=str(target))
+            saved = json.loads(target.read_text())
+            self.assertEqual(saved['reportViews'][0]['rows'], [['base', 251.08]])
+            self.assertEqual(saved['modelReferences'][0]['inputPath'],
+                             ['reportViews', 0, 'rows', 0, 1])
+            self.assertEqual(payload['reportViews'][0]['rows'][0][0], 'base')
+
+    def test_invalid_report_table_shape_fails_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            with self.assertRaisesRegex(ValueError, r'rows\[0\]: expected 2 cells'):
+                report.write_inputs({'reportViews': [{
+                    'id': 'short', 'type': 'table',
+                    'columns': ['Case', 'Value'], 'rows': [['base']],
+                }]}, path=str(target))
+            self.assertFalse(target.exists())
+            with self.assertRaisesRegex(ValueError, 'text or finite numeric segments'):
+                report.write_inputs({'reportViews': [{
+                    'id': 'invalid', 'type': 'table',
+                    'columns': ['Case'], 'rows': [[{'value': 1}]],
+                }]}, path=str(target))
+            self.assertFalse(target.exists())
+
     def test_delivery_binds_typed_numbers_without_treating_dates_as_financial_claims(self):
         model = {'value': 12.5, 'provenance': {'sourceIds': ['lake:one']}}
         with tempfile.TemporaryDirectory() as directory:
@@ -56,6 +94,25 @@ class ReportWriteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'different values'):
                 report.write_inputs({'requirements': [], 'method_requirements': requirements},
                                     path=str(target))
+
+    def test_requirement_navigation_rejects_id_content_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            payload = {
+                'reportEvidence': [{'id': 'decision', 'paragraphs': [['Decision.']]}],
+                'requirements': [{'id': 'method:brief:decision_objective',
+                                  'content': 'decision'}],
+            }
+            with self.assertRaisesRegex(ValueError, r'requirements\[0\]\.requirement.*id, content'):
+                report.write_inputs(payload, path=str(target))
+            self.assertFalse(target.exists())
+
+            payload['requirements'] = [{
+                'requirement': 'method:brief:decision_objective',
+                'evidenceIds': ['decision'],
+            }]
+            report.write_inputs(payload, path=str(target))
+            self.assertEqual(json.loads(target.read_text())['requirements'], payload['requirements'])
 
     def test_delivery_references_reject_view_used_as_evidence_before_write(self):
         with tempfile.TemporaryDirectory() as directory:

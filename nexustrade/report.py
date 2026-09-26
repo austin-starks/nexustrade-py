@@ -410,6 +410,78 @@ def _validate_delivery_numbers(inputs: Mapping[str, Any]) -> None:
                                 visit(item[field], ('reportViews', index, 'items', item_index, field))
 
 
+def _validate_delivery_structure(inputs: Mapping[str, Any]) -> None:
+    """Check the public report block shape before the host finalization call.
+
+    A table cell is either one scalar or a nonempty list of text segments. The
+    host uses the same shape; this check does not interpret prose or source truth.
+    """
+    def text(value: Any, path: str) -> None:
+        segments = value if isinstance(value, list) else [value]
+        if not segments or len(segments) > 256:
+            raise ValueError(f'{path}: expected one to 256 text segments')
+        for segment in segments:
+            if type(segment) is str or type(segment) is int:
+                continue
+            if type(segment) is float and math.isfinite(segment):
+                continue
+            raise ValueError(f'{path}: expected text or finite numeric segments')
+
+    evidence = inputs.get('reportEvidence')
+    if evidence is not None:
+        if not isinstance(evidence, list) or len(evidence) > 256:
+            raise ValueError('reportEvidence: expected at most 256 entries')
+        for index, entry in enumerate(evidence):
+            path = f'reportEvidence[{index}]'
+            paragraphs = entry.get('paragraphs') if isinstance(entry, Mapping) else None
+            if not isinstance(paragraphs, list) or not paragraphs:
+                raise ValueError(f'{path}.paragraphs: expected one or more paragraphs')
+            for paragraph_index, paragraph in enumerate(paragraphs):
+                text(paragraph, f'{path}.paragraphs[{paragraph_index}]')
+
+    views = inputs.get('reportViews')
+    if views is None:
+        return
+    if not isinstance(views, list) or len(views) > 256:
+        raise ValueError('reportViews: expected at most 256 entries')
+    for index, entry in enumerate(views):
+        path = f'reportViews[{index}]'
+        if not isinstance(entry, Mapping):
+            raise ValueError(f'{path}: expected an object')
+        if entry.get('caption') is not None:
+            text(entry['caption'], f'{path}.caption')
+        if entry.get('type') == 'table':
+            columns = entry.get('columns')
+            rows = entry.get('rows')
+            if not isinstance(columns, list) or not 1 <= len(columns) <= 40:
+                raise ValueError(f'{path}.columns: expected one to 40 columns')
+            if not isinstance(rows, list) or not 1 <= len(rows) <= 500:
+                raise ValueError(f'{path}.rows: expected one to 500 rows')
+            for column_index, column in enumerate(columns):
+                text(column, f'{path}.columns[{column_index}]')
+            for row_index, row in enumerate(rows):
+                if not isinstance(row, list) or len(row) != len(columns):
+                    raise ValueError(f'{path}.rows[{row_index}]: expected {len(columns)} cells')
+                for cell_index, cell in enumerate(row):
+                    text(cell, f'{path}.rows[{row_index}][{cell_index}]')
+            if entry.get('note') is not None:
+                text(entry['note'], f'{path}.note')
+        elif entry.get('type') == 'metricGrid':
+            items = entry.get('items')
+            if not isinstance(items, list) or not items:
+                raise ValueError(f'{path}.items: expected one or more metrics')
+            for item_index, item in enumerate(items):
+                item_path = f'{path}.items[{item_index}]'
+                if not isinstance(item, Mapping):
+                    raise ValueError(f'{item_path}: expected an object')
+                text(item.get('label'), f'{item_path}.label')
+                text(item.get('value'), f'{item_path}.value')
+                if item.get('context') is not None:
+                    text(item['context'], f'{item_path}.context')
+        else:
+            raise ValueError(f'{path}.type: expected table or metricGrid')
+
+
 def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
     """Check local reference shape; only the host can authenticate source lineage."""
     checks = inputs.get("validationChecks")
@@ -525,7 +597,14 @@ def _validate_delivery_references(inputs: Mapping[str, Any]) -> None:
         if not isinstance(requirement, Mapping):
             raise ValueError(f"requirements[{index}] must be an object")
         name = requirement.get("requirement")
-        label = name if isinstance(name, str) and name.strip() else f"requirements[{index}]"
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"requirements[{index}].requirement must be a non-empty staged method ID; "
+                "map it with evidenceIds and/or viewIds to delivered reportEvidence/reportViews "
+                "(for example, {'requirement': 'method:...', 'evidenceIds': ['finding']}). "
+                "An {id, content} entry is not a requirements map."
+            )
+        label = name.strip()
         for field, collection in (("evidenceIds", "reportEvidence"),
                                   ("viewIds", "reportViews")):
             references = requirement.get(field, [])
@@ -552,17 +631,18 @@ def write_inputs(
     Common keys:
       title, request, sources, methodology, statistics, images, findings, caveats
 
-    For a staged method, use the structural delivery contract:
+    For a staged method, supply the analysis selected for the report:
       reportEvidence — [{id, paragraphs=[[text, ref(...), ...]], referenceIds?}]
-      reportViews — [{id, type='table'|'metricGrid', ...typed text segments...}]
-      requirements — [{requirement=<staged id>, evidenceIds=[...], viewIds=[...]}]
-      validationChecks — [{id, kind='independent'|'reconciliation', left, right,
-                           evidenceId}]
+      reportViews — [{id, type='table'|'metricGrid', ...}]
+      requirements — optional navigation from staged IDs to evidence/view IDs
+      validationChecks — optional comparisons of independently derived scalars
 
     Every typed numeric segment in reportEvidence/reportViews must be an exact
-    scalar ref (or a labeled scalar assumption). The host copies these blocks
-    exactly and refuses a generated report that omits a mapped id. This is
-    a delivery contract, not a semantic claim that the evidence is sufficient.
+    scalar ref (or a labeled scalar assumption). Table columns and cells may be
+    plain strings or scalar refs; a list of segments is needed only when a cell
+    mixes text with references. The host copies every selected block into the
+    report. A requirements map may help navigation but is not proof that the
+    evidence is sufficient.
     Each validation side names an exact scalar inputPath. The host derives that
     scalar's sourceIds from its bound model provenance and verifies fetch/lake
     lineage. Independent sides must be disjoint; same-lineage comparisons are
@@ -618,6 +698,7 @@ def write_inputs(
         inputs["calculationModel"] = _resolve(model, None)
     if references is not None:
         inputs["modelReferences"] = references
+    _validate_delivery_structure(inputs)
     _validate_manifest_paths(inputs)
     if preserve_references:
         _validate_delivery_numbers(inputs)

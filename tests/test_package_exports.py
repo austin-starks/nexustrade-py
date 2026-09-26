@@ -89,7 +89,7 @@ class PackageExportTests(unittest.TestCase):
                         ],
                         weight_indicator=nt.RSI(nt.CANDIDATE, 14),
                         limit=10,
-                        deployment_percent=80,
+                        deployment_percent=nt.Value(80),
                     ),
                 )
             ],
@@ -130,11 +130,21 @@ class PackageExportTests(unittest.TestCase):
             pipeline=[],
             weight_indicator=nt.RSI(nt.CANDIDATE, 14),
             structure_templates=[spread],
-            total_budget={"type": "percent of portfolio", "amount": 60},
+            total_budget={"type": "percent of portfolio", "amount": nt.Value(60)},
             position_scope="portfolio",
         )
 
         self.assertEqual(action["structureTemplates"][0]["spreadType"], "vertical")
+        self.assertEqual(action["totalBudget"]["amount"], {"type": "Value", "value": 60})
+
+        weighted = nt.rebalance_option(
+            universe_config=nt.universe("SP500"), pipeline=[],
+            weight_indicator=nt.Value(1), structure_templates=[spread],
+            total_budget={"type": "percent of portfolio", "amount": nt.PoliticalPurchaseShare("P000197", "Option")},
+            sizing_mode="proportionalToWeight",
+        )
+        self.assertEqual(weighted["sizingMode"], "proportionalToWeight")
+        self.assertEqual(weighted["totalBudget"]["amount"]["memberId"], "P000197")
         self.assertEqual(
             action["structureTemplates"][0]["legs"][0]["expirationSelector"],
             {
