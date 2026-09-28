@@ -2360,6 +2360,44 @@ def Negative(
 
 __all__.append("Negative")
 
+def NewInsiderDisclosure(
+    owner_cik: Optional[str] = None,
+    issuer_cik: Optional[str] = None,
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner"] = "Any",
+    instrument: Literal["Equity", "Call", "Put"] = "Equity",
+    disclosure_action: Literal["Any", "Purchase", "Sale", "Award"] = "Any",
+) -> Indicator:
+    """NewInsiderDisclosure indicator.
+    owner_cik: Exact SEC reporting owner CIK. Omit for aggregate Form 4 activity.
+    issuer_cik: Optional company CIK; requires ownerCik.
+    role: The reporting owner's role.
+    instrument: Call and Put require ownerCik.
+    disclosure_action: Which newly public Form 4 action triggers a decision. Award requires ownerCik.
+    """
+    d: Dict[str, Any] = {"type": "NewInsiderDisclosure"}
+    if owner_cik is not None:
+        d["ownerCik"] = owner_cik
+    if issuer_cik is not None:
+        d["issuerCik"] = issuer_cik
+    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner"], "role")
+    d["instrument"] = _enum(instrument, ["Equity","Call","Put"], "instrument")
+    d["disclosureAction"] = _enum(disclosure_action, ["Any","Purchase","Sale","Award"], "disclosure_action")
+    return Indicator(d)
+
+__all__.append("NewInsiderDisclosure")
+
+def NewInstitutionalFiling(
+    manager: str,
+) -> Indicator:
+    """NewInstitutionalFiling indicator.
+    manager: Exact numeric SEC manager CIK. A new 13F accession, including an amendment, triggers one decision.
+    """
+    d: Dict[str, Any] = {"type": "NewInstitutionalFiling"}
+    d["manager"] = manager
+    return Indicator(d)
+
+__all__.append("NewInstitutionalFiling")
+
 def NewPoliticalDisclosure(
     member_id: str,
     instrument: Literal["Equity", "Option"],
