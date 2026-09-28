@@ -2360,6 +2360,24 @@ def Negative(
 
 __all__.append("Negative")
 
+def NewPoliticalDisclosure(
+    member_id: str,
+    instrument: Literal["Equity", "Option"],
+    disclosure_action: Literal["Any", "Purchase", "Sale"],
+) -> Indicator:
+    """NewPoliticalDisclosure indicator.
+    member_id: Exact Bioguide member ID, such as P000197.
+    instrument: Equity or option disclosures, never both for a public bot arm.
+    disclosure_action: Which newly public trade sides trigger a decision.
+    """
+    d: Dict[str, Any] = {"type": "NewPoliticalDisclosure"}
+    d["memberId"] = member_id
+    d["instrument"] = _enum(instrument, ["Equity","Option"], "instrument")
+    d["disclosureAction"] = _enum(disclosure_action, ["Any","Purchase","Sale"], "disclosure_action")
+    return Indicator(d)
+
+__all__.append("NewPoliticalDisclosure")
+
 def OnBalanceVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
     interval: Literal["Day", "Hour", "Minute"] = "Day",
