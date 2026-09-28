@@ -1828,21 +1828,30 @@ __all__.append("InitialValue")
 
 def InsiderTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
-    metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "DistinctBuyers"] = "NetValue",
-    role: Literal["Any", "Officer", "Director", "TenPercentOwner"] = "Any",
-    window_days: float = 90,
+    metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "AwardCount", "AcquisitionCount", "DistinctBuyers", "PurchaseSharePercent", "AcquisitionSharePercent"],
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner"],
+    window_days: float,
+    owner_cik: Optional[str] = None,
+    issuer_cik: Optional[str] = None,
+    instrument: Optional[Literal["Equity", "Call", "Put"]] = None,
 ) -> Indicator:
     """InsiderTrades indicator.
-    asset: Ticker name (ex. SPY, BTC)
-    metric: Dollar value, shares, trade counts, or distinct buying insiders
-    role: Only trades by an officer, director, or 10% owner, or any insider
-    window_days: Count trades whose filings became public within this many trailing days
+    asset: Pass CANDIDATE in a dynamic rebalance pipeline.
+    owner_cik: Exact nonzero SEC reporting owner CIK, up to 10 digits. Omit for aggregate activity.
+    issuer_cik: Restrict an exact owner to this company CIK; omit to follow them across companies.
+    instrument: Disclosed instrument; defaults to Equity. Call/Put, award and acquisition metrics, and budget shares require ownerCik. AwardCount is SEC code A issuer acquisitions, not cash purchases or vested-share proof. Its default Equity bucket includes unresolved restricted units. AcquisitionCount and AcquisitionSharePercent combine public code P purchases with code A issuer acquisitions. Shares use qualifying signal counts across all the owner's tickers.
     """
     d: Dict[str, Any] = {"type": "InsiderTrades"}
     _set_asset(d, "targetAsset", asset)
-    d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","DistinctBuyers"], "metric")
+    d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","AwardCount","AcquisitionCount","DistinctBuyers","PurchaseSharePercent","AcquisitionSharePercent"], "metric")
     d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner"], "role")
     d["windowDays"] = window_days
+    if owner_cik is not None:
+        d["ownerCik"] = owner_cik
+    if issuer_cik is not None:
+        d["issuerCik"] = issuer_cik
+    if instrument is not None:
+        d["instrument"] = _enum(instrument, ["Equity","Call","Put"], "instrument")
     return Indicator(d)
 
 __all__.append("InsiderTrades")
@@ -1850,20 +1859,23 @@ __all__.append("InsiderTrades")
 def InstitutionalHoldings(
     asset: Union[str, Dict[str, Any], _Candidate],
     manager: str,
-    metric: Literal["HolderCount", "TotalShares", "TotalValue", "ConcentrationTop5", "NetShareChange", "NetHolderChange", "NewHolders", "ClosedHolders"] = "HolderCount",
+    metric: Literal["HolderCount", "TotalShares", "TotalValue", "BookSharePercent", "ConcentrationTop5", "NetShareChange", "NetHolderChange", "NewHolders", "ClosedHolders"] = "HolderCount",
     window_days: float = 180,
+    instrument: Literal["Equity", "Call", "Put"] = "Equity",
 ) -> Indicator:
     """InstitutionalHoldings indicator.
     asset: Ticker name (ex. SPY, BTC)
     manager: Optional: a CIK such as 1067983, or part of a manager's name such as Renaissance Technologies. Leave empty for every manager. A CIK is exact; a name can match several firms
     metric: Managers holding, shares or value held, concentration, or the change since the previous quarter
     window_days: Read a disclosed period only if its filing became public within this many trailing days
+    instrument: Calls and puts require an exact manager CIK and its effective public book
     """
     d: Dict[str, Any] = {"type": "InstitutionalHoldings"}
     _set_asset(d, "targetAsset", asset)
     d["manager"] = manager
-    d["metric"] = _enum(metric, ["HolderCount","TotalShares","TotalValue","ConcentrationTop5","NetShareChange","NetHolderChange","NewHolders","ClosedHolders"], "metric")
+    d["metric"] = _enum(metric, ["HolderCount","TotalShares","TotalValue","BookSharePercent","ConcentrationTop5","NetShareChange","NetHolderChange","NewHolders","ClosedHolders"], "metric")
     d["windowDays"] = window_days
+    d["instrument"] = _enum(instrument, ["Equity","Call","Put"], "instrument")
     return Indicator(d)
 
 __all__.append("InstitutionalHoldings")
@@ -2347,6 +2359,24 @@ def Negative(
     return Indicator(d)
 
 __all__.append("Negative")
+
+def NewPoliticalDisclosure(
+    member_id: str,
+    instrument: Literal["Equity", "Option"],
+    disclosure_action: Literal["Any", "Purchase", "Sale"],
+) -> Indicator:
+    """NewPoliticalDisclosure indicator.
+    member_id: Exact Bioguide member ID, such as P000197.
+    instrument: Equity or option disclosures, never both for a public bot arm.
+    disclosure_action: Which newly public trade sides trigger a decision.
+    """
+    d: Dict[str, Any] = {"type": "NewPoliticalDisclosure"}
+    d["memberId"] = member_id
+    d["instrument"] = _enum(instrument, ["Equity","Option"], "instrument")
+    d["disclosureAction"] = _enum(disclosure_action, ["Any","Purchase","Sale"], "disclosure_action")
+    return Indicator(d)
+
+__all__.append("NewPoliticalDisclosure")
 
 def OnBalanceVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
