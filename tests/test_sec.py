@@ -270,6 +270,8 @@ class SecSdkTests(unittest.TestCase):
                 as_of="2026-08-28",
                 concepts=["Assets"],
                 dimensional="none",
+                filing_period_from="2025-01-01",
+                filing_period_to="2025-12-31",
             )
 
         self.assertEqual(
@@ -309,6 +311,8 @@ class SecSdkTests(unittest.TestCase):
                     "maxFilings": 4,
                     "concepts": ["Assets"],
                     "dimensional": "none",
+                    "filingPeriodFrom": "2025-01-01",
+                    "filingPeriodTo": "2025-12-31",
                 },
             ],
         )

@@ -172,6 +172,8 @@ def _run_payload(
             "as_of": "asOf",
             "period_end_from": "periodEndFrom",
             "period_end_to": "periodEndTo",
+            "filing_period_from": "filingPeriodFrom",
+            "filing_period_to": "filingPeriodTo",
             "max_filings": "maxFilings",
             "name_contains": "nameContains",
         }
@@ -394,6 +396,8 @@ def _notes_payload(
     as_of: str | None,
     period_end_from: str | None,
     period_end_to: str | None,
+    filing_period_from: str | None,
+    filing_period_to: str | None,
     forms: Sequence[str] | None,
     max_filings: int | None,
     limit: int | None,
@@ -402,6 +406,10 @@ def _notes_payload(
     normalized_to = _validated_as_of(period_end_to)
     if normalized_from is not None and normalized_to is not None and normalized_from > normalized_to:
         raise ValueError("period_end_from cannot follow period_end_to")
+    normalized_filing_from = _validated_as_of(filing_period_from)
+    normalized_filing_to = _validated_as_of(filing_period_to)
+    if normalized_filing_from is not None and normalized_filing_to is not None and normalized_filing_from > normalized_filing_to:
+        raise ValueError("filing_period_from cannot follow filing_period_to")
     normalized_forms = _validated_string_list(
         forms,
         field="forms",
@@ -414,6 +422,10 @@ def _notes_payload(
         payload["period_end_from"] = normalized_from
     if normalized_to is not None:
         payload["period_end_to"] = normalized_to
+    if normalized_filing_from is not None:
+        payload["filing_period_from"] = normalized_filing_from
+    if normalized_filing_to is not None:
+        payload["filing_period_to"] = normalized_filing_to
     if normalized_forms is not None:
         payload["forms"] = normalized_forms
     normalized_max_filings = _validated_positive_integer(
@@ -436,6 +448,8 @@ def fact_instances(
     concepts: Sequence[str] | None = None,
     period_end_from: str | None = None,
     period_end_to: str | None = None,
+    filing_period_from: str | None = None,
+    filing_period_to: str | None = None,
     forms: Sequence[str] | None = None,
     dimensional: DimensionalFilter = "all",
     max_filings: int | None = _MAX_FILINGS,
@@ -455,6 +469,8 @@ def fact_instances(
         as_of=as_of,
         period_end_from=period_end_from,
         period_end_to=period_end_to,
+        filing_period_from=filing_period_from,
+        filing_period_to=filing_period_to,
         forms=forms,
         max_filings=max_filings,
         limit=limit,
@@ -485,6 +501,8 @@ def filed_concepts(
     name_contains: str | None = None,
     period_end_from: str | None = None,
     period_end_to: str | None = None,
+    filing_period_from: str | None = None,
+    filing_period_to: str | None = None,
     forms: Sequence[str] | None = None,
     max_filings: int | None = 1,
     limit: int | None = None,
@@ -502,6 +520,8 @@ def filed_concepts(
         as_of=as_of,
         period_end_from=period_end_from,
         period_end_to=period_end_to,
+        filing_period_from=filing_period_from,
+        filing_period_to=filing_period_to,
         forms=forms,
         max_filings=max_filings,
         limit=limit,
@@ -527,6 +547,8 @@ def dimensioned_concepts(
     as_of: str,
     period_end_from: str | None = None,
     period_end_to: str | None = None,
+    filing_period_from: str | None = None,
+    filing_period_to: str | None = None,
     forms: Sequence[str] | None = None,
     max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
@@ -545,6 +567,8 @@ def dimensioned_concepts(
             as_of=as_of,
             period_end_from=period_end_from,
             period_end_to=period_end_to,
+            filing_period_from=filing_period_from,
+            filing_period_to=filing_period_to,
             forms=forms,
             max_filings=max_filings,
             limit=limit,
@@ -561,6 +585,8 @@ def business_breakdowns(
     concepts: Sequence[str],
     period_end_from: str | None = None,
     period_end_to: str | None = None,
+    filing_period_from: str | None = None,
+    filing_period_to: str | None = None,
     forms: Sequence[str] | None = None,
     max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
@@ -577,6 +603,8 @@ def business_breakdowns(
         as_of=as_of,
         period_end_from=period_end_from,
         period_end_to=period_end_to,
+        filing_period_from=filing_period_from,
+        filing_period_to=filing_period_to,
         forms=forms,
         max_filings=max_filings,
         limit=limit,
