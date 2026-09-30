@@ -617,6 +617,7 @@ def dynamic_rebalance(
     universe_config: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = None,
     deployment_percent: Optional[Indicator] = None,
+    reserve_option_budget: Optional[Dict[str, Any]] = None,
     per_name_allocation: Optional[Dict[str, Any]] = None,
     can_sell: Optional[Condition] = None,
     allow_shorts: Optional[bool] = None,
@@ -644,6 +645,10 @@ def dynamic_rebalance(
             "deploymentPercent": (
                 _indicator_dict(deployment_percent)
                 if deployment_percent is not None else None
+            ),
+            "reserveOptionBudget": (
+                _deployment_budget(reserve_option_budget)
+                if reserve_option_budget is not None else None
             ),
             "perNameAllocation": per_name_allocation,
             "canSell": (
@@ -834,13 +839,19 @@ def rebalance_option(
     limit: Optional[int] = None,
     total_budget: Optional[Dict[str, Any]] = None,
     per_name_allocation: Optional[Dict[str, Any]] = None,
-    sizing_mode: Optional[Literal["fixedPerName", "proportionalToWeight"]] = None,
+    sizing_mode: Optional[Literal["fixedPerName", "proportionalToWeight", "proportionalToWeightWholeContracts"]] = None,
     position_scope: Optional[str] = None,
     sleeves: Optional[Sequence[Dict[str, Any]]] = None,
     allocation_policy: Optional[Dict[str, Any]] = None,
     exposure_policy: Optional[Dict[str, Any]] = None,
+    renew_before_days: Optional[int] = None,
+    revisit_disclosed_targets: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    _enum(sizing_mode, ["fixedPerName", "proportionalToWeight"], "sizing_mode")
+    _enum(sizing_mode, ["fixedPerName", "proportionalToWeight", "proportionalToWeightWholeContracts"], "sizing_mode")
+    if renew_before_days is not None and (type(renew_before_days) is not int or not 1 <= renew_before_days <= 90):
+        raise ValueError("renew_before_days must be an integer from 1 to 90")
+    if revisit_disclosed_targets is not None and type(revisit_disclosed_targets) is not bool:
+        raise ValueError("revisit_disclosed_targets must be boolean")
     return _compact(
         {
             "type": "RebalanceOption",
@@ -859,6 +870,8 @@ def rebalance_option(
             "sleeves": list(sleeves) if sleeves is not None else None,
             "allocationPolicy": allocation_policy,
             "exposurePolicy": exposure_policy,
+            "renewBeforeDays": renew_before_days,
+            "revisitDisclosedTargets": revisit_disclosed_targets,
         }
     )
 
@@ -2416,6 +2429,14 @@ def NewPoliticalDisclosure(
 
 __all__.append("NewPoliticalDisclosure")
 
+def NewTradingWeek() -> Indicator:
+    """NewTradingWeek indicator.
+    """
+    d: Dict[str, Any] = {"type": "NewTradingWeek"}
+    return Indicator(d)
+
+__all__.append("NewTradingWeek")
+
 def OnBalanceVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
     interval: Literal["Day", "Hour", "Minute"] = "Day",
@@ -2745,16 +2766,19 @@ def PoliticalPurchaseShare(
     member_id: str,
     instrument: Literal["Equity", "Option"] = "Equity",
     amount_basis: Literal["LowerBound", "Midpoint", "UpperBound"] = "Midpoint",
+    purchase_scope: Literal["AllPurchases", "RemainingLots"] = "AllPurchases",
 ) -> Indicator:
     """PoliticalPurchaseShare indicator.
     member_id: Bioguide member id, for example P000197. The share uses the member's whole public purchase record.
     instrument: Which side of the equity/option purchase mix to return, as a percent from 0 to 100.
     amount_basis: Estimate for disclosed purchase ranges. Midpoint is the default.
+    purchase_scope: AllPurchases preserves historical purchase flow. RemainingLots uses surviving purchase costs across identifiable tickers; unknown partial quantities retain their original estimate. Neither is current market value.
     """
     d: Dict[str, Any] = {"type": "PoliticalPurchaseShare"}
     d["memberId"] = member_id
     d["instrument"] = _enum(instrument, ["Equity","Option"], "instrument")
     d["amountBasis"] = _enum(amount_basis, ["LowerBound","Midpoint","UpperBound"], "amount_basis")
+    d["purchaseScope"] = _enum(purchase_scope, ["AllPurchases","RemainingLots"], "purchase_scope")
     return Indicator(d)
 
 __all__.append("PoliticalPurchaseShare")
@@ -2762,7 +2786,7 @@ __all__.append("PoliticalPurchaseShare")
 def PoliticalTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
     filer: str,
-    metric: Literal["NetAmount", "BuyAmount", "SellAmount", "BuyCount", "SellCount", "DistinctBuyers", "Held"] = "BuyAmount",
+    metric: Literal["NetAmount", "BuyAmount", "RemainingBuyAmount", "SellAmount", "BuyCount", "SellCount", "DistinctBuyers", "Held"] = "BuyAmount",
     window_days: float = 90,
     amount_basis: Literal["LowerBound", "Midpoint", "UpperBound"] = "LowerBound",
     instrument: Literal["Equity", "Option", "All"] = "Equity",
@@ -2772,7 +2796,7 @@ def PoliticalTrades(
     """PoliticalTrades indicator.
     asset: Pass CANDIDATE inside a rebalance pipeline to bind each stock.
     filer: Member full or last name. Pass an empty string for all members.
-    metric: Amount-range aggregate, event count, distinct purchasing members, or Held: 1 while the member still holds the asset (latest public disclosure is a purchase or partial sale), ignoring the window.
+    metric: Amount-range aggregate, event count, distinct purchasing members, RemainingBuyAmount (surviving original purchase amounts; ignores window; unknown partial quantities retained), or Held: 1 while the member still holds the asset (latest public disclosure is a purchase or partial sale), ignoring the window.
     window_days: Trailing calendar days measured from when each event became public.
     amount_basis: Range endpoint used by amount metrics; LowerBound is conservative.
     instrument: Equity excludes confirmed option disclosures; Option selects them explicitly.
@@ -2782,7 +2806,7 @@ def PoliticalTrades(
     d: Dict[str, Any] = {"type": "PoliticalTrades"}
     _set_asset(d, "targetAsset", asset)
     d["filer"] = filer
-    d["metric"] = _enum(metric, ["NetAmount","BuyAmount","SellAmount","BuyCount","SellCount","DistinctBuyers","Held"], "metric")
+    d["metric"] = _enum(metric, ["NetAmount","BuyAmount","RemainingBuyAmount","SellAmount","BuyCount","SellCount","DistinctBuyers","Held"], "metric")
     d["windowDays"] = window_days
     d["amountBasis"] = _enum(amount_basis, ["LowerBound","Midpoint","UpperBound"], "amount_basis")
     d["instrument"] = _enum(instrument, ["Equity","Option","All"], "instrument")
