@@ -167,6 +167,8 @@ For daily market prices, prefer `nt.lake.query("sec_daily_ohlc", ...)` or
 `nt.tigris.read_ohlc(...)`. `daily_ohlc` is a legacy/vendor table and may lag
 the canonical daily series.
 
+`client.list_orders(portfolio_id=..., statuses=..., page=..., limit=...)` lists owned orders with a read key. `client.cancel_orders(order_ids, idempotency_key=..., portfolio_id=...)` cancels explicit IDs with a trade key. Inspect both `canceled` and `rejected`, and reuse the same key/payload for retries. Defaults and status gates are documented in README.
+
 ## Recipes
 
 <details open>

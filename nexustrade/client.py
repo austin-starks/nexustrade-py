@@ -1769,6 +1769,63 @@ class NexusTradeClient:
             idempotency_key=idempotency_key,
         )
 
+    def list_orders(
+        self,
+        *,
+        portfolio_id: str | None = None,
+        statuses: Sequence[str] | None = None,
+        page: int | None = None,
+        limit: int | None = None,
+        include_rebalance_orders: bool | None = None,
+    ) -> dict[str, Any]:
+        """List owned orders; default statuses are Accepted and Pending User Approval.
+
+        Pages are 1-based. Inspect total, totalPages and truncated for pagination.
+        """
+        if statuses is not None and (isinstance(statuses, str) or not statuses):
+            raise ValueError("statuses must be a non-empty sequence of strings.")
+        query: dict[str, str] = {}
+        if portfolio_id is not None:
+            query["portfolioId"] = portfolio_id
+        if statuses is not None:
+            query["statuses"] = ",".join(statuses)
+        if page is not None:
+            query["page"] = str(page)
+        if limit is not None:
+            query["limit"] = str(limit)
+        if include_rebalance_orders is not None:
+            query["includeRebalanceOrders"] = (
+                "true" if include_rebalance_orders else "false"
+            )
+        suffix = f"?{urllib.parse.urlencode(query)}" if query else ""
+        return self._transport.request("GET", f"orders{suffix}")
+
+    def cancel_orders(
+        self,
+        order_ids: Sequence[str],
+        *,
+        idempotency_key: str,
+        portfolio_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Cancel explicit IDs; inspect canceled and rejected. Live cancellation reaches the broker."""
+        if (
+            isinstance(order_ids, (str, bytes))
+            or not isinstance(order_ids, Sequence)
+            or not order_ids
+            or any(not isinstance(i, str) or not i.strip() for i in order_ids)
+        ):
+            raise ValueError(
+                "order_ids must be a non-empty sequence of non-empty strings."
+            )
+        if len(order_ids) > 50:
+            raise ValueError("at most 50 orders may be canceled per request.")
+        body: dict[str, Any] = {"orderIds": list(order_ids)}
+        if portfolio_id is not None:
+            body["portfolioId"] = portfolio_id
+        return self._transport.request(
+            "POST", "orders/cancel", body=body, idempotency_key=idempotency_key
+        )
+
     # sandbox-prune:end trading-surface
 
     def create_backtests(
