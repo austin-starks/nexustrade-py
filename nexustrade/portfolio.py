@@ -1842,7 +1842,7 @@ __all__.append("InitialValue")
 def InsiderTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
     metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "AwardCount", "AcquisitionCount", "DistinctBuyers", "PurchaseSharePercent", "AcquisitionSharePercent"],
-    role: Literal["Any", "Officer", "Director", "TenPercentOwner"],
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"],
     window_days: float,
     owner_cik: Optional[str] = None,
     issuer_cik: Optional[str] = None,
@@ -1850,14 +1850,14 @@ def InsiderTrades(
 ) -> Indicator:
     """InsiderTrades indicator.
     asset: Pass CANDIDATE in a dynamic rebalance pipeline.
-    owner_cik: Exact nonzero SEC reporting owner CIK, up to 10 digits. Omit for aggregate activity.
-    issuer_cik: Restrict an exact owner to this company CIK; omit to follow them across companies.
-    instrument: Disclosed instrument; defaults to Equity. Call/Put, award and acquisition metrics, and budget shares require ownerCik. AwardCount is SEC code A issuer acquisitions, not cash purchases or vested-share proof. Its default Equity bucket includes unresolved restricted units. AcquisitionCount and AcquisitionSharePercent combine public code P purchases with code A issuer acquisitions. Shares use qualifying signal counts across all the owner's tickers.
+    owner_cik: Exact nonzero SEC reporting owner CIK, up to 10 digits. Omit for a whole company (with issuerCik) or aggregate activity.
+    issuer_cik: Company CIK. With ownerCik, restricts that owner to this company. Alone, every reporting owner's events at this company, a joint filing counted once.
+    instrument: Disclosed instrument; defaults to Equity. Call/Put, award and acquisition metrics, and budget shares require ownerCik or issuerCik. AwardCount is SEC code A issuer acquisitions, not cash purchases or vested-share proof. Its default Equity bucket includes unresolved restricted units. AcquisitionCount and AcquisitionSharePercent combine public code P purchases with code A issuer acquisitions. Shares use qualifying signal counts across all the owner's tickers, or all the company's tickers under issuerCik alone.
     """
     d: Dict[str, Any] = {"type": "InsiderTrades"}
     _set_asset(d, "targetAsset", asset)
     d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","AwardCount","AcquisitionCount","DistinctBuyers","PurchaseSharePercent","AcquisitionSharePercent"], "metric")
-    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner"], "role")
+    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector"], "role")
     d["windowDays"] = window_days
     if owner_cik is not None:
         d["ownerCik"] = owner_cik
@@ -2376,23 +2376,23 @@ __all__.append("Negative")
 def NewInsiderDisclosure(
     owner_cik: Optional[str] = None,
     issuer_cik: Optional[str] = None,
-    role: Literal["Any", "Officer", "Director", "TenPercentOwner"] = "Any",
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"] = "Any",
     instrument: Literal["Equity", "Call", "Put"] = "Equity",
     disclosure_action: Literal["Any", "Purchase", "Sale", "Award"] = "Any",
 ) -> Indicator:
     """NewInsiderDisclosure indicator.
-    owner_cik: Exact SEC reporting owner CIK. Omit for aggregate Form 4 activity.
-    issuer_cik: Optional company CIK; requires ownerCik.
+    owner_cik: Exact SEC reporting owner CIK. Omit for a whole company (with issuerCik) or aggregate Form 4 activity.
+    issuer_cik: Company CIK. With ownerCik, restricts that owner; alone, every reporting owner at this company, a joint filing once.
     role: The reporting owner's role.
-    instrument: Call and Put require ownerCik.
-    disclosure_action: Which newly public Form 4 action triggers a decision. Award requires ownerCik.
+    instrument: Call and Put require ownerCik or issuerCik.
+    disclosure_action: Which newly public Form 4 action triggers a decision. Award requires ownerCik or issuerCik.
     """
     d: Dict[str, Any] = {"type": "NewInsiderDisclosure"}
     if owner_cik is not None:
         d["ownerCik"] = owner_cik
     if issuer_cik is not None:
         d["issuerCik"] = issuer_cik
-    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner"], "role")
+    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector"], "role")
     d["instrument"] = _enum(instrument, ["Equity","Call","Put"], "instrument")
     d["disclosureAction"] = _enum(disclosure_action, ["Any","Purchase","Sale","Award"], "disclosure_action")
     return Indicator(d)
