@@ -73,6 +73,20 @@ def _invoke(client: NexusTradeClient, case: dict[str, Any]) -> Any:
     method = getattr(client, case["method"])
     # `args` holds any positional arguments that precede `input`.
     leading = list(case.get("args") or [])
+    if case["method"] == "list_orders":
+        names = {
+            "portfolioId": "portfolio_id",
+            "includeRebalanceOrders": "include_rebalance_orders",
+        }
+        return method(
+            **{names.get(key, key): value for key, value in case["input"].items()}
+        )
+    if case["method"] == "cancel_orders":
+        return method(
+            case["input"],
+            idempotency_key=case["idempotency_key"],
+            **case.get("options", {}),
+        )
     if case["method"] in NO_ARG_METHODS:
         return method()
     if case["method"] in WAIT_METHODS:

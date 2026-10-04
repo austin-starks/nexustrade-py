@@ -571,6 +571,51 @@ approval. The brokerage boundary refuses an unapproved live order regardless of
 what any caller asks for, so this is a property of the system rather than a
 promise made by this method. At most 50 orders per request.
 
+Listing requires a `read` key; cancellation requires a `trade` key. Both
+require a registered account and are unavailable inside compute sandboxes.
+
+```python
+page = client.list_orders(
+    portfolio_id=portfolio_id,
+    statuses=["Accepted", "Pending User Approval"],
+    page=1,
+    limit=50,
+)
+print(page["orders"], page["totalPages"])
+
+# Cancel only explicit IDs you selected from the listing.
+cancellation = client.cancel_orders(
+    ["ORDER_ID"],
+    portfolio_id=portfolio_id,
+    idempotency_key="cancel-order-v1",
+)
+print(cancellation["canceled"], cancellation["rejected"])
+```
+
+Listing defaults to `Accepted` and `Pending User Approval`. Request `Pending`,
+`Partially Filled`, `Filled`, or `Canceled` explicitly to inspect other states.
+Pages are 1-based, with a default limit of 50 and a maximum of 100. The response
+includes `orders`, `total`, `returned`, `page`, `limit`, `totalPages`, `truncated`,
+and `ignoredStatuses`; unknown statuses are reported there when valid statuses
+remain, and a wholly invalid filter raises an error. Set
+`include_rebalance_orders=True`
+for an additional page of pending rebalance actions. Their IDs are separate from
+order IDs and cannot be passed to cancellation.
+
+Cancellation accepts at most 50 IDs and returns `canceled` and `rejected` arrays.
+Each success includes `orderId`, `mode` (`db`, `broker`, or `already_canceled`),
+and `canceledOrderIds`, including sibling legs canceled together. Each rejection
+includes `orderId` and `reason`. Inspect both arrays: HTTP success does not mean
+every order was canceled. The optional portfolio ID guards against canceling an
+order from another portfolio. Reuse the same idempotency key and identical
+payload when retrying; an already canceled order returns `already_canceled`.
+
+The same cancellation rules as MCP/REST apply: `Accepted` and
+`Pending User Approval` orders can be canceled; `Pending`, `Partially Filled`,
+and `Filled` orders are rejected. Rebalance children must be managed through
+their parent action. Live orders with a broker ID invoke broker cancellation.
+Creation still stages live orders for human approval.
+
 ## Your own data
 
 A custom data source is a time series you own — sentiment counts, a proprietary
@@ -923,6 +968,8 @@ is missing here, so this list cannot drift from the code.
 | `get_brokerage(brokerage)`                               | Whether one brokerage is linked                      |
 | `connect_brokerage(brokerage, wait=…)`                   | Print the connect URL and wait for the link          |
 | `create_orders(portfolio_id, orders, idempotency_key=…)` | Stage orders; live ones need approval                |
+| `list_orders(portfolio_id=…, statuses=…, page=…, limit=…)` | List owned orders by portfolio/status, with pagination |
+| `cancel_orders(order_ids, idempotency_key=…, portfolio_id=…)` | Cancel explicit IDs with a result for each |
 
 **Portfolios**
 

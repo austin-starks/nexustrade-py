@@ -1422,6 +1422,292 @@
         "kind": "lake_ask",
         "status": "running"
       }
+    },
+    {
+      "name": "list_orders defaults to an unfiltered owner-scoped GET",
+      "method": "list_orders",
+      "input": {},
+      "responses": [
+        {
+          "orders": [],
+          "total": 0
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "orders",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "orders": [],
+        "total": 0
+      }
+    },
+    {
+      "name": "list_orders preserves filters and pagination metadata",
+      "method": "list_orders",
+      "input": {
+        "portfolioId": "p-1",
+        "statuses": [
+          "Partially Filled",
+          "Filled"
+        ],
+        "page": 2,
+        "limit": 1,
+        "includeRebalanceOrders": false
+      },
+      "responses": [
+        {
+          "orders": [
+            {
+              "orderId": "o-1",
+              "status": "Partially Filled"
+            }
+          ],
+          "total": 3,
+          "returned": 1,
+          "page": 2,
+          "limit": 1,
+          "totalPages": 3,
+          "truncated": true,
+          "ignoredStatuses": []
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "orders?portfolioId=p-1&statuses=Partially+Filled%2CFilled&page=2&limit=1&includeRebalanceOrders=false",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "orders": [
+          {
+            "orderId": "o-1",
+            "status": "Partially Filled"
+          }
+        ],
+        "total": 3,
+        "returned": 1,
+        "page": 2,
+        "limit": 1,
+        "totalPages": 3,
+        "truncated": true,
+        "ignoredStatuses": []
+      }
+    },
+    {
+      "name": "cancel_orders preserves mixed success and terminal rejection",
+      "method": "cancel_orders",
+      "input": [
+        "o-1",
+        "filled"
+      ],
+      "idempotency_key": "cancel-v1",
+      "responses": [
+        {
+          "canceled": [
+            {
+              "orderId": "o-1",
+              "mode": "already_canceled",
+              "canceledOrderIds": [
+                "o-1"
+              ]
+            }
+          ],
+          "rejected": [
+            {
+              "orderId": "filled",
+              "reason": "Order cannot be cancelled"
+            }
+          ]
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "orders/cancel",
+          "body": {
+            "orderIds": [
+              "o-1",
+              "filled"
+            ]
+          },
+          "idempotency_key": "cancel-v1"
+        }
+      ],
+      "expected_result": {
+        "canceled": [
+          {
+            "orderId": "o-1",
+            "mode": "already_canceled",
+            "canceledOrderIds": [
+              "o-1"
+            ]
+          }
+        ],
+        "rejected": [
+          {
+            "orderId": "filled",
+            "reason": "Order cannot be cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancel_orders rejects an empty selection before a request",
+      "method": "cancel_orders",
+      "input": [],
+      "idempotency_key": "cancel-v1",
+      "responses": [],
+      "expected_calls": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "non-empty"
+      }
+    },
+    {
+      "name": "cancel_orders rejects oversized selections before a request",
+      "method": "cancel_orders",
+      "input": [
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o",
+        "o"
+      ],
+      "idempotency_key": "cancel-v1",
+      "responses": [],
+      "expected_calls": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "at most 50"
+      }
+    },
+    {
+      "name": "list_orders rejects empty statuses before a request",
+      "method": "list_orders",
+      "input": {
+        "statuses": []
+      },
+      "responses": [],
+      "expected_calls": [],
+      "expected_error": {
+        "kind": "value_error",
+        "message_contains": "non-empty"
+      }
+    },
+    {
+      "name": "cancel_orders sends the optional portfolio guard",
+      "method": "cancel_orders",
+      "input": [
+        "o-1",
+        "filled"
+      ],
+      "idempotency_key": "cancel-v1",
+      "responses": [
+        {
+          "canceled": [
+            {
+              "orderId": "o-1",
+              "mode": "already_canceled",
+              "canceledOrderIds": [
+                "o-1"
+              ]
+            }
+          ],
+          "rejected": [
+            {
+              "orderId": "filled",
+              "reason": "Order cannot be cancelled"
+            }
+          ]
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "POST",
+          "path": "orders/cancel",
+          "body": {
+            "orderIds": [
+              "o-1",
+              "filled"
+            ],
+            "portfolioId": "507f1f77bcf86cd799439011"
+          },
+          "idempotency_key": "cancel-v1"
+        }
+      ],
+      "expected_result": {
+        "canceled": [
+          {
+            "orderId": "o-1",
+            "mode": "already_canceled",
+            "canceledOrderIds": [
+              "o-1"
+            ]
+          }
+        ],
+        "rejected": [
+          {
+            "orderId": "filled",
+            "reason": "Order cannot be cancelled"
+          }
+        ]
+      },
+      "options": {
+        "portfolio_id": "507f1f77bcf86cd799439011"
+      }
     }
   ]
 }
