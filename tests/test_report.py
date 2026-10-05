@@ -7,6 +7,51 @@ from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def test_malformed_comparison_never_overwrites_a_valid_report(self):
+        model = {'left': 12, 'right': 12, 'provenance': {'sourceIds': ['sec:one']}}
+        def payload():
+            return {
+                'left': report.ref('left', provenance_path=('provenance',)),
+                'right': report.ref('right', provenance_path=('provenance',)),
+                'reportEvidence': [{'id': 'conclusion', 'paragraphs': [['Values reconcile.']]}],
+                'validationChecks': [{
+                    'id': 'comparison', 'kind': 'reconciliation', 'evidenceId': 'conclusion',
+                    'left': {'label': 'Calculated', 'inputPath': ['left']},
+                    'right': {'label': 'Reported', 'inputPath': ['right']},
+                }],
+            }
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'report_inputs.json'
+            def write(value):
+                report.write_inputs(value, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+            write(payload())
+            saved = target.read_bytes()
+            for field in ('id', 'evidenceId', 'left', 'right'):
+                with self.subTest(field=field):
+                    value = payload()
+                    if field in ('left', 'right'):
+                        value['validationChecks'][0][field].pop('label')
+                        expected = field + r'\.label'
+                    else:
+                        value['validationChecks'][0].pop(field)
+                        expected = field
+                    with self.assertRaisesRegex(ValueError, expected):
+                        write(value)
+                    self.assertEqual(target.read_bytes(), saved)
+            value = payload()
+            value['validationChecks'][0]['evidenceId'] = 'not-delivered'
+            with self.assertRaisesRegex(ValueError, 'must name delivered reportEvidence'):
+                write(value)
+            value = payload()
+            value['validationChecks'].append(dict(value['validationChecks'][0]))
+            with self.assertRaisesRegex(ValueError, 'duplicates comparison'):
+                write(value)
+            model['provenance']['sourceIds'] = ['st1.sealed-authentication-receipt']
+            with self.assertRaisesRegex(ValueError, 'sourceLineageReceipt as a source ID'):
+                write(payload())
+            self.assertEqual(target.read_bytes(), saved)
+
     def test_flat_report_table_cells_keep_exact_model_reference_paths(self):
         model = {
             'case': {'value': 251.08, 'provenance': {'sourceIds': ['lake:filing']}},
@@ -371,7 +416,9 @@ class ReportWriteTests(unittest.TestCase):
         payload = {
             'left': report.ref('left', provenance_path=('provenance',)),
             'right': report.ref('right', provenance_path=('provenance',)),
+            'reportEvidence': [{'id': 'comparison-conclusion', 'paragraphs': [['Values reconcile.']]}],
             'validationChecks': [{'id': 'comparison', 'kind': 'independent',
+                                  'evidenceId': 'comparison-conclusion',
                                   'left': {'label': 'Left', 'inputPath': ['left']},
                                   'right': {'label': 'Right', 'inputPath': ['right']}}],
         }

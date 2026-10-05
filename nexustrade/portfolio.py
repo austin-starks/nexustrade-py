@@ -1057,9 +1057,12 @@ def portfolio(
     supports_fractional_shares: Optional[bool] = None,
     supports_crypto: Optional[bool] = None,
     alerts_enabled: Optional[bool] = None,
+    dividend_policy: Optional[Literal["cash", "reinvest"]] = None,
     policy: Optional[Dict[str, Any]] = None,
 ) -> Portfolio:
-    """policy takes only {"stockEligibility": {...}} (market-cap bounds,
+    """dividend_policy: "cash" (default when omitted) keeps dividends as cash;
+    "reinvest" buys more of the paying stock on each pay date.
+    policy takes only {"stockEligibility": {...}} (market-cap bounds,
     industryFilter, missingMarketCapBehavior, shareClassBehavior). Automated
     trading is never authored; only the owner enables it in the NexusTrade UI.
     """
@@ -1075,6 +1078,7 @@ def portfolio(
                 "supportsFractionalShares": supports_fractional_shares,
                 "supportsCrypto": supports_crypto,
                 "alertsEnabled": alerts_enabled,
+                "dividendPolicy": dividend_policy,
                 "policy": policy,
             }
         )
@@ -3266,6 +3270,7 @@ def backtest(
     initial_value: Optional[float] = None,
     generate_events: Optional[bool] = None,
     fee_config: Optional[FeeConfig] = None,
+    dividend_policy: Optional[Literal["cash", "reinvest"]] = None,
 ) -> Dict[str, Any]:
     """Submit a backtest. Returns a handle; results are read after it completes.
     start_date: Backtest start date (ISO format, e.g. 2024-01-01). For interval=Minute, default first-look is the last 90 inclusive calendar days and the selected range plus minute-indicator warmup cannot exceed 730 days of minute data. Do not use 2010-01-01 on Minute.
@@ -3275,6 +3280,7 @@ def backtest(
     initial_value: Starting portfolio value (default 10000) Range 1..inf.
     generate_events: Generate detailed event data (signals, orders, audits) during backtest. Costs 5x research tokens. Events are Mongo hot-store traces retained for 3 days. Use query_backtest_events to explore them while retained.
     fee_config: Optional fee contract keyed by AssetTypeEnum (Stock/Cryptocurrency/Option) with {amount, type: percent|dollars}. Omit for shared defaults (Option $0.65/contract). For replay of an optimizer/walk-forward study, pass that study's persisted feeConfig. Option fill slippage (OptionSlippageFraction) is not set here — engine default 0.5 applies.
+    dividend_policy: Overrides the portfolio's dividend policy for this run only. Omit to use the portfolio's own setting (cash unless it was set to reinvest). "reinvest" buys more of the paying stock on each pay date, which is what a buy-and-hold comparison against the SPY total-return baseline needs.
     """
     args = {
         "start_date": start_date,
@@ -3284,6 +3290,7 @@ def backtest(
         "initial_value": initial_value,
         "generate_events": generate_events,
         "fee_config": fee_config,
+        "dividend_policy": dividend_policy,
     }
     return {
         "tool": "backtest_portfolio",
