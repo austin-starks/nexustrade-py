@@ -498,9 +498,26 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
             path = _validation_input_path(reference.get("inputPath"))
             if path is not None:
                 by_path.setdefault(path, []).append(reference)
+    evidence_entries = inputs.get("reportEvidence")
+    known_evidence = {
+        evidence["id"].strip()
+        for evidence in (evidence_entries if isinstance(evidence_entries, list) else [])
+        if isinstance(evidence, Mapping) and isinstance(evidence.get("id"), str)
+        and evidence["id"].strip()
+    }
+    seen_ids: set[str] = set()
     for index, check in enumerate(checks):
         if not isinstance(check, Mapping):
             raise ValueError(f"validationChecks[{index}] must be an object")
+        check_id = check.get("id")
+        if not isinstance(check_id, str) or not check_id.strip():
+            raise ValueError(f"validationChecks[{index}].id must be a non-empty string")
+        if check_id.strip() in seen_ids:
+            raise ValueError(f"validationChecks[{index}].id duplicates {check_id.strip()}")
+        seen_ids.add(check_id.strip())
+        evidence_id = check.get("evidenceId")
+        if not isinstance(evidence_id, str) or evidence_id.strip() not in known_evidence:
+            raise ValueError(f"validationChecks[{index}].evidenceId must name delivered reportEvidence")
         kind = check.get("kind")
         if kind not in ("independent", "reconciliation"):
             raise ValueError(f"validationChecks[{index}].kind must be independent or reconciliation")
@@ -508,6 +525,9 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
         for side_name in ("left", "right"):
             side_name_path = f"validationChecks[{index}].{side_name}"
             side = check.get(side_name)
+            label = side.get("label") if isinstance(side, Mapping) else None
+            if not isinstance(label, str) or not label.strip():
+                raise ValueError(f"{side_name_path}.label must be a non-empty string")
             path = _validation_input_path(side.get("inputPath")) if isinstance(side, Mapping) else None
             if path is None:
                 raise ValueError(f"{side_name_path}.inputPath must be a non-empty report.ref path")
@@ -529,6 +549,11 @@ def _validate_validation_references(inputs: Mapping[str, Any]) -> None:
                     "provenance.sourceIds as a non-empty list of source IDs"
                 )
             side_sources[side_name] = {source_id.strip() for source_id in source_ids}
+            if any(source_id.startswith("st1.") for source_id in side_sources[side_name]):
+                raise ValueError(
+                    f"{side_name_path}.inputPath uses an opaque sourceLineageReceipt as a source ID; "
+                    "use the supporting current-session host result's source_id in provenance.sourceIds"
+                )
         if kind == "independent" and side_sources["left"] & side_sources["right"]:
             raise ValueError(
                 f"validationChecks[{index}] reuses a declared source on both sides; "
