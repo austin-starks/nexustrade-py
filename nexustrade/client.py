@@ -2268,6 +2268,7 @@ class NexusTradeClient:
             "initial_value": "initialValue",
             "generate_events": "generateEvents",
             "fee_config": "feeConfig",
+            "dividend_policy": "dividendPolicy",
         }
         normalized: dict[str, Any] = {"portfolio": dict(portfolio)}
         for source, target in mapping.items():

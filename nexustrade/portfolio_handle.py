@@ -263,9 +263,14 @@ class Portfolio(dict):
         initial_value: Optional[float] = None,
         generate_events: Optional[bool] = None,
         fee_config: Optional[Mapping[str, Any]] = None,
+        dividend_policy: Optional[str] = None,
         client: Any = None,
     ) -> dict[str, Any]:
-        """Submit a backtest. Uses ``portfolioId`` once saved; otherwise sends the body."""
+        """Submit a backtest. Uses ``portfolioId`` once saved; otherwise sends the body.
+
+        ``dividend_policy`` ("cash" or "reinvest") overrides the portfolio's own
+        setting for this run only.
+        """
         resolved = self._resolve_client(client)
         if self.id:
             body: dict[str, Any] = {
@@ -289,4 +294,6 @@ class Portfolio(dict):
             body["generateEvents"] = generate_events
         if fee_config is not None:
             body["feeConfig"] = dict(fee_config)
+        if dividend_policy is not None:
+            body["dividendPolicy"] = dividend_policy
         return resolved.create_backtest(body, idempotency_key=idempotency_key)
