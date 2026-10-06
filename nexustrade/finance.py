@@ -523,6 +523,82 @@ def capitalize_operating_expense(
     }
 
 
+def financing_cash_period(
+    *, opening_cash: Number, fcff: Number, after_tax_interest: Number,
+    preferred_dividends: Number, minority_distributions: Number,
+    nonoperating_cash_income: Number, net_borrowing: Number,
+    equity_issue_proceeds: Number, buyback_cash: Number,
+    claim_redemptions: Number, common_distributions: Number,
+    investment_purchases: Number, investment_sales: Number,
+) -> dict[str, Any]:
+    """Reconcile a funded period from unlevered FCFF to closing cash.
+
+    Every input is explicit and in the same currency/unit/period. Signed FCFF,
+    net borrowing and nonoperating income are allowed; other amounts are cash
+    magnitudes. Noncash conversions/mark changes are NOT cash proceeds. This
+    checks funding, not distribution eligibility, forecast validity or capital
+    classification. Split periods at events if their timing matters.
+    """
+    opening = _finite("opening_cash", opening_cash)
+    flows = {
+        "fcff": _finite("fcff", fcff),
+        "after_tax_interest": _finite("after_tax_interest", after_tax_interest),
+        "preferred_dividends": _finite("preferred_dividends", preferred_dividends),
+        "minority_distributions": _finite("minority_distributions", minority_distributions),
+        "nonoperating_cash_income": _finite("nonoperating_cash_income", nonoperating_cash_income),
+        "net_borrowing": _finite("net_borrowing", net_borrowing),
+        "equity_issue_proceeds": _finite("equity_issue_proceeds", equity_issue_proceeds),
+        "buyback_cash": _finite("buyback_cash", buyback_cash),
+        "claim_redemptions": _finite("claim_redemptions", claim_redemptions),
+        "common_distributions": _finite("common_distributions", common_distributions),
+        "investment_purchases": _finite("investment_purchases", investment_purchases),
+        "investment_sales": _finite("investment_sales", investment_sales),
+    }
+    if opening < 0 or any(v < 0 for k, v in flows.items()
+                          if k not in ("fcff", "net_borrowing", "nonoperating_cash_income")):
+        raise ValueError("Opening cash and cash payment/proceeds magnitudes must be nonnegative")
+    receipts = sum(flows[k] for k in ("fcff", "nonoperating_cash_income", "net_borrowing",
+                                     "equity_issue_proceeds", "investment_sales"))
+    payments = sum(flows[k] for k in ("after_tax_interest", "preferred_dividends",
+        "minority_distributions", "buyback_cash", "claim_redemptions",
+        "common_distributions", "investment_purchases"))
+    net_cash = receipts - payments
+    closing = opening + net_cash
+    if not math.isfinite(closing):
+        raise ValueError("Cash reconciliation overflow")
+    if closing < 0:
+        raise ValueError(f"Unfunded cash deficit {abs(closing):.12g}; specify financing or revise the scenario")
+    return {"opening_cash": opening, "flows": flows, "net_cash": net_cash,
+            "closing_cash": closing}
+
+
+def terminal_investment_transition(
+    *, final_forecast_nopat: Number, final_forecast_fcff: Number,
+    discount_rate: Number, perpetual_growth_rate: Number,
+    return_on_new_invested_capital: Number,
+) -> dict[str, float]:
+    """Expose the explicit-to-terminal investment transition, without judging it.
+
+    A changing rate may be justified. The caller must support the transition,
+    fade and sensitivities; algebra alone cannot establish that economics.
+    For nonpositive final NOPAT, use an explicit recovery model instead.
+    """
+    nopat = _finite("final_forecast_nopat", final_forecast_nopat)
+    fcff = _finite("final_forecast_fcff", final_forecast_fcff)
+    if nopat <= 0:
+        raise ValueError("Transition rate requires positive final NOPAT; model recovery explicitly")
+    terminal = gordon_growth_terminal_value_from_nopat(
+        nopat, discount_rate, perpetual_growth_rate, return_on_new_invested_capital)
+    explicit_rate = (nopat - fcff) / nopat
+    return {**terminal, "final_forecast_nopat": nopat, "final_forecast_fcff": fcff,
+            "final_net_investment": nopat - fcff,
+            "final_reinvestment_rate": explicit_rate,
+            "reinvestment_rate_change": terminal["reinvestment_rate"] - explicit_rate,
+            "fcff_change": terminal["terminal_fcff"] - fcff,
+            "terminal_fcff_at_final_reinvestment_rate":
+                terminal["next_period_nopat"] * (1 - explicit_rate)}
+
+
 def gordon_growth_terminal_value_from_nopat(
     final_forecast_nopat: Number,
     discount_rate: Number,

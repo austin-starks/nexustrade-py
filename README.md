@@ -52,6 +52,18 @@ including rendered fallback responses. These preserve the returned Markdown
 verbatim in `visible_text` and retain `content_type`; publisher metadata remains
 unset. Rendered text is evidence from that fetch response, not original HTML.
 
+`extract_web_pages` supplies the complete prepared visible body, including notes
+outside `main`/`article`, within explicit character limits (default 200,000 per
+document and request). It never splices a page's beginning and end. Oversized
+sources return an error before a model call: inspect the retained source with
+`prepare_web_pages`, then explicitly raise affordable limits or select exact
+contiguous passages for narrower extraction. Successful results include
+host-owned `coverage` alongside `document`/`error`. This describes supplied text,
+not proof that the model correctly extracted every fact. Scripts, hidden text and
+page chrome are excluded by the visible-text projection; original fetched bytes
+remain the authority for inspecting those elements. A size error or a partial
+passage cannot support a claim that a disclosure is absent from the whole source.
+
 For document-derived computation, keep extraction and interpretation separate.
 `extract_rows`/`extract_pdfs` preserve source observations. A corpus can recover
 document-level facts and logical rows in one schema-bound pass:

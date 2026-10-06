@@ -205,7 +205,8 @@ class WebPageExtractionTests(unittest.TestCase):
         self.assertIn("Reservoir update", page["visible_text"])
         self.assertIn("Storage reached 81 percent", page["visible_text"])
         self.assertNotIn("Global account links", page["visible_text"])
-        self.assertNotIn("Cookie preferences", page["visible_text"])
+        # Visible text outside main/article may contain relevant filing notes.
+        self.assertIn("Cookie preferences", page["visible_text"])
 
     def test_hidden_metadata_does_not_displace_table_from_text_budget(self) -> None:
         html = (
@@ -223,12 +224,45 @@ class WebPageExtractionTests(unittest.TestCase):
                 {"capacity": html},
                 instructions="Extract the reported reservoir capacity.",
                 schema=SCHEMA,
-                max_chars_per_document=400,
+                max_chars_per_document=10_000,
                 max_workers=1,
             )
         page = json.loads(chat.call_args.kwargs["prompt"])["documents"][0]
         self.assertIn("North 81 percent", page["visible_text"])
         self.assertNotIn("machine context metadata", page["visible_text"])
+
+    def test_middle_notes_and_multiple_articles_are_not_silently_omitted(self) -> None:
+        for marker in ("Preferred stock conversion terms", "Watershed monitoring methodology"):
+            with self.subTest(marker=marker), mock.patch(
+                "nexustrade.host.gateway_chat_json", side_effect=self._response
+            ) as chat:
+                html = ("<body><article>" + "opening " * 9_000 + "</article><section>"
+                        + marker + "</section><article>" + "closing " * 9_000 + "</article></body>")
+                result = scanned_table.extract_web_pages({"source": html},
+                    instructions="Extract the stated terms.", schema=SCHEMA, max_workers=1)
+                page = json.loads(chat.call_args.kwargs["prompt"])["documents"][0]
+                self.assertIn(marker, page["visible_text"])
+                self.assertTrue(result["source"]["coverage"]["complete"])
+                self.assertEqual(result["source"]["coverage"]["supplied_ranges"],
+                                 [[0, len(page["visible_text"])]])
+
+    def test_oversized_source_refuses_before_model_call_and_retains_full_preparation(self) -> None:
+        html = "<body>" + "opening " * 9_000 + "Middle source evidence" + " closing" * 9_000 + "</body>"
+        with mock.patch("nexustrade.host.gateway_chat_json") as chat:
+            result = scanned_table.extract_web_pages({"source": html},
+                instructions="Extract the terms.", schema=SCHEMA, max_chars_per_document=80_000)
+        chat.assert_not_called()
+        self.assertEqual(result["source"]["document"], {})
+        self.assertIn("exceeds character limit", result["source"]["error"])
+        prepared = scanned_table.prepare_web_pages({"source": html})
+        self.assertIn("Middle source evidence", prepared["source"]["document"]["visible_text"])
+        self.assertTrue(prepared["source"]["document"]["coverage"]["complete"])
+
+    def test_extraction_character_limits_are_positive_integers(self) -> None:
+        for limit in (True, 1.5, 0, -1):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                scanned_table.extract_web_pages({}, instructions="Read", schema=SCHEMA,
+                                                max_chars_per_document=limit)
 
     def test_nested_hidden_elements_and_void_tags_do_not_hide_later_content(self) -> None:
         html = """<html><body><main>
