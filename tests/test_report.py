@@ -90,6 +90,40 @@ class ReportWriteTests(unittest.TestCase):
                 }]}, path=str(target))
             self.assertFalse(target.exists())
 
+    def test_numeric_preflight_reports_all_paths_without_overwriting_valid_artifact(self):
+        model = {'value': 12.5, 'provenance': {'sourceIds': ['lake:one']}}
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'inputs.json'
+            report.write_inputs({'title': 'valid'}, path=str(target))
+            before = target.read_bytes()
+            payload = {
+                'reportEvidence': [{'id': 'e', 'paragraphs': [[7, 8]]}],
+                'reportViews': [{'id': 't', 'type': 'table', 'columns': ['Year', 'Value'],
+                                 'rows': [[2026, 42], [2027, report.ref('value',
+                                                        provenance_path=('provenance',))]]}],
+            }
+            with self.assertRaises(report.ReportValidationError) as raised:
+                report.write_inputs(payload, model=model, preserve_references=True,
+                                    model_source='/work/out/model.json', path=str(target))
+            self.assertEqual([issue.path for issue in raised.exception.issues], [
+                ('reportEvidence', 0, 'paragraphs', 0, 0),
+                ('reportEvidence', 0, 'paragraphs', 0, 1),
+                ('reportViews', 0, 'rows', 0, 0),
+                ('reportViews', 0, 'rows', 0, 1),
+                ('reportViews', 0, 'rows', 1, 0),
+            ])
+            self.assertEqual({issue.code for issue in raised.exception.issues}, {'unbound_number'})
+            self.assertEqual(target.read_bytes(), before)
+            self.assertIsInstance(payload['reportViews'][0]['rows'][1][1], report._ModelReference)
+
+    def test_numeric_preflight_retains_issues_beyond_printed_limit(self):
+        inputs = {'reportViews': [{'type': 'table', 'rows': [[i] for i in range(80)]}]}
+        with self.assertRaises(report.ReportValidationError) as raised:
+            report._validate_delivery_numbers(inputs)
+        self.assertEqual(len(raised.exception.issues), 80)
+        self.assertEqual(raised.exception.issues[-1].path, ('reportViews', 0, 'rows', 79, 0))
+        self.assertIn('30 further issues', str(raised.exception))
+
     def test_delivery_binds_typed_numbers_without_treating_dates_as_financial_claims(self):
         model = {'value': 12.5, 'provenance': {'sourceIds': ['lake:one']}}
         with tempfile.TemporaryDirectory() as directory:

@@ -1435,6 +1435,22 @@ def future_common_equity_return_case(
     or the evidentiary basis of future financing and ownership assumptions.
     Each distribution is {"date": YYYY-MM-DD, "per_share": amount} and must
     be payable to the entry holder. Same-day distributions are combined.
+
+    Returns an ordinary dict with these exact keys:
+      exit_bridge: {undiscounted_enterprise_value, nonoperating_assets,
+        debt_and_debt_like_liabilities, other_senior_claims, diluted_shares,
+        equity_value, per_share_value, date}.
+      cash_flows: [-entry_price, *future_per_share_payments]. The final payment
+        includes the exit per-share value and any same-day distribution.
+      cash_flow_dates: one date per FUTURE payment; len(cash_flows)-1 dates.
+        There is no initial-outlay date in this array. Do not slice it again.
+      irr: annualized Actual/365 return, in decimal units.
+      hurdle_entry_price: present value of future payments, present only when
+        required_return is supplied.
+
+    To verify the returned IRR, pass result["cash_flows"] and the UNSLICED
+    result["cash_flow_dates"] to internal_rate_of_return with entry_date as
+    valuation_date. There is no cash_flows_per_share key.
     """
     entry = _finite("entry_price", entry_price)
     if entry <= 0.0:
