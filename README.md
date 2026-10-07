@@ -1234,6 +1234,14 @@ Successful research calls still append shared durable receipt/cache rows.
 
 - `nt.sec.resolved_fact(...)` selects a complete fact reconciliation with its
   filing provenance. Partial, ambiguous, and cumulative inputs remain unresolved.
+- `nt.sec.fact_availability(frozen_notes_response, selectors)` inspects exact
+  named selectors before calculation. It distinguishes selected, not queried,
+  uncovered source, incomplete query, no match in the query, mismatched context,
+  ambiguity and invalid values. It preserves query identity/coverage and returned
+  contexts; no query result establishes issuer non-disclosure. Discover actual
+  filing concepts first with `filed_concepts`, then inspect the original source
+  when a required input remains unresolved. Never substitute zero or silently
+  remove a required component because its selected tag did not match.
 - `nt.sec.select_facts(frozen_notes_response, selectors)` binds named raw Notes
   facts by exact `tag`, `accession`, ISO `period_end`, `unit`, integer `quarters`
   and `dimensions` (`None` for consolidated facts). It preserves actual returned
@@ -1268,6 +1276,14 @@ Successful research calls still append shared durable receipt/cache rows.
   the helper cannot infer the current-year stub from a full-year forecast.
 - `nt.finance.forecast_remainder(...)` exposes the remaining-period forecast
   implied by actuals to date. Align additive flows, fiscal periods and units.
+- `nt.finance.balance_snapshot(value, balance_date=..., as_of=..., unit=...,
+  scale=..., definition=..., provenance=...)` declares a dated stock, including a
+  missing value explicitly. `balance_change(opening, closing, period_start=...,
+  period_end=...)` requires the opening date immediately before the inclusive
+  period and the closing date at its end, plus equal units/scales/definitions.
+  An earlier observation requires a separately supported bridge, not proration.
+  Missing amounts remain missing; zeros remain valid. Dates and arithmetic do not
+  establish the accounting basis or reasonableness of a forecast.
 - Optional `period_flow(...)` and `remaining_period_flow(...)` retain inclusive
   operating dates, information cutoff, units, accounting definition, and declared
   provenance. The composer rejects overlaps and incompatible definitions/units.

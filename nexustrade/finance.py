@@ -1160,6 +1160,72 @@ def period_flow(
     return record
 
 
+def balance_snapshot(
+    value: Number | str | None, *, balance_date: str, as_of: str, unit: str,
+    definition: str, scale: Number | str = 1, status: str = "model_assumption",
+    provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Declare a dated stock, preserving its amount, scale and evidence.
+
+    Historical versus estimated treatment is explicit caller metadata. This
+    does not choose accounting components or verify a forecast assumption.
+    ``as_of`` is the information cutoff, not the balance date.
+    """
+    _calendar_date("balance_date", balance_date)
+    _calendar_date("as_of", as_of)
+    for name, text in (("definition", definition), ("status", status)):
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{name} must be an explicit nonempty string")
+    checked = amount(0 if value is None else value, unit=unit, scale=scale, provenance=provenance)
+    return {**checked, "value": None if value is None else checked["value"],
+            "balance_date": balance_date, "as_of": as_of, "definition": definition, "status": status}
+
+
+def balance_change(
+    opening: Mapping[str, Any], closing: Mapping[str, Any], *,
+    period_start: str, period_end: str,
+) -> dict[str, Any]:
+    """Compute closing minus opening only for exactly aligned stock dates.
+
+    The opening balance must be dated the day before the inclusive period; the
+    closing balance must be dated its last day. An older observation needs an
+    explicit separately supported bridge, never proration or relabeling. Units,
+    scale and accounting definition must match. Missing amounts remain missing.
+    Retained declarations and arithmetic are evidence for independent review,
+    not approval of the accounting basis or authenticity of source metadata.
+    """
+    start, end = _calendar_date("period_start", period_start), _calendar_date("period_end", period_end)
+    if start > end:
+        raise ValueError("period_start must not follow period_end")
+    balances = []
+    for name, record, expected in (("opening", opening, start - timedelta(days=1)), ("closing", closing, end)):
+        if not isinstance(record, Mapping):
+            raise ValueError(f"{name} must be a declared balance snapshot")
+        try:
+            checked = balance_snapshot(**{key: record[key] for key in (
+                "value", "balance_date", "as_of", "unit", "scale", "definition", "status")},
+                provenance=record.get("provenance"))
+        except KeyError as error:
+            raise ValueError(f"{name} balance missing {error.args[0]}") from None
+        if checked["balance_date"] != expected.isoformat():
+            raise ValueError(f"{name} balance date {checked['balance_date']} does not match {expected.isoformat()} "
+                             f"for period {period_start} through {period_end}; resolve the intervening period first")
+        balances.append({**deepcopy(dict(record)), **checked})
+    first, last = balances
+    for field in ("unit", "scale", "definition"):
+        equal = (Decimal(first[field]) == Decimal(last[field]) if field == "scale" else first[field] == last[field])
+        if not equal:
+            raise ValueError(f"balance snapshots must share exact {field}")
+    missing = [name for name, row in zip(("opening", "closing"), balances) if row["value"] is None]
+    value = None if missing else float(Decimal(last["value"]) - Decimal(first["value"]))
+    if value is not None:
+        value = _finite("balance change", value)
+    return {"value": value, "unit": first["unit"], "scale": first["scale"],
+            "definition": first["definition"], "period_start": period_start, "period_end": period_end,
+            "status": "incomplete" if missing else "derived", "missing_balances": missing,
+            "opening": first, "closing": last}
+
+
 def remaining_period_flow(
     full_period: Mapping[str, Any], elapsed_flows: Sequence[Mapping[str, Any]], *,
     valuation_date: str,
