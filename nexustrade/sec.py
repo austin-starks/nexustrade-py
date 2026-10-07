@@ -9,6 +9,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from nexustrade import host
@@ -258,6 +259,107 @@ def resolved_fact(
             raise ValueError(f"selected candidate identity mismatch: {candidate_id}")
         candidates.append(deepcopy(dict(candidate)))
     return {**deepcopy(dict(row)), "candidates": candidates}
+
+
+class FactSelectionError(ValueError):
+    """All unresolved named selections, suitable for local recovery diagnostics."""
+
+    def __init__(self, diagnostics: list[dict[str, Any]]) -> None:
+        self.diagnostics = deepcopy(diagnostics)
+        super().__init__("SEC fact selection failed: " + json.dumps(diagnostics, sort_keys=True))
+
+
+def select_facts(
+    payload: Mapping[str, Any], selections: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Bind a complete named batch to exact retained Notes rows, without copying IDs.
+
+    Each selector requires ``tag``, ``accession``, ISO ``period_end``, ``unit``,
+    integer ``quarters`` and ``dimensions`` (None for consolidated facts or an
+    exact raw dimension string). Optional ``fact_id`` narrows an otherwise
+    ambiguous reviewed context. No accounting classification or fuzzy matching
+    occurs. All failures are returned in FactSelectionError.diagnostics before
+    any partial result can be used. A missing row is never numeric zero.
+
+    Results retain the original row, raw value, fact ID and source URL, adding the
+    response's source_id and explicit provenance. This local helper preserves
+    host evidence; it cannot authenticate a fabricated input payload itself.
+    """
+    if not isinstance(payload, Mapping) or not isinstance(selections, Mapping) or not selections:
+        raise ValueError("supply a frozen Notes response and nonempty named selectors")
+    if payload.get("truncated") is not False or payload.get("filingPlanTruncated") is not False:
+        raise ValueError("Incomplete SEC Notes coverage: narrow and retrieve the exact filing/concepts")
+    rows = payload.get("rows")
+    source_id = payload.get("source_id")
+    query = payload.get("normalized_query")
+    if (not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows)
+            or not isinstance(source_id, str) or not source_id.strip()
+            or not isinstance(query, Mapping)):
+        raise ValueError("Notes response requires rows, source_id and normalized_query")
+    concepts = query.get("concepts")
+    if concepts is not None and (not isinstance(concepts, list) or
+                                not all(isinstance(tag, str) for tag in concepts)):
+        raise ValueError("normalized_query.concepts must be a list or null")
+    required = {"tag", "accession", "period_end", "unit", "quarters", "dimensions"}
+    resolved, errors = {}, []
+    for name, selector in selections.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(selector, Mapping):
+            raise ValueError("every selection needs a nonempty name and selector mapping")
+        if set(selector) - required - {"fact_id"} or required - set(selector):
+            raise ValueError(f"{name}: selector needs exactly {sorted(required)} and optional fact_id")
+        for field in ("tag", "accession", "period_end", "unit"):
+            if not isinstance(selector[field], str) or not selector[field].strip():
+                raise ValueError(f"{name}.{field} must be a nonempty string")
+        period = _required_as_of(selector["period_end"]).replace("-", "")
+        quarters, dimensions = selector["quarters"], selector["dimensions"]
+        if isinstance(quarters, bool) or not isinstance(quarters, int) or quarters < 0:
+            raise ValueError(f"{name}.quarters must be a nonnegative integer")
+        if dimensions is not None and (not isinstance(dimensions, str) or not dimensions):
+            raise ValueError(f"{name}.dimensions must be None or an exact nonempty raw string")
+        fact_id = selector.get("fact_id")
+        if fact_id is not None and (not isinstance(fact_id, str) or not fact_id):
+            raise ValueError(f"{name}.fact_id must be an exact nonempty returned ID")
+        diagnostic = {"name": name, "selector": dict(selector)}
+        if concepts is not None and selector["tag"] not in concepts:
+            errors.append({**diagnostic, "reason": "concept_not_requested",
+                           "requested_concepts": concepts})
+            continue
+        candidates = [row for row in rows if row.get("tag") == selector["tag"]
+                      and row.get("adsh") == selector["accession"] and row.get("ddate") == period]
+        matches = [row for row in candidates if row.get("uom") == selector["unit"]
+                   and str(row.get("qtrs")) == str(quarters)
+                   and (row.get("dimensions_raw") or None) == dimensions]
+        before_id = matches
+        if fact_id is not None:
+            matches = [row for row in matches if row.get("fact_id") == fact_id]
+        if len(matches) != 1:
+            reason = ("fact_id_mismatch" if before_id and fact_id is not None and not matches
+                      else "ambiguous_context" if len(matches) > 1 else "no_matching_context")
+            errors.append({**diagnostic, "reason": reason,
+                           "available_contexts": [{field: row.get(field) for field in
+                               ("fact_id", "uom", "qtrs", "dimensions_raw", "taxonomy")}
+                               for row in candidates]})
+            continue
+        row = matches[0]
+        try:
+            if not isinstance(row.get("value_raw"), str):
+                raise ValueError("Notes value_raw must retain its decimal string")
+            value = Decimal(row["value_raw"])
+            valid = value.is_finite()
+        except (KeyError, InvalidOperation, TypeError, ValueError):
+            valid = False
+        if not valid or not isinstance(row.get("fact_id"), str) or not row["fact_id"]:
+            errors.append({**diagnostic, "reason": "invalid_source_value_or_id"})
+            continue
+        selected = deepcopy(dict(row))
+        selected["source_id"] = source_id
+        selected["provenance"] = {"sourceIds": [source_id], "fact_id": row["fact_id"],
+                                  "accession": row["adsh"], "period_end": selector["period_end"],
+                                  "unit": row["uom"], "source_url": row.get("source_url")}
+        resolved[name] = selected
+    if errors:
+        raise FactSelectionError(errors)
+    return resolved
 
 
 def statement(
@@ -630,6 +732,7 @@ __all__ = [
     "DimensionalFilter",
     "FACT_ROLES",
     "FactRole",
+    "FactSelectionError",
     "business_breakdowns",
     "dimensioned_concepts",
     "fact_candidates",
@@ -637,5 +740,6 @@ __all__ = [
     "filed_concepts",
     "latest_statement",
     "resolved_fact",
+    "select_facts",
     "statement",
 ]

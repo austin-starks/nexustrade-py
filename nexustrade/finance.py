@@ -12,9 +12,80 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
 Number = int | float
+
+
+def _decimal_amount(name: str, value: Number | str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{name} must be a finite decimal amount")
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError(f"{name} must be a finite decimal amount") from None
+    if not result.is_finite():
+        raise ValueError(f"{name} must be a finite decimal amount")
+    return result
+
+
+def amount(
+    value: Number | str, *, unit: str, scale: Number | str = 1,
+    provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Declare a JSON amount: value * scale is in the exact base unit.
+
+    Raw SEC USD amounts use scale=1; USD billions use scale=1_000_000_000.
+    Preserve this record in saved inputs and align_amounts before arithmetic.
+    No currency, accounting role or scale is inferred from names or magnitudes.
+    """
+    if not isinstance(unit, str) or not unit.strip() or unit != unit.strip():
+        raise ValueError("unit must be an explicit nonempty base unit without surrounding spaces")
+    numeric, multiplier = _decimal_amount("value", value), _decimal_amount("scale", scale)
+    if multiplier <= 0:
+        raise ValueError("scale must be positive")
+    if provenance is not None and not isinstance(provenance, Mapping):
+        raise ValueError("provenance must be a mapping")
+    return {"value": str(numeric), "unit": unit, "scale": str(multiplier),
+            "provenance": deepcopy(dict(provenance or {}))}
+
+
+def align_amounts(
+    amounts: Mapping[str, Mapping[str, Any]], *, unit: str, scale: Number | str = 1,
+) -> dict[str, Any]:
+    """Normalize a named batch to one explicit unit/scale; retain input evidence.
+
+    The returned values can be supplied to existing scalar finance functions.
+    Different units fail, including currencies and per-share/total amounts. This
+    performs scale conversion only, never FX conversion or accounting selection.
+    Period alignment remains the caller's explicit filing/flow selection.
+    """
+    target = amount(0, unit=unit, scale=scale)
+    if not isinstance(amounts, Mapping) or not amounts:
+        raise ValueError("amounts must be a nonempty named mapping of declared amounts")
+    values, inputs = {}, {}
+    for name, record in amounts.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(record, Mapping):
+            raise ValueError("every amount needs a nonempty name and declared amount mapping")
+        if any(key not in record for key in ("value", "unit", "scale")):
+            raise ValueError(f"{name}: missing value/unit/scale; declare with finance.amount first")
+        checked = amount(record["value"], unit=record["unit"], scale=record["scale"],
+                         provenance=record.get("provenance"))
+        if checked["unit"] != unit:
+            raise ValueError(f"{name}: incompatible unit {checked['unit']!r}; expected {unit!r}")
+        operands = [Decimal(checked["value"]), Decimal(checked["scale"]), Decimal(target["scale"])]
+        with localcontext() as context:
+            context.prec = max(28, sum(len(v.as_tuple().digits) for v in operands) + 16)
+            converted = operands[0] * operands[1] / operands[2]
+        try:
+            values[name] = _finite(name, float(converted))
+            if values[name] == 0 and converted != 0:
+                raise ValueError("nonzero amount underflows scalar arithmetic")
+        except (OverflowError, ValueError):
+            raise ValueError(f"{name}: normalized amount is outside finite arithmetic range") from None
+        inputs[name] = deepcopy(dict(record))
+    return {"unit": unit, "scale": target["scale"], "values": values, "inputs": inputs}
 
 
 def sensitivity_cases(
@@ -1431,6 +1502,8 @@ def future_common_equity_return_case(
 
 
 __all__ = [
+    "amount",
+    "align_amounts",
     "capm_cost_of_equity",
     "change_in_operating_nwc",
     "cash_flow_after_equity_compensation",

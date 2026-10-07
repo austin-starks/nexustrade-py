@@ -1234,6 +1234,20 @@ Successful research calls still append shared durable receipt/cache rows.
 
 - `nt.sec.resolved_fact(...)` selects a complete fact reconciliation with its
   filing provenance. Partial, ambiguous, and cumulative inputs remain unresolved.
+- `nt.sec.select_facts(frozen_notes_response, selectors)` binds named raw Notes
+  facts by exact `tag`, `accession`, ISO `period_end`, `unit`, integer `quarters`
+  and `dimensions` (`None` for consolidated facts). It preserves actual returned
+  IDs and provenance, refuses truncation/ambiguity and reports all failures in
+  `nt.sec.FactSelectionError.diagnostics`. Build retrieval `concepts` from the
+  same selectors; an unrequested concept is distinct from a missing match.
+  Optional `fact_id` narrows a reviewed context; select it from retained rows
+  rather than transcribing an opaque hash. No accounting role is inferred.
+- `nt.finance.amount(value, unit="USD", scale=1, provenance=...)` declares a
+  JSON amount whose value times scale is in the exact base unit. Raw SEC amounts
+  use scale 1; billions use scale 1,000,000,000. `nt.finance.align_amounts`
+  normalizes a named batch to an explicit unit/scale, returning `values` for
+  existing arithmetic and retaining original `inputs`. It refuses incompatible
+  currencies/per-share units and never infers FX, accounting roles or periods.
 - `nt.sec.latest_statement(annual, quarterly, as_of="2026-06-30",
   required_fields=["cash", "long_term_debt"])` selects the latest supplied period
   and publicly available amendment, retaining filing and share provenance. A
