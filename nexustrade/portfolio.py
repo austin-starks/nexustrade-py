@@ -1524,6 +1524,18 @@ def Divide(
 
 __all__.append("Divide")
 
+def DividendRaiseStreak(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """Consecutive completed calendar years, ending with the last completed year, in which the asset's regular cash dividends (summed by ex-date in America/New_York, split-adjusted, special dividends excluded) were strictly higher than the year before; the in-progress current year never counts. Returns 0 when the last completed year was not a raise and null when the asset has no dividend history.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "DividendRaiseStreak"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("DividendRaiseStreak")
+
 def DonchianChannel(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
