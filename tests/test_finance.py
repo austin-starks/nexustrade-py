@@ -6,6 +6,42 @@ import nexustrade as nt
 
 
 class FinanceSdkTests(unittest.TestCase):
+    def test_funding_check_counts_borrowing_but_refuses_cash_flooring(self) -> None:
+        inputs = dict(opening_cash=100, fcff=20, after_tax_interest=5,
+            preferred_dividends=2, minority_distributions=3, nonoperating_cash_income=1,
+            net_borrowing=40, equity_issue_proceeds=10, buyback_cash=80,
+            claim_redemptions=4, common_distributions=7, investment_purchases=10, investment_sales=5)
+        result = nt.finance.financing_cash_period(**inputs)
+        self.assertEqual(result["closing_cash"], 65)
+        self.assertEqual(result["net_cash"], -35)
+        with self.assertRaisesRegex(ValueError, "Unfunded cash deficit 409.425"):
+            nt.finance.financing_cash_period(**{**inputs, "net_borrowing": 240,
+                "buyback_cash": 754.425})
+        for invalid in (True, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                nt.finance.financing_cash_period(**{**inputs, "fcff": invalid})
+        with self.assertRaises(ValueError):
+            nt.finance.financing_cash_period(**{**inputs, "buyback_cash": -1})
+
+    def test_terminal_transition_exposes_rate_change_without_arbitrary_thresholds(self) -> None:
+        nopat = 114.270 / (1 - .7186)
+        t = nt.finance.terminal_investment_transition(final_forecast_nopat=nopat,
+            final_forecast_fcff=114.270, discount_rate=.1, perpetual_growth_rate=.03,
+            return_on_new_invested_capital=.16)
+        self.assertAlmostEqual(t["final_reinvestment_rate"], .7186)
+        self.assertAlmostEqual(t["reinvestment_rate"], .1875)
+        self.assertAlmostEqual(t["reinvestment_rate_change"], -.5311)
+        self.assertGreater(t["terminal_fcff"], t["terminal_fcff_at_final_reinvestment_rate"])
+        clean = nt.finance.terminal_investment_transition(final_forecast_nopat=80,
+            final_forecast_fcff=65, discount_rate=.1, perpetual_growth_rate=.03,
+            return_on_new_invested_capital=.16)
+        self.assertEqual(clean["reinvestment_rate_change"], 0)
+        self.assertAlmostEqual(clean["terminal_fcff"], 65*1.03)
+        with self.assertRaises(ValueError):
+            nt.finance.terminal_investment_transition(final_forecast_nopat=0,
+                final_forecast_fcff=-10, discount_rate=.1, perpetual_growth_rate=.03,
+                return_on_new_invested_capital=.16)
+
     def test_future_common_return_uses_exit_date_bridge_not_present_dcf_value(self) -> None:
         result = nt.finance.future_common_equity_return_case(
             entry_price=100, entry_date="2027-06-30", exit_date="2029-12-31",

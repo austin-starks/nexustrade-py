@@ -3369,17 +3369,6 @@ observation.
 - Return only the strict structured response."""
 
 
-def _bounded_web_text(value: str, max_chars: int) -> str:
-    if len(value) <= max_chars:
-        return value
-    # News/report substance normally starts near the beginning, while update
-    # notes and methodology often sit at the end. Preserve both as exact source
-    # substrings instead of injecting a synthetic truncation marker that a model
-    # could accidentally quote as evidence.
-    head_chars = (max_chars * 3) // 4
-    return value[:head_chars].rstrip() + "\n\n" + value[-(max_chars - head_chars) :].lstrip()
-
-
 def _decode_web_bytes(data: bytes) -> str:
     # HTML's in-band charset declaration is not authoritative enough to justify
     # a dependency or a second parsing pass here. UTF-8 covers the fetched
@@ -3399,7 +3388,6 @@ def _prepare_web_page(
     value: str | bytes | Mapping[str, Any],
     *,
     max_chars: int,
-    truncate: bool = True,
 ) -> tuple[dict[str, Any] | None, str | None, bytes | None]:
     url: str | None = None
     content_type = "text/html"
@@ -3464,16 +3452,20 @@ def _prepare_web_page(
             published_at_hint = (
                 parser.meta.get("article:published_time") or parser.time_hint
             )
-            scoped_text = [
-                text
-                for text in (parser.text("article"), parser.text("main"))
-                if text
-            ]
-            visible_text = max(scoped_text, key=len) if scoped_text else parser.text("body")
+            # Notes outside article/main are evidence too. Do not silently
+            # select one DOM region and claim the complete filing was read.
+            visible_text = parser.text("body")
     except Exception as exc:  # keep malformed HTML source-local
         return None, f"HTML parsing failed: {exc}", None
-    if not truncate and len(visible_text) > max_chars:
-        return None, f"visible text exceeds character limit ({max_chars})", None
+    if len(visible_text) > max_chars:
+        return None, (
+            f"complete visible text ({len(visible_text)} characters) exceeds "
+            f"character limit ({max_chars}); no text was extracted or omitted. "
+            "Use prepare_web_pages to inspect the retained full text, then "
+            "increase the explicit document/request limits if affordable or "
+            "extract separately identified exact source passages. A size "
+            "refusal is not evidence that the requested disclosure is absent."
+        ), raw
     prepared: dict[str, Any] = {
         "source_id": source_id,
         "url": url,
@@ -3481,7 +3473,13 @@ def _prepare_web_page(
         "title": title,
         "description": description,
         "published_at_hint": published_at_hint,
-        "visible_text": _bounded_web_text(visible_text, max_chars),
+        "visible_text": visible_text,
+        "coverage": {
+            "complete": True,
+            "text_characters": len(visible_text),
+            "supplied_ranges": [[0, len(visible_text)]],
+            "projection": "markdown" if content_type.split(";", 1)[0].strip().lower() == "text/markdown" else "visible_body",
+        },
     }
     return prepared, None, raw
 
@@ -3514,7 +3512,7 @@ def prepare_web_pages(
     for source_id, value in zip(source_ids, pages.values()):
         try:
             document, error, _ = _prepare_web_page(
-                source_id, value, max_chars=max_chars_per_document, truncate=False
+                source_id, value, max_chars=max_chars_per_document
             )
         except Exception:
             document, error = None, "page body could not be read"
@@ -3670,6 +3668,7 @@ def _extract_web_group(
                     )
                 by_id[source_id] = {
                     "document": dict(document),
+                    "coverage": next(page["coverage"] for page in group if page["source_id"] == source_id),
                     "error": None,
                 }
             missing = [source_id for source_id in source_ids if source_id not in by_id]
@@ -3706,7 +3705,7 @@ def extract_web_pages(
     schema: Mapping[str, Any],
     model: str | None = None,
     documents_per_request: int = 1,
-    max_chars_per_document: int = 80_000,
+    max_chars_per_document: int = 200_000,
     max_chars_per_request: int = 200_000,
     max_workers: int = 2,
     retries: int = 1,
@@ -3721,7 +3720,15 @@ def extract_web_pages(
     Markdown receipts retain their exact text and content type, including any
     rendered-fetch marker; they do not acquire inferred HTML publisher metadata.
 
-    Each page gets an isolated GPT-5.6 Luna request by default so one dense page
+    Every admitted page supplies its COMPLETE visible text, with host-owned
+    coverage alongside the result. Oversize pages return an explicit error
+    before a model call; they are never head/tail spliced. ``prepare_web_pages``
+    supports lossless local inspection before choosing affordable exact passages
+    or explicitly increasing these limits. Coverage concerns the visible-text
+    projection, not hidden HTML, images or content behind unfetched links.
+
+    Each page gets an isolated request using ``model`` or the run-configured
+    ``EXTRACT_ROWS_MODEL`` (then the SDK default), so one dense page
     cannot consume another page's output attention. Increase
     ``documents_per_request`` when measured accuracy permits batching.
     Successful byte-identical results are durably replayed, and every input key
@@ -3735,8 +3742,9 @@ def extract_web_pages(
         raise ValueError("instructions must be non-empty")
     if documents_per_request < 1 or documents_per_request > 20:
         raise ValueError("documents_per_request must be between 1 and 20")
-    if max_chars_per_document < 1 or max_chars_per_request < 1:
-        raise ValueError("character limits must be positive")
+    if any(isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+           for limit in (max_chars_per_document, max_chars_per_request)):
+        raise ValueError("character limits must be positive integers")
     if max_chars_per_document > max_chars_per_request:
         raise ValueError("max_chars_per_document cannot exceed max_chars_per_request")
     if max_workers < 1:

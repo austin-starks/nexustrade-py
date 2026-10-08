@@ -12,9 +12,80 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
 Number = int | float
+
+
+def _decimal_amount(name: str, value: Number | str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{name} must be a finite decimal amount")
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError(f"{name} must be a finite decimal amount") from None
+    if not result.is_finite():
+        raise ValueError(f"{name} must be a finite decimal amount")
+    return result
+
+
+def amount(
+    value: Number | str, *, unit: str, scale: Number | str = 1,
+    provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Declare a JSON amount: value * scale is in the exact base unit.
+
+    Raw SEC USD amounts use scale=1; USD billions use scale=1_000_000_000.
+    Preserve this record in saved inputs and align_amounts before arithmetic.
+    No currency, accounting role or scale is inferred from names or magnitudes.
+    """
+    if not isinstance(unit, str) or not unit.strip() or unit != unit.strip():
+        raise ValueError("unit must be an explicit nonempty base unit without surrounding spaces")
+    numeric, multiplier = _decimal_amount("value", value), _decimal_amount("scale", scale)
+    if multiplier <= 0:
+        raise ValueError("scale must be positive")
+    if provenance is not None and not isinstance(provenance, Mapping):
+        raise ValueError("provenance must be a mapping")
+    return {"value": str(numeric), "unit": unit, "scale": str(multiplier),
+            "provenance": deepcopy(dict(provenance or {}))}
+
+
+def align_amounts(
+    amounts: Mapping[str, Mapping[str, Any]], *, unit: str, scale: Number | str = 1,
+) -> dict[str, Any]:
+    """Normalize a named batch to one explicit unit/scale; retain input evidence.
+
+    The returned values can be supplied to existing scalar finance functions.
+    Different units fail, including currencies and per-share/total amounts. This
+    performs scale conversion only, never FX conversion or accounting selection.
+    Period alignment remains the caller's explicit filing/flow selection.
+    """
+    target = amount(0, unit=unit, scale=scale)
+    if not isinstance(amounts, Mapping) or not amounts:
+        raise ValueError("amounts must be a nonempty named mapping of declared amounts")
+    values, inputs = {}, {}
+    for name, record in amounts.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(record, Mapping):
+            raise ValueError("every amount needs a nonempty name and declared amount mapping")
+        if any(key not in record for key in ("value", "unit", "scale")):
+            raise ValueError(f"{name}: missing value/unit/scale; declare with finance.amount first")
+        checked = amount(record["value"], unit=record["unit"], scale=record["scale"],
+                         provenance=record.get("provenance"))
+        if checked["unit"] != unit:
+            raise ValueError(f"{name}: incompatible unit {checked['unit']!r}; expected {unit!r}")
+        operands = [Decimal(checked["value"]), Decimal(checked["scale"]), Decimal(target["scale"])]
+        with localcontext() as context:
+            context.prec = max(28, sum(len(v.as_tuple().digits) for v in operands) + 16)
+            converted = operands[0] * operands[1] / operands[2]
+        try:
+            values[name] = _finite(name, float(converted))
+            if values[name] == 0 and converted != 0:
+                raise ValueError("nonzero amount underflows scalar arithmetic")
+        except (OverflowError, ValueError):
+            raise ValueError(f"{name}: normalized amount is outside finite arithmetic range") from None
+        inputs[name] = deepcopy(dict(record))
+    return {"unit": unit, "scale": target["scale"], "values": values, "inputs": inputs}
 
 
 def sensitivity_cases(
@@ -523,6 +594,82 @@ def capitalize_operating_expense(
     }
 
 
+def financing_cash_period(
+    *, opening_cash: Number, fcff: Number, after_tax_interest: Number,
+    preferred_dividends: Number, minority_distributions: Number,
+    nonoperating_cash_income: Number, net_borrowing: Number,
+    equity_issue_proceeds: Number, buyback_cash: Number,
+    claim_redemptions: Number, common_distributions: Number,
+    investment_purchases: Number, investment_sales: Number,
+) -> dict[str, Any]:
+    """Reconcile a funded period from unlevered FCFF to closing cash.
+
+    Every input is explicit and in the same currency/unit/period. Signed FCFF,
+    net borrowing and nonoperating income are allowed; other amounts are cash
+    magnitudes. Noncash conversions/mark changes are NOT cash proceeds. This
+    checks funding, not distribution eligibility, forecast validity or capital
+    classification. Split periods at events if their timing matters.
+    """
+    opening = _finite("opening_cash", opening_cash)
+    flows = {
+        "fcff": _finite("fcff", fcff),
+        "after_tax_interest": _finite("after_tax_interest", after_tax_interest),
+        "preferred_dividends": _finite("preferred_dividends", preferred_dividends),
+        "minority_distributions": _finite("minority_distributions", minority_distributions),
+        "nonoperating_cash_income": _finite("nonoperating_cash_income", nonoperating_cash_income),
+        "net_borrowing": _finite("net_borrowing", net_borrowing),
+        "equity_issue_proceeds": _finite("equity_issue_proceeds", equity_issue_proceeds),
+        "buyback_cash": _finite("buyback_cash", buyback_cash),
+        "claim_redemptions": _finite("claim_redemptions", claim_redemptions),
+        "common_distributions": _finite("common_distributions", common_distributions),
+        "investment_purchases": _finite("investment_purchases", investment_purchases),
+        "investment_sales": _finite("investment_sales", investment_sales),
+    }
+    if opening < 0 or any(v < 0 for k, v in flows.items()
+                          if k not in ("fcff", "net_borrowing", "nonoperating_cash_income")):
+        raise ValueError("Opening cash and cash payment/proceeds magnitudes must be nonnegative")
+    receipts = sum(flows[k] for k in ("fcff", "nonoperating_cash_income", "net_borrowing",
+                                     "equity_issue_proceeds", "investment_sales"))
+    payments = sum(flows[k] for k in ("after_tax_interest", "preferred_dividends",
+        "minority_distributions", "buyback_cash", "claim_redemptions",
+        "common_distributions", "investment_purchases"))
+    net_cash = receipts - payments
+    closing = opening + net_cash
+    if not math.isfinite(closing):
+        raise ValueError("Cash reconciliation overflow")
+    if closing < 0:
+        raise ValueError(f"Unfunded cash deficit {abs(closing):.12g}; specify financing or revise the scenario")
+    return {"opening_cash": opening, "flows": flows, "net_cash": net_cash,
+            "closing_cash": closing}
+
+
+def terminal_investment_transition(
+    *, final_forecast_nopat: Number, final_forecast_fcff: Number,
+    discount_rate: Number, perpetual_growth_rate: Number,
+    return_on_new_invested_capital: Number,
+) -> dict[str, float]:
+    """Expose the explicit-to-terminal investment transition, without judging it.
+
+    A changing rate may be justified. The caller must support the transition,
+    fade and sensitivities; algebra alone cannot establish that economics.
+    For nonpositive final NOPAT, use an explicit recovery model instead.
+    """
+    nopat = _finite("final_forecast_nopat", final_forecast_nopat)
+    fcff = _finite("final_forecast_fcff", final_forecast_fcff)
+    if nopat <= 0:
+        raise ValueError("Transition rate requires positive final NOPAT; model recovery explicitly")
+    terminal = gordon_growth_terminal_value_from_nopat(
+        nopat, discount_rate, perpetual_growth_rate, return_on_new_invested_capital)
+    explicit_rate = (nopat - fcff) / nopat
+    return {**terminal, "final_forecast_nopat": nopat, "final_forecast_fcff": fcff,
+            "final_net_investment": nopat - fcff,
+            "final_reinvestment_rate": explicit_rate,
+            "reinvestment_rate_change": terminal["reinvestment_rate"] - explicit_rate,
+            "fcff_change": terminal["terminal_fcff"] - fcff,
+            "terminal_fcff_at_final_reinvestment_rate":
+                terminal["next_period_nopat"] * (1 - explicit_rate)}
+
+
 def gordon_growth_terminal_value_from_nopat(
     final_forecast_nopat: Number,
     discount_rate: Number,
@@ -1013,6 +1160,72 @@ def period_flow(
     return record
 
 
+def balance_snapshot(
+    value: Number | str | None, *, balance_date: str, as_of: str, unit: str,
+    definition: str, scale: Number | str = 1, status: str = "model_assumption",
+    provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Declare a dated stock, preserving its amount, scale and evidence.
+
+    Historical versus estimated treatment is explicit caller metadata. This
+    does not choose accounting components or verify a forecast assumption.
+    ``as_of`` is the information cutoff, not the balance date.
+    """
+    _calendar_date("balance_date", balance_date)
+    _calendar_date("as_of", as_of)
+    for name, text in (("definition", definition), ("status", status)):
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{name} must be an explicit nonempty string")
+    checked = amount(0 if value is None else value, unit=unit, scale=scale, provenance=provenance)
+    return {**checked, "value": None if value is None else checked["value"],
+            "balance_date": balance_date, "as_of": as_of, "definition": definition, "status": status}
+
+
+def balance_change(
+    opening: Mapping[str, Any], closing: Mapping[str, Any], *,
+    period_start: str, period_end: str,
+) -> dict[str, Any]:
+    """Compute closing minus opening only for exactly aligned stock dates.
+
+    The opening balance must be dated the day before the inclusive period; the
+    closing balance must be dated its last day. An older observation needs an
+    explicit separately supported bridge, never proration or relabeling. Units,
+    scale and accounting definition must match. Missing amounts remain missing.
+    Retained declarations and arithmetic are evidence for independent review,
+    not approval of the accounting basis or authenticity of source metadata.
+    """
+    start, end = _calendar_date("period_start", period_start), _calendar_date("period_end", period_end)
+    if start > end:
+        raise ValueError("period_start must not follow period_end")
+    balances = []
+    for name, record, expected in (("opening", opening, start - timedelta(days=1)), ("closing", closing, end)):
+        if not isinstance(record, Mapping):
+            raise ValueError(f"{name} must be a declared balance snapshot")
+        try:
+            checked = balance_snapshot(**{key: record[key] for key in (
+                "value", "balance_date", "as_of", "unit", "scale", "definition", "status")},
+                provenance=record.get("provenance"))
+        except KeyError as error:
+            raise ValueError(f"{name} balance missing {error.args[0]}") from None
+        if checked["balance_date"] != expected.isoformat():
+            raise ValueError(f"{name} balance date {checked['balance_date']} does not match {expected.isoformat()} "
+                             f"for period {period_start} through {period_end}; resolve the intervening period first")
+        balances.append({**deepcopy(dict(record)), **checked})
+    first, last = balances
+    for field in ("unit", "scale", "definition"):
+        equal = (Decimal(first[field]) == Decimal(last[field]) if field == "scale" else first[field] == last[field])
+        if not equal:
+            raise ValueError(f"balance snapshots must share exact {field}")
+    missing = [name for name, row in zip(("opening", "closing"), balances) if row["value"] is None]
+    value = None if missing else float(Decimal(last["value"]) - Decimal(first["value"]))
+    if value is not None:
+        value = _finite("balance change", value)
+    return {"value": value, "unit": first["unit"], "scale": first["scale"],
+            "definition": first["definition"], "period_start": period_start, "period_end": period_end,
+            "status": "incomplete" if missing else "derived", "missing_balances": missing,
+            "opening": first, "closing": last}
+
+
 def remaining_period_flow(
     full_period: Mapping[str, Any], elapsed_flows: Sequence[Mapping[str, Any]], *,
     valuation_date: str,
@@ -1288,6 +1501,22 @@ def future_common_equity_return_case(
     or the evidentiary basis of future financing and ownership assumptions.
     Each distribution is {"date": YYYY-MM-DD, "per_share": amount} and must
     be payable to the entry holder. Same-day distributions are combined.
+
+    Returns an ordinary dict with these exact keys:
+      exit_bridge: {undiscounted_enterprise_value, nonoperating_assets,
+        debt_and_debt_like_liabilities, other_senior_claims, diluted_shares,
+        equity_value, per_share_value, date}.
+      cash_flows: [-entry_price, *future_per_share_payments]. The final payment
+        includes the exit per-share value and any same-day distribution.
+      cash_flow_dates: one date per FUTURE payment; len(cash_flows)-1 dates.
+        There is no initial-outlay date in this array. Do not slice it again.
+      irr: annualized Actual/365 return, in decimal units.
+      hurdle_entry_price: present value of future payments, present only when
+        required_return is supplied.
+
+    To verify the returned IRR, pass result["cash_flows"] and the UNSLICED
+    result["cash_flow_dates"] to internal_rate_of_return with entry_date as
+    valuation_date. There is no cash_flows_per_share key.
     """
     entry = _finite("entry_price", entry_price)
     if entry <= 0.0:
@@ -1355,6 +1584,8 @@ def future_common_equity_return_case(
 
 
 __all__ = [
+    "amount",
+    "align_amounts",
     "capm_cost_of_equity",
     "change_in_operating_nwc",
     "cash_flow_after_equity_compensation",

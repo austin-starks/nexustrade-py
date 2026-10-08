@@ -109,6 +109,27 @@ class _ModelReference:
     provenance_path: tuple[str | int, ...] | None = None
 
 
+@dataclass(frozen=True)
+class ReportValidationIssue:
+    """One exact emitted-input path and its machine-readable validation code."""
+
+    path: tuple[str | int, ...]
+    code: str
+    message: str
+
+
+class ReportValidationError(ValueError):
+    """All numeric delivery issues; the bounded message never truncates issues."""
+
+    def __init__(self, issues: Sequence[ReportValidationIssue]):
+        self.issues = tuple(issues)
+        displayed = self.issues[:50]
+        message = "\n".join(f"delivery number at {issue.path!r} {issue.message}" for issue in displayed)
+        if len(displayed) < len(self.issues):
+            message += f"\n{len(self.issues) - len(displayed)} further issues; inspect error.issues for every path"
+        super().__init__(f"{len(self.issues)} report validation issue(s):\n{message}")
+
+
 def source_excerpts(source_id: str, visible_text: str, *, passages: Sequence[str]) -> list[dict[str, str]]:
     """Select explicit source passages without a count or character allowance.
 
@@ -367,17 +388,18 @@ def _validate_delivery_numbers(inputs: Mapping[str, Any]) -> None:
                 if segments is not None:
                     assumption_paths.add(segments)
 
+    issues: list[ReportValidationIssue] = []
+
     def visit(value: Any, path: tuple[str | int, ...]) -> None:
         if isinstance(value, bool):
             return
         if isinstance(value, (int, float)):
             if not math.isfinite(value):
-                raise ValueError(f'delivery number at {path!r} must be finite')
-            if path not in reference_paths and path not in assumption_paths:
-                raise ValueError(
-                    f'delivery number at {path!r} needs an exact report.ref '
-                    'or labeled assumption'
-                )
+                issues.append(ReportValidationIssue(path, 'nonfinite_number', 'must be finite'))
+            elif path not in reference_paths and path not in assumption_paths:
+                issues.append(ReportValidationIssue(
+                    path, 'unbound_number', 'needs an exact report.ref or labeled assumption'
+                ))
             return
         if isinstance(value, Mapping):
             for key, child in value.items():
@@ -408,6 +430,9 @@ def _validate_delivery_numbers(inputs: Mapping[str, Any]) -> None:
                         for field in ('label', 'value', 'context'):
                             if field in item:
                                 visit(item[field], ('reportViews', index, 'items', item_index, field))
+
+    if issues:
+        raise ReportValidationError(issues)
 
 
 def _validate_delivery_structure(inputs: Mapping[str, Any]) -> None:
@@ -668,6 +693,9 @@ def write_inputs(
     mixes text with references. The host copies every selected block into the
     report. A requirements map may help navigation but is not proof that the
     evidence is sufficient.
+    Numeric binding failures raise ReportValidationError with every offending
+    path in error.issues. Its printable message shows at most 50 issues. Fix the
+    original calculation references rather than copying numbers into a new model.
     Each validation side names an exact scalar inputPath. The host derives that
     scalar's sourceIds from its bound model provenance and verifies fetch/lake
     lineage. Independent sides must be disjoint; same-lineage comparisons are
