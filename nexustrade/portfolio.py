@@ -1257,6 +1257,42 @@ def CompoundAnnualGrowthRate(
 
 __all__.append("CompoundAnnualGrowthRate")
 
+def ConsecutiveDecrease(
+    indicator: Indicator,
+    period: Literal["Year", "Quarter", "Month"],
+    lookback: float,
+) -> Indicator:
+    """Number of consecutive completed calendar periods (America/New_York; period is Year, Quarter or Month), ending with the last completed period, whose closing value of the inner indicator was strictly higher (ConsecutiveIncrease) or strictly lower (ConsecutiveDecrease) than the previous period's closing value. A period's closing value is the inner indicator's last non-null value observed in that period. The in-progress current period never counts, equal values are not a change, and a completed period with no value breaks the streak. The count is capped at lookback (an integer from 1 to 60). Returns null when no completed period has a value. Examples: ConsecutiveIncrease(LastDividend(KO), Year, 10) >= 10 (KO raised its regular dividend per share in each of the last 10 completed years); ConsecutiveIncrease(Fundamental(AAPL, totalRevenue), Quarter, 8) (consecutive completed quarters of higher reported revenue for AAPL, up to 8).
+    indicator: The inner indicator whose period closing values are compared. Pass CANDIDATE to its asset in a dynamic rebalance pipeline.
+    period: Calendar period (America/New_York) whose closing values are compared.
+    lookback: Whole number of completed periods to count, 1 to 60; the streak is capped here.
+    """
+    d: Dict[str, Any] = {"type": "ConsecutiveDecrease"}
+    d["period"] = _enum(period, ["Year","Quarter","Month"], "period")
+    d["lookback"] = lookback
+    d["indicators"] = [indicator.d]
+    return Indicator(d)
+
+__all__.append("ConsecutiveDecrease")
+
+def ConsecutiveIncrease(
+    indicator: Indicator,
+    period: Literal["Year", "Quarter", "Month"],
+    lookback: float,
+) -> Indicator:
+    """Number of consecutive completed calendar periods (America/New_York; period is Year, Quarter or Month), ending with the last completed period, whose closing value of the inner indicator was strictly higher (ConsecutiveIncrease) or strictly lower (ConsecutiveDecrease) than the previous period's closing value. A period's closing value is the inner indicator's last non-null value observed in that period. The in-progress current period never counts, equal values are not a change, and a completed period with no value breaks the streak. The count is capped at lookback (an integer from 1 to 60). Returns null when no completed period has a value. Examples: ConsecutiveIncrease(LastDividend(KO), Year, 10) >= 10 (KO raised its regular dividend per share in each of the last 10 completed years); ConsecutiveIncrease(Fundamental(AAPL, totalRevenue), Quarter, 8) (consecutive completed quarters of higher reported revenue for AAPL, up to 8).
+    indicator: The inner indicator whose period closing values are compared. Pass CANDIDATE to its asset in a dynamic rebalance pipeline.
+    period: Calendar period (America/New_York) whose closing values are compared.
+    lookback: Whole number of completed periods to count, 1 to 60; the streak is capped here.
+    """
+    d: Dict[str, Any] = {"type": "ConsecutiveIncrease"}
+    d["period"] = _enum(period, ["Year","Quarter","Month"], "period")
+    d["lookback"] = lookback
+    d["indicators"] = [indicator.d]
+    return Indicator(d)
+
+__all__.append("ConsecutiveIncrease")
+
 def ConsecutiveTrue(
     condition: Condition,
     length: float = 1,
@@ -1523,18 +1559,6 @@ def Divide(
     return Indicator(d)
 
 __all__.append("Divide")
-
-def DividendRaiseStreak(
-    asset: Union[str, Dict[str, Any], _Candidate],
-) -> Indicator:
-    """Consecutive completed calendar years, ending with the last completed year, in which the asset's regular cash dividends (summed by ex-date in America/New_York, split-adjusted, special dividends excluded) were strictly higher than the year before; the in-progress current year never counts. Returns 0 when the last completed year was not a raise and null when the asset has no dividend history.
-    asset: Ticker name (ex. SPY, BTC)
-    """
-    d: Dict[str, Any] = {"type": "DividendRaiseStreak"}
-    _set_asset(d, "targetAsset", asset)
-    return Indicator(d)
-
-__all__.append("DividendRaiseStreak")
 
 def DonchianChannel(
     asset: Union[str, Dict[str, Any], _Candidate],
