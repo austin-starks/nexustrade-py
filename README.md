@@ -928,6 +928,32 @@ reinvestment rate, EVA, and conventional IRR. Build one model object from these
 results. For a compute report, pass that object with research findings, exact
 source identities, method requirements, and assumptions to
 `nexustrade.report.write(inputs=analysis_outputs, model=model, images=chart_files)`.
+
+Before report authoring, compute sandboxes with the report-readiness gateway can
+check a saved handoff against the staged method criteria:
+
+```python
+from nexustrade import report
+
+readiness = report.validate(inputs_path="/work/out/report_inputs.json")
+if readiness["status"] == "needs_repair":
+    for finding in readiness["findings"]:
+        print(finding["criterionId"], finding["inputPath"], finding["nextAction"])
+        # Delegate researchQuestion to an investigator when present. The parent
+        # repairs its producer, integrates evidence and regenerates the handoff.
+```
+
+This returns repair instructions, not a grade. It distinguishes uninvestigated
+evidence, unfinished calculations, unsupported assumptions, inconsistencies and
+documented source limitations. It does not rewrite a financial model or run
+model-authored SQL. Calls count toward the existing compute-session cap;
+unchanged handoffs reuse a durable receipt. Following an ambiguous transport
+failure, the next identical call uses replay-only recovery. Independent review
+and final grading remain required. The helper is compute-only; older pinned
+SDKs/gateways do not provide this capability.
+Plan the findings together: several requirements can depend on the same missing
+calculation or source. Resolve that shared work once, rather than launching a
+separate paid task for every finding.
 The full current model is exported as `calculationModel`; selected `report.ref`
 fields organize the handoff without hiding other computed sections. Keep this
 object focused on calculation data, assumptions and provenance; retain raw
