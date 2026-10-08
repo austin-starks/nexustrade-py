@@ -2056,6 +2056,18 @@ def KeltnerChannel(
 
 __all__.append("KeltnerChannel")
 
+def LastDividend(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """The most recent regular cash dividend per share whose ex-dividend date is on or before the evaluation date (America/New_York), split-adjusted onto today's share basis, special dividends excluded. Returns null when the asset has no regular dividend on or before that date. Each payment is one observation for TrailingSum, so TrailingSum(LastDividend(asset), 4) sums the last four payments, which is trailing-twelve-month dividends for a quarterly payer (use 12 for a monthly payer).
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "LastDividend"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("LastDividend")
+
 def LastOrderPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
     side: Literal["Buy", "Sell"],
