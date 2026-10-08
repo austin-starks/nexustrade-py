@@ -32,6 +32,52 @@ LEGACY_IMAGES_DIR = os.path.join(WORK_DIR, "output", "images")
 LEGACY_INPUTS_PATH = os.path.join(WORK_DIR, "report_inputs.json")
 # Code is evidence, not a deliverable, so it stays outside the bundle.
 DEFAULT_CODE_DIR = os.path.join(WORK_DIR, "output", "code")
+MODEL_SOURCE_MAX_BYTES = 4 * 1024 * 1024
+
+
+def write_model(model: Mapping[str, Any], *, path: str | None = None) -> str:
+    """Save the focused calculation model compactly within the host byte limit.
+
+    Retain raw documents/response payloads separately with durable references.
+    This is serialization, not verification of economic inputs or source claims.
+    """
+    target = Path(path or os.path.join(WORK_DIR, "out", "model.json"))
+    serialized = json.dumps(_resolve(model, None), ensure_ascii=False,
+                            separators=(",", ":"), default=str, allow_nan=False)
+    encoded = (serialized + "\n").encode("utf-8")
+    if len(encoded) > MODEL_SOURCE_MAX_BYTES:
+        raise ValueError(f"saved model exceeds {MODEL_SOURCE_MAX_BYTES} bytes; keep raw evidence separately, preserving its references")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(encoded)
+    return str(target)
+
+
+def _same_json_value(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_same_json_value(left[k], right[k]) for k in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_same_json_value(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def _validate_saved_model(model_source: str, calculation_model: Any) -> None:
+    logical = Path(model_source)
+    if not model_source.startswith("/work/") or logical.suffix != ".json" or ".." in logical.parts:
+        raise ValueError("model_source must be an absolute JSON artifact under /work")
+    physical = Path(WORK_DIR) / logical.relative_to("/work")
+    try:
+        with physical.open("rb") as source:
+            encoded = source.read(MODEL_SOURCE_MAX_BYTES + 1)
+        if len(encoded) > MODEL_SOURCE_MAX_BYTES:
+            raise ValueError(f"saved model exceeds {MODEL_SOURCE_MAX_BYTES} bytes; keep raw evidence separately, preserving its references")
+        saved = json.loads(encoded)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"model_source {model_source!r} is not readable JSON: {error}") from error
+    normalized = json.loads(json.dumps(calculation_model, default=str, allow_nan=False))
+    if not _same_json_value(saved, normalized):
+        raise ValueError("model_source does not exactly equal report_inputs.calculationModel; regenerate the saved model first")
 
 ImageSpec = Union[
     tuple[str, str],  # (path, caption)
@@ -708,6 +754,9 @@ def write_inputs(
     report claims; broad references preserve model evidence for the grader but do
     not authorize nested numbers for prose or tables. Keep model focused on
     calculation data, assumptions, and provenance rather than raw files.
+    Use write_model(model) to save it compactly before write_inputs. A supplied
+    model_source is checked for existence, the host's 4 MiB byte limit, and exact
+    current-model equality before any existing report inputs are replaced.
     Optional source_aliases
     maps durable fetch IDs to bibliography IDs and validates explicit linkage;
     {} checks an intentionally shared namespace. Legacy calls leave receipt
@@ -759,6 +808,8 @@ def write_inputs(
     _validate_validation_references(inputs)
     if source_aliases is not None:
         validate_source_references(inputs, aliases=source_aliases)
+    if model_source is not None:
+        _validate_saved_model(model_source, inputs.get("calculationModel"))
     Path(path).write_text(json.dumps(inputs, indent=2, default=str) + "\n", encoding="utf-8")
     return path
 

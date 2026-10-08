@@ -71,9 +71,11 @@ class SecSdkTests(unittest.TestCase):
         self.assertEqual(result['value'], 12)
         self.assertEqual(result['confidence'], row['confidence'])
         report_path = os.path.join(self.tmp.name, 'report-inputs.json')
-        report.write_inputs({'statistics': {'da': report.ref('da', 'value', provenance_path=('da',))}},
-                            model={'da': result}, preserve_references=True,
-                            model_source='/work/out/model.json', path=report_path)
+        with patch.object(report, 'WORK_DIR', self.tmp.name):
+            model_path = report.write_model({'da': result})
+            report.write_inputs({'statistics': {'da': report.ref('da', 'value', provenance_path=('da',))}},
+                                model={'da': result}, preserve_references=True,
+                                model_source=model_path, path=report_path)
         with open(report_path, encoding='utf-8') as written:
             handoff = json.load(written)
         self.assertEqual(handoff['statistics']['da'], 12)
