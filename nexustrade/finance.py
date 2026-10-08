@@ -609,6 +609,10 @@ def financing_cash_period(
     magnitudes. Noncash conversions/mark changes are NOT cash proceeds. This
     checks funding, not distribution eligibility, forecast validity or capital
     classification. Split periods at events if their timing matters.
+
+    A negative residual within the floats' representational resolution is
+    recorded as roundoff, not missing financing. The raw balance, numerical
+    bound and adjustment are returned explicitly; larger deficits still fail.
     """
     opening = _finite("opening_cash", opening_cash)
     flows = {
@@ -628,19 +632,31 @@ def financing_cash_period(
     if opening < 0 or any(v < 0 for k, v in flows.items()
                           if k not in ("fcff", "net_borrowing", "nonoperating_cash_income")):
         raise ValueError("Opening cash and cash payment/proceeds magnitudes must be nonnegative")
-    receipts = sum(flows[k] for k in ("fcff", "nonoperating_cash_income", "net_borrowing",
-                                     "equity_issue_proceeds", "investment_sales"))
-    payments = sum(flows[k] for k in ("after_tax_interest", "preferred_dividends",
+    receipt_keys = ("fcff", "nonoperating_cash_income", "net_borrowing",
+                    "equity_issue_proceeds", "investment_sales")
+    payment_keys = ("after_tax_interest", "preferred_dividends",
         "minority_distributions", "buyback_cash", "claim_redemptions",
-        "common_distributions", "investment_purchases"))
-    net_cash = receipts - payments
-    closing = opening + net_cash
-    if not math.isfinite(closing):
-        raise ValueError("Cash reconciliation overflow")
+        "common_distributions", "investment_purchases")
+    signed_flows = [*(flows[k] for k in receipt_keys),
+                    *(-flows[k] for k in payment_keys)]
+    terms = [opening, *signed_flows]
+    try:
+        raw_closing = math.fsum(terms)
+        raw_net_cash = math.fsum(signed_flows)
+        # One representational spacing per supplied scalar, plus the result's
+        # spacing. No fixed currency tolerance and no upstream error allowance.
+        roundoff_bound = math.fsum([*(math.ulp(v) for v in terms),
+                                   math.ulp(raw_closing)])
+    except OverflowError:
+        raise ValueError("Cash reconciliation overflow") from None
+    adjustment = -raw_closing if -roundoff_bound <= raw_closing < 0 else 0.0
+    closing = raw_closing + adjustment
     if closing < 0:
         raise ValueError(f"Unfunded cash deficit {abs(closing):.12g}; specify financing or revise the scenario")
-    return {"opening_cash": opening, "flows": flows, "net_cash": net_cash,
-            "closing_cash": closing}
+    return {"opening_cash": opening, "flows": flows,
+            "net_cash": raw_net_cash + adjustment, "closing_cash": closing,
+            "raw_closing_cash": raw_closing, "roundoff_bound": roundoff_bound,
+            "roundoff_adjustment": adjustment}
 
 
 def terminal_investment_transition(
