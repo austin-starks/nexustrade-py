@@ -2,11 +2,77 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from nexustrade import report
 
 
 class ReportWriteTests(unittest.TestCase):
+    def setUp(self):
+        workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace.cleanup)
+        work = patch.object(report, "WORK_DIR", workspace.name)
+        work.start()
+        self.addCleanup(work.stop)
+
+    def saved_model(self, model):
+        return report.write_model(model)
+
+    def test_saved_model_preflight_preserves_report_on_missing_malformed_or_stale_source(self):
+        model = {"value": 7, "flag": True}
+        target = Path(report.WORK_DIR) / "out" / "report_inputs.json"
+        source = Path(report.WORK_DIR) / "out" / "model.json"
+        report.write_inputs({"title": "valid"}, path=str(target))
+        before = target.read_bytes()
+        for content, expected in [(None, "not readable JSON"), ("{broken", "not readable JSON"),
+                                  (json.dumps({"value": 7, "flag": 1}), "does not exactly equal")]:
+            if content is None:
+                source.unlink(missing_ok=True)
+            else:
+                source.write_text(content)
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, expected):
+                report.write_inputs({"title": "replacement"}, model=model, model_source=str(source), path=str(target))
+            self.assertEqual(target.read_bytes(), before)
+        source.write_text(json.dumps({"flag": True, "value": 7.0}))
+        report.write_inputs({"title": "replacement"}, model=model, model_source=str(source), path=str(target))
+        self.assertEqual(json.loads(target.read_text())["calculationModel"], model)
+
+    def test_actual_saved_model_size_is_checked_even_when_compact_model_fits(self):
+        model = {"value": 7}
+        target = Path(report.WORK_DIR) / "report_inputs.json"
+        source = Path(self.saved_model(model))
+        report.write_inputs({"title": "valid"}, path=str(target))
+        before = target.read_bytes()
+        encoded = json.dumps(model).encode()
+        source.write_bytes(encoded + b" " * (report.MODEL_SOURCE_MAX_BYTES - len(encoded)))
+        report.write_inputs({}, model=model, model_source=str(source), path=str(target))
+        accepted = target.read_bytes()
+        source.write_bytes(source.read_bytes() + b" ")
+        with self.assertRaisesRegex(ValueError, f"exceeds {report.MODEL_SOURCE_MAX_BYTES} bytes"):
+            report.write_inputs({}, model=model, model_source=str(source), path=str(target))
+        self.assertEqual(target.read_bytes(), accepted)
+        self.assertNotEqual(accepted, before)
+
+    def test_model_writer_counts_utf8_bytes_and_never_overwrites_with_oversized_data(self):
+        target = Path(self.saved_model({"value": 7}))
+        before = target.read_bytes()
+        with self.assertRaisesRegex(ValueError, "saved model exceeds"):
+            report.write_model({"raw": "é" * (report.MODEL_SOURCE_MAX_BYTES // 2)}, path=str(target))
+        self.assertEqual(target.read_bytes(), before)
+        model = {"unicode": "é", "evidence": {"path": "/work/source.txt"}}
+        report.write_model(model, path=str(target))
+        self.assertEqual(json.loads(target.read_text()), model)
+        self.assertNotIn(b"\\u00e9", target.read_bytes())
+
+    def test_saved_model_preflight_distinguishes_read_failure_from_absence(self):
+        model = {"value": 7}
+        source = self.saved_model(model)
+        target = Path(report.WORK_DIR) / "report_inputs.json"
+        with patch.object(Path, "open", side_effect=OSError("filesystem transport unavailable")):
+            with self.assertRaisesRegex(ValueError, "filesystem transport unavailable"):
+                report.write_inputs({}, model=model, model_source=source, path=str(target))
+        self.assertFalse(target.exists())
+
     def test_malformed_comparison_never_overwrites_a_valid_report(self):
         model = {'left': 12, 'right': 12, 'provenance': {'sourceIds': ['sec:one']}}
         def payload():
@@ -24,7 +90,7 @@ class ReportWriteTests(unittest.TestCase):
             target = Path(directory) / 'report_inputs.json'
             def write(value):
                 report.write_inputs(value, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
             write(payload())
             saved = target.read_bytes()
             for field in ('id', 'evidenceId', 'left', 'right'):
@@ -67,7 +133,7 @@ class ReportWriteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / 'report_inputs.json'
             report.write_inputs(payload, model=model, preserve_references=True,
-                                model_source='/work/out/model.json', path=str(target))
+                                model_source=self.saved_model(model), path=str(target))
             saved = json.loads(target.read_text())
             self.assertEqual(saved['reportViews'][0]['rows'], [['base', 251.08]])
             self.assertEqual(saved['modelReferences'][0]['inputPath'],
@@ -104,7 +170,7 @@ class ReportWriteTests(unittest.TestCase):
             }
             with self.assertRaises(report.ReportValidationError) as raised:
                 report.write_inputs(payload, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
             self.assertEqual([issue.path for issue in raised.exception.issues], [
                 ('reportEvidence', 0, 'paragraphs', 0, 0),
                 ('reportEvidence', 0, 'paragraphs', 0, 1),
@@ -134,20 +200,20 @@ class ReportWriteTests(unittest.TestCase):
                     report.ref('value', provenance_path=('provenance',)),
                 ]]}],
             }, model=model, preserve_references=True,
-                model_source='/work/out/model.json', path=str(target))
+                model_source=self.saved_model(model), path=str(target))
             saved = target.read_bytes()
             self.assertEqual(json.loads(saved)['reportEvidence'][0]['paragraphs'][0][1], 12.5)
             with self.assertRaisesRegex(ValueError, 'exact report.ref'):
                 report.write_inputs({
                     'reportEvidence': [{'id': 'dated', 'paragraphs': [[42]]}],
                 }, model=model, preserve_references=True,
-                    model_source='/work/out/model.json', path=str(target))
+                    model_source=self.saved_model(model), path=str(target))
             with self.assertRaisesRegex(ValueError, 'exact report.ref'):
                 report.write_inputs({
                     'reportViews': [{'id': 'metric', 'type': 'metricGrid',
                                      'items': [{'label': ['Value'], 'value': [42]}]}],
                 }, model=model, preserve_references=True,
-                    model_source='/work/out/model.json', path=str(target))
+                    model_source=self.saved_model(model), path=str(target))
             self.assertEqual(target.read_bytes(), saved)
 
     def test_write_accepts_path_alias_and_rejects_conflicting_paths(self):
@@ -244,9 +310,11 @@ class ReportWriteTests(unittest.TestCase):
                 report.WORK_DIR = directory
                 target = Path(directory) / 'inputs.json'
                 model_path = Path(directory) / 'out' / 'model.json'
+                model = {'value': 7, 'provenance': {'definition': 'example scalar'}}
+                report.write_model(model, path=str(model_path))
                 report.write_inputs(
                     {'value': report.ref('value', provenance_path=('provenance',))},
-                    model={'value': 7, 'provenance': {'definition': 'example scalar'}},
+                    model=model,
                     preserve_references=True, model_source=str(model_path), path=str(target)
                 )
                 saved = json.loads(target.read_text())
@@ -308,7 +376,7 @@ class ReportWriteTests(unittest.TestCase):
             for value, source in ((12, 'fetch:one'), (18, 'fetch:two')):
                 model['facts']['flow'].update(value=value, sourceId=source)
                 report.write_inputs(payload, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
                 data = json.loads(target.read_text())
                 self.assertEqual(data['statistics']['fcff'], value)
                 self.assertEqual(data['modelReferences'], [{
@@ -326,7 +394,7 @@ class ReportWriteTests(unittest.TestCase):
             report.write_inputs(payload, model=model, path=str(target))
             self.assertNotIn('modelReferences', json.loads(target.read_text()))
             report.write(inputs=payload, model=model, preserve_references=True,
-                         model_source='/work/out/model.json', inputs_path=str(target),
+                         model_source=self.saved_model(model), inputs_path=str(target),
                          markdown_path=str(Path(directory) / 'output.md'),
                          images_dir=str(Path(directory) / 'images'),
                          code_dir=str(Path(directory) / 'code'), code_paths=[])
@@ -359,12 +427,12 @@ class ReportWriteTests(unittest.TestCase):
                                             path=str(target))
                     with self.assertRaisesRegex(ValueError, 'provenance_path'):
                         report.write_inputs(payload, model=model, preserve_references=True,
-                                            model_source='/work/out/model.json', path=str(target))
+                                            model_source=self.saved_model(model), path=str(target))
                     self.assertFalse(target.exists())
             report.write_inputs(
                 {'statistics': {'claim': report.ref('value', provenance_path=('provenance',))}},
                 model=model, preserve_references=True,
-                model_source='/work/out/model.json', path=str(target))
+                model_source=self.saved_model(model), path=str(target))
             self.assertEqual(json.loads(target.read_text())['statistics']['claim'], 42)
 
     def test_manifest_paths_resolve_from_emitted_inputs_not_saved_model(self):
@@ -422,11 +490,11 @@ class ReportWriteTests(unittest.TestCase):
             target = Path(directory) / 'report_inputs.json'
             with self.assertRaisesRegex(ValueError, r'validationChecks\[0\]\.left.*provenance\.sourceIds'):
                 report.write_inputs(payload, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
             self.assertFalse(target.exists())
             model['provenance']['left'] = {'sourceIds': ['lake:one']}
             report.write_inputs(payload, model=model, preserve_references=True,
-                                model_source='/work/out/model.json', path=str(target))
+                                model_source=self.saved_model(model), path=str(target))
             saved = json.loads(target.read_text())
             self.assertEqual(saved['modelReferences'][0]['provenance']['sourceIds'], ['lake:one'])
             self.assertEqual(saved['validationChecks'], payload['validationChecks'])
@@ -435,13 +503,13 @@ class ReportWriteTests(unittest.TestCase):
             model['values']['left'] = {'value': 12}
             with self.assertRaisesRegex(ValueError, 'exact scalar report.ref'):
                 report.write_inputs(payload, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
             model['values']['left'] = 12
 
             payload['validationChecks'][0]['left']['inputPath'] = ['findings', 'missing']
             with self.assertRaisesRegex(ValueError, 'found 0 references'):
                 report.write_inputs(payload, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
             self.assertEqual(json.loads(target.read_text()), saved)
 
     def test_independent_validation_rejects_shared_declared_source(self):
@@ -460,11 +528,11 @@ class ReportWriteTests(unittest.TestCase):
             target = Path(directory) / 'report_inputs.json'
             with self.assertRaisesRegex(ValueError, 'label it reconciliation'):
                 report.write_inputs(payload, model=model, preserve_references=True,
-                                    model_source='/work/out/model.json', path=str(target))
+                                    model_source=self.saved_model(model), path=str(target))
             self.assertFalse(target.exists())
             payload['validationChecks'][0]['kind'] = 'reconciliation'
             report.write_inputs(payload, model=model, preserve_references=True,
-                                model_source='/work/out/model.json', path=str(target))
+                                model_source=self.saved_model(model), path=str(target))
 
     def test_current_model_drives_repeated_values_and_sources(self):
         model = {'case': {'value': 72}, 'sources': [{'id': 'filing', 'url': 'https://example.test/filing'}]}

@@ -1372,12 +1372,13 @@ filing identity, and status. Optional durable references serialize those records
 alongside current values rather than discarding source meaning:
 
 ```python
-model = {"remaining_fcff": remaining}  # Save this same model to model.json.
+model = {"remaining_fcff": remaining}
+model_path = report.write_model(model)  # Compact UTF-8 JSON under /work/out.
 inputs = {"statistics": {"remaining_fcff": report.ref(
     "remaining_fcff", "value", provenance_path=("remaining_fcff",)
 )}}
 report.write_inputs(inputs, model=model, preserve_references=True,
-                    model_source="/work/out/model.json")
+                    model_source=model_path)
 ```
 
 `modelReferences` contains `inputPath`, `modelPath`, `modelSource`, and
@@ -1386,7 +1387,13 @@ when the model changes. With `preserve_references=True`, references to numeric
 values or digit-bearing strings require both `model_source` and
 `provenance_path`; the SDK raises before writing incomplete reference metadata.
 Unbound prose strings are assessed by semantic review. Paths are arrays of object
-keys/list indices. Supply the actual saved artifact path. This is
+keys/list indices. Supply the actual saved artifact path. `write_inputs` checks
+that file before replacing the handoff: it must be readable JSON, at most 4 MiB
+in UTF-8 bytes, and exactly equal the emitted `calculationModel`. `write_model`
+checks the same byte boundary before replacing a saved model. Keep raw evidence
+in separate files and preserve its references in focused calculation data; do
+not remove required research or outputs to fit. Regenerate the saved model and
+handoff together after changing calculations. This is
 executor-declared lineage, **not independently verified
 source authority**. The host must still check source support and accounting
 meaning. Omitting `preserve_references` keeps legacy JSON output unchanged.
