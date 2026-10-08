@@ -30,6 +30,8 @@ __all__: List[str] = [
     "sell",
     "alert",
     "launch_agent",
+    "update_watchlist",
+    "watchlist_universe",
     "dynamic_rebalance",
     "mean_variance_allocation",
     "risk_parity_allocation",
@@ -506,6 +508,41 @@ def launch_agent(
             "cooldownMinutes": cooldown_minutes,
         }
     )
+
+
+def watchlist_universe(watchlist_key: str) -> Dict[str, Any]:
+    """The latest revision of the list an update_watchlist producer in this portfolio maintains."""
+    if not watchlist_key or not watchlist_key.strip():
+        raise ValueError("watchlist_universe requires a watchlist_key")
+    return {"source": "WATCHLIST", "watchlistKey": watchlist_key}
+
+
+def update_watchlist(
+    *,
+    watchlist_key: str,
+    member_id: str,
+    output: Optional[Dict[str, Any]] = None,
+    instrument: Optional[Literal["Equity", "Option", "All"]] = None,
+    amount_basis: Optional[Literal["LowerBound", "Midpoint", "UpperBound"]] = None,
+    chamber: Optional[Literal["All", "House", "Senate"]] = None,
+) -> Dict[str, Any]:
+    """Keep a portfolio-scoped list set to every security where a member of
+    Congress still holds disclosed purchases. Refreshes every tick, places no
+    orders and takes no condition. Live and paper wait for durable publication."""
+    return {
+        "type": "UpdateWatchlist",
+        "watchlistKey": watchlist_key,
+        **({"output": output} if output is not None else {}),
+        "source": _compact(
+            {
+                "type": "PoliticalRemainingPurchases",
+                "memberId": member_id,
+                "instrument": instrument,
+                "amountBasis": amount_basis,
+                "chamber": chamber,
+            }
+        ),
+    }
 
 
 def mean_variance_allocation(

@@ -967,6 +967,32 @@ for batch in result.iter_batches():    # or stream within your own budget
 Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
 compatible backing engine; your SQL does not change when it does.
 
+## Managed watchlist universes
+
+`nt.update_watchlist(watchlist_key=..., member_id=..., instrument=..., amount_basis=..., chamber=..., output=...)`
+maintains a visible managed list from `PoliticalRemainingPurchases`. Its strategy
+has no condition and places no orders. `nt.watchlist_universe(watchlist_key)` selects
+that producer's committed membership for a separate `DynamicRebalance` in the same
+portfolio. Each key has one producer and may have several consumers. Other action
+types cannot consume this universe.
+
+```python
+producer = nt.update_watchlist(
+    watchlist_key="pelosi-holdings", member_id="P000197", instrument="Equity",
+    amount_basis="Midpoint", chamber="All",
+    output={"name": "Pelosi disclosed holdings", "purpose": "Follow public holdings",
+            "alertSettings": {"onChange": True, "inApp": True, "email": True,
+                              "briefCadence": "weekly"}},
+)
+consumer_universe = nt.watchlist_universe("pelosi-holdings")
+```
+
+`output` supplies initial name, purpose and alerts. Subsequent user renames and
+settings remain authoritative. Live and paper consumers wait for durable list
+publication; backtests keep membership local to the run and never edit the user's
+visible list. Discovery and data loads remain full, so this does not establish a
+performance saving. Omitted amount basis uses `LowerBound`.
+
 ## Complete method reference
 
 Every public method on `NexusTradeClient`. A test in this package fails if one
