@@ -954,6 +954,23 @@ SDKs/gateways do not provide this capability.
 Plan the findings together: several requirements can depend on the same missing
 calculation or source. Resolve that shared work once, rather than launching a
 separate paid task for every finding.
+Validation also captures retained child research from
+`/work/.nexustrade/research-evidence` into a separate reserved
+`_report_readiness_evidence` field in the request copy. Saved inputs and the
+calculation model are unchanged. It supplies full handoff questions, source
+locators, limitations and file inventories across retained continuation parents.
+Whole UTF-8 selections up to 256 KiB are included within a 2 MiB context budget
+and the existing 4 MiB total request limit; smaller selections are included first.
+Files are never truncated. `contentState` distinguishes `included`, `empty_file`,
+`not_inlined_binary`, `not_inlined_file_limit` and `not_inlined_context_limit`.
+`no_staged_handoffs` means no retained child handoff, not an absent disclosure.
+Non-inlined files retain exact workspace paths and declared checksums so an
+investigator can stage a smaller complete selection with explicit coverage.
+Missing, changed or unsafe staged files refuse validation before a paid call.
+These child-declared sources still require inspection and parent integration;
+the SDK does not authenticate them or choose accounting/forecast assumptions.
+The evidence snapshot is included in cache identity: changed research can be
+validated, while an unchanged model and evidence reuse the same receipt.
 The full current model is exported as `calculationModel`; selected `report.ref`
 fields organize the handoff without hiding other computed sections. Keep this
 object focused on calculation data, assumptions and provenance; retain raw

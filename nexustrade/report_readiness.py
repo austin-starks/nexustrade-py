@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from .host import _gateway_credentials, _touch_host_activity
+from .report_evidence import EVIDENCE_FIELD, MAX_CONTEXT_BYTES, staged_research_context
 
 MAX_INPUT_BYTES = 4 * 1024 * 1024
-REQUEST_CONTRACT = "report-readiness-native-schema-exact-model-v1"
+REQUEST_CONTRACT = "report-readiness-native-schema-staged-evidence-v2"
 CRITERIA_PATH = "/work/acceptance/acceptance_criteria.json"
 MISSING_STATES = frozenset({"not_yet_investigated", "unresolved_evidence", "absent_after_investigation", "analysis_not_performed", "unsupported_assumption", "inconsistent"})
 
@@ -104,6 +105,9 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     grade. Investigators retrieve evidence; the parent repairs its producer and
     assumptions, saves new inputs, and calls again. This helper never rewrites
     the model or executes model-authored SQL. Unchanged inputs reuse the receipt.
+    Complete bounded child research selections, source locators and limitations
+    are captured separately under _report_readiness_evidence in the request copy.
+    Empty or non-inlined content is a transport state, not issuer non-disclosure.
     After an ambiguous transport failure, the same call uses replay-only recovery
     rather than buying another response. All paid calls use the owning run cap.
     """
@@ -121,7 +125,15 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
                 for row in criteria_document.get("acceptanceCriteria", []) if row.get("kind") == "required"]
     if not isinstance(inputs, dict) or not criteria:
         raise ValueError("Report validation requires object inputs and staged required method criteria")
-    payload = {"inputs": inputs, "criteria": criteria}
+    if EVIDENCE_FIELD in inputs:
+        raise ValueError(f"{EVIDENCE_FIELD} is reserved for SDK-captured research evidence")
+    original_payload = {"inputs": {**inputs, EVIDENCE_FIELD: {}}, "criteria": criteria}
+    original_bytes = len(json.dumps(original_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+    # Replace the empty object using the exact remaining envelope byte budget.
+    evidence = staged_research_context(work, max_bytes=min(MAX_CONTEXT_BYTES, MAX_INPUT_BYTES - original_bytes + 2))
+    # Stable retained evidence precedes the changing model, permitting provider
+    # prefix caching across repairs without omitting either from cache identity.
+    payload = {"inputs": {EVIDENCE_FIELD: evidence, **inputs}, "criteria": criteria}
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(encoded) > MAX_INPUT_BYTES:
         raise ValueError("Combined validator input exceeds the byte limit; nothing was truncated")
