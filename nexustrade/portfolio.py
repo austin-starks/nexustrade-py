@@ -31,6 +31,19 @@ __all__: List[str] = [
     "alert",
     "launch_agent",
     "update_watchlist",
+    "update_institutional_watchlist",
+    "update_insider_watchlist",
+    "update_screener_watchlist",
+    "screen_column",
+    "screen_price",
+    "screen_bar_volume",
+    "screen_bar_dollar_volume",
+    "screen_disclosure",
+    "screen_compare",
+    "screen_all",
+    "screen_any",
+    "screen_top",
+    "screen_percentile",
     "watchlist_universe",
     "dynamic_rebalance",
     "mean_variance_allocation",
@@ -494,6 +507,7 @@ def launch_agent(
     continue_existing: bool,
     skip_planning: bool,
     cooldown_minutes: Optional[int] = None,
+    watchlist_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -506,6 +520,7 @@ def launch_agent(
             "continueExisting": continue_existing,
             "skipPlanning": skip_planning,
             "cooldownMinutes": cooldown_minutes,
+            "watchlistId": watchlist_id,
         }
     )
 
@@ -543,6 +558,30 @@ def update_watchlist(
             }
         ),
     }
+
+
+def update_institutional_watchlist(
+    *, watchlist_key: str, manager_cik: str, window_days: Optional[int] = None,
+    output: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Follow an exact manager's latest public complete effective equity book."""
+    return {"type": "UpdateWatchlist", "watchlistKey": watchlist_key,
+            **({"output": output} if output is not None else {}),
+            "source": _compact({"type": "InstitutionalHoldings", "managerCik": manager_cik,
+                                "windowDays": window_days})}
+
+
+def update_insider_watchlist(
+    *, watchlist_key: str, window_days: int,
+    role: Optional[Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"]] = None,
+    owner_cik: Optional[str] = None, issuer_cik: Optional[str] = None,
+    output: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Select qualifying equity purchases within a public-availability window."""
+    return {"type": "UpdateWatchlist", "watchlistKey": watchlist_key,
+            **({"output": output} if output is not None else {}),
+            "source": _compact({"type": "InsiderPurchases", "windowDays": window_days,
+                                "role": role, "ownerCik": owner_cik, "issuerCik": issuer_cik})}
 
 
 def mean_variance_allocation(
@@ -644,6 +683,57 @@ def rebalance_expected_benefit() -> Indicator:
 def rebalance_net_benefit() -> Indicator:
     return _rebalance_decision_metric("netBenefit")
 
+
+
+def update_screener_watchlist(*, watchlist_key: str, columns: list[dict[str, Any]],
+                             filter: dict[str, Any], refresh_minutes: int,
+                             selection: dict[str, Any] | None = None,
+                             output: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Saved PIT scalar screen. Bar liquidity is known only after its bar is public."""
+    return _compact({"type": "UpdateWatchlist", "watchlistKey": watchlist_key, "output": output,
+        "source": _compact({"type": "Screener", "columns": columns, "filter": filter,
+                            "refreshMinutes": refresh_minutes, "selection": selection})})
+
+
+def screen_column(key: str, metric: dict[str, Any]) -> dict[str, Any]:
+    return {"key": key, "metric": metric}
+
+
+def screen_price() -> dict[str, Any]:
+    return {"type": "ObservedPrice"}
+
+
+def screen_bar_volume() -> dict[str, Any]:
+    """Certified completed historical OHLC volume; live quote/trade volume is unknown."""
+    return {"type": "BarVolume"}
+
+
+def screen_bar_dollar_volume() -> dict[str, Any]:
+    return {"type": "BarDollarVolume"}
+
+
+def screen_disclosure(source: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "Disclosure", "source": source}
+
+
+def screen_compare(field: str, op: str, value: float) -> dict[str, Any]:
+    return {"type": "Compare", "field": field, "op": op, "value": value}
+
+
+def screen_all(*rules: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "All", "rules": list(rules)}
+
+
+def screen_any(*rules: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "Any", "rules": list(rules)}
+
+
+def screen_top(field: str, limit: int, direction: str = "Descending") -> dict[str, Any]:
+    return {"type": "Top", "field": field, "direction": direction, "limit": limit}
+
+
+def screen_percentile(field: str, percentile: float, direction: str = "Descending") -> dict[str, Any]:
+    return {"type": "Percentile", "field": field, "direction": direction, "percentile": percentile}
 
 
 def dynamic_rebalance(

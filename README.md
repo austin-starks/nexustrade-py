@@ -1036,6 +1036,38 @@ publication; backtests keep membership local to the run and never edit the user'
 visible list. Discovery and data loads remain full, so this does not establish a
 performance saving. Omitted amount basis uses `LowerBound`.
 
+`update_institutional_watchlist` follows an exact manager's latest publicly
+available complete equity book. `update_insider_watchlist` selects qualifying
+positive purchases by first public availability, with optional owner, issuer,
+and role scope. Both use the same publication and consumer contract:
+
+```python
+manager = nt.update_institutional_watchlist(
+    watchlist_key="berkshire-equities", manager_cik="1067983",
+)
+insider = nt.update_insider_watchlist(
+    watchlist_key="insider-purchases", window_days=90, role="OfficerOrDirector",
+)
+screen = nt.update_screener_watchlist(
+    watchlist_key="berkshire-top-20", refresh_minutes=1440,
+    columns=[nt.screen_column("price", nt.screen_price()),
+             nt.screen_column("holding", nt.screen_disclosure(manager["source"]))],
+    filter=nt.screen_all(nt.screen_compare("price", "Gte", 5),
+                         nt.screen_compare("holding", "Gt", 0)),
+    selection=nt.screen_top("holding", 20),
+)
+screen_universe = nt.watchlist_universe("berkshire-top-20")
+```
+
+The screen evaluates on its scheduled cadence and reuses accepted membership
+between refreshes. Missing facts remain unknown. `screen_any` composes OR rules;
+`screen_percentile` ranks the filtered candidates with known rank values.
+`screen_bar_volume` and `screen_bar_dollar_volume` require a completed historical
+bar; live quotes do not supply those metrics in this release. Price and disclosure
+metrics support live screens. Failed coverage or publication blocks new allocation
+while consumers retain their exit behavior. Screen execution uses in-memory DuckDB;
+no local database volume or LLM call is required for refreshes.
+
 ## Complete method reference
 
 Every public method on `NexusTradeClient`. A test in this package fails if one
