@@ -13,9 +13,11 @@ from typing import Any
 
 from .host import _gateway_credentials, _touch_host_activity
 from .report_evidence import EVIDENCE_FIELD, MAX_CONTEXT_BYTES, staged_research_context
+from .report_json import _resolve_pointer, assert_report_envelope, REPORT_INPUTS_MAX_BYTES
+from .report_analysis import construction_checkpoint, record_readiness
 
-MAX_INPUT_BYTES = 4 * 1024 * 1024
-REQUEST_CONTRACT = "report-readiness-native-schema-staged-evidence-v2"
+MAX_INPUT_BYTES = REPORT_INPUTS_MAX_BYTES
+REQUEST_CONTRACT = "report-readiness-lossless-construction-v3"
 CRITERIA_PATH = "/work/acceptance/acceptance_criteria.json"
 MISSING_STATES = frozenset({"not_yet_investigated", "unresolved_evidence", "absent_after_investigation", "analysis_not_performed", "unsupported_assumption", "inconsistent"})
 
@@ -26,33 +28,6 @@ def _read_json(path: Path) -> Any:
     if len(data) > MAX_INPUT_BYTES:
         raise ValueError(f"Report validator input {path} exceeds {MAX_INPUT_BYTES} bytes; nothing was truncated")
     return json.loads(data)
-
-
-def _resolve_pointer(root: Any, pointer: str) -> Any:
-    if pointer == "":
-        return root
-    if not pointer.startswith("/"):
-        raise ValueError("Validator inputPath must be an RFC 6901 pointer")
-    value = root
-    for component in pointer[1:].split("/"):
-        # Validate the machine pointer format; no semantic keyword matching.
-        index = 0
-        while index < len(component):
-            if component[index] == "~":
-                if index + 1 >= len(component) or component[index + 1] not in "01":
-                    raise ValueError("Invalid validator pointer escape")
-                index += 1
-            index += 1
-        key = component.replace("~1", "/").replace("~0", "~")
-        if isinstance(value, list):
-            if not key.isascii() or not key.isdecimal() or str(int(key)) != key:
-                raise ValueError("Invalid validator array pointer")
-            value = value[int(key)]
-        elif isinstance(value, dict):
-            value = value[key]
-        else:
-            raise ValueError("Validator pointer does not resolve")
-    return value
 
 
 def _check_result(result: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +102,10 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
         raise ValueError("Report validation requires object inputs and staged required method criteria")
     if EVIDENCE_FIELD in inputs:
         raise ValueError(f"{EVIDENCE_FIELD} is reserved for SDK-captured research evidence")
+    assert_report_envelope(inputs)
+    checkpoint = construction_checkpoint(inputs)
+    if checkpoint is not None:
+        return checkpoint
     original_payload = {"inputs": {**inputs, EVIDENCE_FIELD: {}}, "criteria": criteria}
     original_bytes = len(json.dumps(original_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
     # Replace the empty object using the exact remaining envelope byte budget.
@@ -146,7 +125,9 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     if receipt.exists():
         existing = json.loads(receipt.read_text())
         if "result" in existing:
-            return _check_result(existing["result"], payload)
+            result = _check_result(existing["result"], payload)
+            record_readiness(receipt, result, inputs)
+            return result
     try:
         with marker.open("x"):
             pass
@@ -172,4 +153,5 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     temporary.write_text(json.dumps({"state": "completed", "inputKey": key, "result": result}) + "\n")
     temporary.replace(receipt)
     marker.unlink(missing_ok=True)
+    record_readiness(receipt, result, inputs)
     return result

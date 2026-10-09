@@ -929,6 +929,37 @@ results. For a compute report, pass that object with research findings, exact
 source identities, method requirements, and assumptions to
 `nexustrade.report.write(inputs=analysis_outputs, model=model, images=chart_files)`.
 
+For a calculation report with staged criteria, declare `report.plan_analysis(...)`
+before construction. Supply one `producer_path`, canonical `model_path`, frozen
+`source_paths`, optional literal `producer_args`, and model-authored `components`: each has `id`, `kind`
+(`calculation`, `research`, `delivery`), actual `criterionIds`, direct `dependsOn`
+IDs and `outputPaths` (RFC 6901 pointers into the model). Optional `decisions`
+have `kind` (`reported_fact`, `accounting_definition`, `future_policy`,
+`implementation`), `state` (`resolved`, `unresolved`), `explanation`, and
+`evidencePaths`. Cover all staged required criteria. This is a work plan, not
+financial definitions supplied by the SDK.
+
+Use `report.execute_analysis(timeout_sec=300)` to execute the declared
+Python producer once. It records current source/producer/model bytes; subsequent
+`report.write` attaches derived `analysisWork`. The producer can write both the
+model and report inputs; successful execution refreshes only that SDK-owned state
+after checking the report contains exactly the current canonical model. Formatting or a patch script cannot
+mark stale outputs complete. `report.analysis_status()` returns current component
+states (`not_started`, `computed`, `review_rejected`, `accepted`) and `nextTasks`.
+Current semantic readiness is required for acceptance; execution alone does not
+establish accounting correctness. Plan historical periods using their own aligned
+inputs and definitions. An unresolved future distribution policy only blocks its
+direct dependents. Choose and justify analyst assumptions rather than treating
+unmade choices as missing issuer disclosures. Preserve real source absence.
+Inspected decision evidence is included in the execution's dependency identity,
+even when it is not repeated in `source_paths`. Only the declared artifacts are
+bound; the SDK does not fingerprint the repository or choose financial answers.
+If the producer only rebuilt the model, `execute_analysis` returns
+`reportExportRequired=true`; export the report from that current model. A failed
+producer restores the previous model/report snapshot and cannot claim new success.
+An investigated, method-permitted limitation can be an explicit sourced model
+record for semantic review. An unexplained null or unchosen assumption cannot.
+
 Before report authoring, compute sandboxes with the report-readiness gateway can
 check a saved handoff against the staged method criteria:
 
@@ -936,14 +967,23 @@ check a saved handoff against the staged method criteria:
 from nexustrade import report
 
 readiness = report.validate(inputs_path="/work/out/report_inputs.json")
-if readiness["status"] == "needs_repair":
+if readiness["status"] == "needs_construction":
+    print(readiness["nextTasks"])  # Build ready components; no paid review was called.
+elif readiness["status"] == "needs_repair":
     for finding in readiness["findings"]:
         print(finding["criterionId"], finding["inputPath"], finding["nextAction"])
         # Delegate researchQuestion to an investigator when present. The parent
         # repairs its producer, integrates evidence and regenerates the handoff.
 ```
 
-This returns repair instructions, not a grade. It distinguishes uninvestigated
+This returns repair instructions, not a grade. A declared unfinished construction
+plan returns `needs_construction` locally without a paid broad review. Current
+producer output and all dependencies must be present before semantic readiness.
+The host transmits complete repeated values through a lossless alias dictionary,
+including repeated provenance and staged evidence, and checks the full assembled
+request's model context budget before dispatch. Capacity refusal is infrastructure,
+not an analytical gap; evidence is never silently truncated.
+It distinguishes uninvestigated
 evidence, unfinished calculations, unsupported assumptions, inconsistencies and
 documented source limitations. It does not rewrite a financial model or run
 model-authored SQL. Calls count toward the existing compute-session cap;
@@ -1532,3 +1572,8 @@ The optional helper preserves the supplied passages, normalizes whitespace, and
 reports missing or ambiguous matches. It does not choose facts or certify that a
 claim follows from a quote. The host handles model request capacity separately;
 research should not discard supported claims to satisfy a prompt-size allowance.
+
+Report JSON uses a shared 4 MiB compact UTF-8 envelope and depth 128 in the SDK
+and host. Every supported delivered claim is checked; there is no separate
+2,500-node provenance cap. Over-envelope reports fail with a capacity error,
+not a claim that their numeric references are unbound.

@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,17 @@ class ReportWriteTests(unittest.TestCase):
 
     def saved_model(self, model):
         return report.write_model(model)
+
+    def test_report_envelope_uses_actual_utf8_bytes_and_preserves_existing_scalar_conversion(self):
+        target = Path(report.WORK_DIR) / "report_inputs.json"
+        value = {"date": date(2028, 2, 3), "evidence": "é" * 700_000}
+        report.write_inputs(value, path=str(target))
+        self.assertEqual(json.loads(target.read_text()), {"date": "2028-02-03", "evidence": value["evidence"]})
+        self.assertLess(target.stat().st_size, report.REPORT_INPUTS_MAX_BYTES)
+        before = target.read_bytes()
+        with self.assertRaisesRegex(ValueError, "report_capacity_exceeded"):
+            report.write_inputs({"evidence": "é" * report.REPORT_INPUTS_MAX_BYTES}, path=str(target))
+        self.assertEqual(target.read_bytes(), before)
 
     def test_saved_model_preflight_preserves_report_on_missing_malformed_or_stale_source(self):
         model = {"value": 7, "flag": True}

@@ -18,7 +18,10 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
+from uuid import uuid4
 from .report_readiness import validate as _validate_readiness
+from .report_analysis import plan_analysis, execute_analysis, analysis_status, attach_analysis_work
+from .report_json import assert_report_envelope, REPORT_INPUTS_MAX_BYTES
 
 WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")
 DEFAULT_MARKDOWN_PATH = os.path.join(WORK_DIR, "output.md")
@@ -820,7 +823,18 @@ def write_inputs(
         validate_source_references(inputs, aliases=source_aliases)
     if model_source is not None:
         _validate_saved_model(model_source, inputs.get("calculationModel"))
-    Path(path).write_text(json.dumps(inputs, indent=2, default=str) + "\n", encoding="utf-8")
+    # Check the JSON actually delivered, preserving the writer's documented
+    # date/custom-scalar conversion before binding the canonical model.
+    inputs = json.loads(json.dumps(inputs, ensure_ascii=False, default=str, allow_nan=False))
+    inputs = attach_analysis_work(inputs)
+    assert_report_envelope(inputs)
+    encoded = (json.dumps(inputs, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+    if len(encoded) > REPORT_INPUTS_MAX_BYTES:
+        raise ValueError(f"report_capacity_exceeded: Report JSON exceeds {REPORT_INPUTS_MAX_BYTES} bytes; nothing was written")
+    target = Path(path)
+    temporary = target.with_suffix(f".{uuid4().hex}.tmp")
+    temporary.write_bytes(encoded)
+    temporary.replace(target)
     return path
 
 
