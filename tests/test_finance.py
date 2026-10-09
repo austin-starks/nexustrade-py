@@ -6,6 +6,36 @@ import nexustrade as nt
 
 
 class FinanceSdkTests(unittest.TestCase):
+    def test_funded_cash_roundoff_is_explicit_and_scales_with_units(self) -> None:
+        base = dict(opening_cash=.3, fcff=.6, after_tax_interest=0,
+            preferred_dividends=0, minority_distributions=0, nonoperating_cash_income=0,
+            net_borrowing=0, equity_issue_proceeds=0, buyback_cash=.9,
+            claim_redemptions=0, common_distributions=0,
+            investment_purchases=0, investment_sales=0)
+        for scale in (1e-9, 1, 1e9):
+            values = {key: value * scale for key, value in base.items()}
+            result = nt.finance.financing_cash_period(**values)
+            self.assertGreaterEqual(result["closing_cash"], 0)
+            self.assertLessEqual(result["roundoff_adjustment"], result["roundoff_bound"])
+            self.assertEqual(result["flows"]["buyback_cash"], values["buyback_cash"])
+            self.assertEqual(result["raw_closing_cash"] + result["roundoff_adjustment"],
+                             result["closing_cash"])
+        result = nt.finance.financing_cash_period(**base)
+        self.assertEqual(result["closing_cash"], 0)
+        self.assertLess(result["raw_closing_cash"], 0)
+        self.assertGreater(result["roundoff_adjustment"], 0)
+        for deficit in (1e-12, .1):
+            with self.assertRaisesRegex(ValueError, "Unfunded cash deficit"):
+                nt.finance.financing_cash_period(**{**base, "buyback_cash": .9 + deficit})
+        # A single signed sum preserves the small cash between cancelling large
+        # receipts/payments; separate receipt totals would lose it.
+        result = nt.finance.financing_cash_period(**{**base, "opening_cash": 1,
+            "fcff": 1e16, "buyback_cash": 1e16})
+        self.assertEqual(result["closing_cash"], 1)
+        self.assertEqual(result["roundoff_adjustment"], 0)
+        with self.assertRaisesRegex(ValueError, "Cash reconciliation overflow"):
+            nt.finance.financing_cash_period(**{**base, "opening_cash": 1e308, "fcff": 1e308})
+
     def test_funding_check_counts_borrowing_but_refuses_cash_flooring(self) -> None:
         inputs = dict(opening_cash=100, fcff=20, after_tax_interest=5,
             preferred_dividends=2, minority_distributions=3, nonoperating_cash_income=1,

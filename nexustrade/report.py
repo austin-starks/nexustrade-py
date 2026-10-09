@@ -18,6 +18,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
+from .report_readiness import validate as _validate_readiness
 
 WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")
 DEFAULT_MARKDOWN_PATH = os.path.join(WORK_DIR, "output.md")
@@ -33,6 +34,15 @@ LEGACY_INPUTS_PATH = os.path.join(WORK_DIR, "report_inputs.json")
 # Code is evidence, not a deliverable, so it stays outside the bundle.
 DEFAULT_CODE_DIR = os.path.join(WORK_DIR, "output", "code")
 MODEL_SOURCE_MAX_BYTES = 4 * 1024 * 1024
+
+
+def validate(*, inputs_path: str | None = None, timeout_sec: int = 180) -> dict[str, Any]:
+    """Return method-driven readiness findings; repair them before authoring.
+
+    Uses the compute run's billing/cap, caches unchanged handoffs and never
+    rewrites financial analysis. See report_readiness.validate for recovery.
+    """
+    return _validate_readiness(inputs_path=inputs_path or DEFAULT_INPUTS_PATH, timeout_sec=timeout_sec)
 
 
 def write_model(model: Mapping[str, Any], *, path: str | None = None) -> str:

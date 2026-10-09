@@ -928,6 +928,49 @@ reinvestment rate, EVA, and conventional IRR. Build one model object from these
 results. For a compute report, pass that object with research findings, exact
 source identities, method requirements, and assumptions to
 `nexustrade.report.write(inputs=analysis_outputs, model=model, images=chart_files)`.
+
+Before report authoring, compute sandboxes with the report-readiness gateway can
+check a saved handoff against the staged method criteria:
+
+```python
+from nexustrade import report
+
+readiness = report.validate(inputs_path="/work/out/report_inputs.json")
+if readiness["status"] == "needs_repair":
+    for finding in readiness["findings"]:
+        print(finding["criterionId"], finding["inputPath"], finding["nextAction"])
+        # Delegate researchQuestion to an investigator when present. The parent
+        # repairs its producer, integrates evidence and regenerates the handoff.
+```
+
+This returns repair instructions, not a grade. It distinguishes uninvestigated
+evidence, unfinished calculations, unsupported assumptions, inconsistencies and
+documented source limitations. It does not rewrite a financial model or run
+model-authored SQL. Calls count toward the existing compute-session cap;
+unchanged handoffs reuse a durable receipt. Following an ambiguous transport
+failure, the next identical call uses replay-only recovery. Independent review
+and final grading remain required. The helper is compute-only; older pinned
+SDKs/gateways do not provide this capability.
+Plan the findings together: several requirements can depend on the same missing
+calculation or source. Resolve that shared work once, rather than launching a
+separate paid task for every finding.
+Validation also captures retained child research from
+`/work/.nexustrade/research-evidence` into a separate reserved
+`_report_readiness_evidence` field in the request copy. Saved inputs and the
+calculation model are unchanged. It supplies full handoff questions, source
+locators, limitations and file inventories across retained continuation parents.
+Whole UTF-8 selections up to 256 KiB are included within a 2 MiB context budget
+and the existing 4 MiB total request limit; smaller selections are included first.
+Files are never truncated. `contentState` distinguishes `included`, `empty_file`,
+`not_inlined_binary`, `not_inlined_file_limit` and `not_inlined_context_limit`.
+`no_staged_handoffs` means no retained child handoff, not an absent disclosure.
+Non-inlined files retain exact workspace paths and declared checksums so an
+investigator can stage a smaller complete selection with explicit coverage.
+Missing, changed or unsafe staged files refuse validation before a paid call.
+These child-declared sources still require inspection and parent integration;
+the SDK does not authenticate them or choose accounting/forecast assumptions.
+The evidence snapshot is included in cache identity: changed research can be
+validated, while an unchanged model and evidence reuse the same receipt.
 The full current model is exported as `calculationModel`; selected `report.ref`
 fields organize the handoff without hiding other computed sections. Keep this
 object focused on calculation data, assumptions and provenance; retain raw
@@ -966,6 +1009,32 @@ for batch in result.iter_batches():    # or stream within your own budget
 
 Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
 compatible backing engine; your SQL does not change when it does.
+
+## Managed watchlist universes
+
+`nt.update_watchlist(watchlist_key=..., member_id=..., instrument=..., amount_basis=..., chamber=..., output=...)`
+maintains a visible managed list from `PoliticalRemainingPurchases`. Its strategy
+has no condition and places no orders. `nt.watchlist_universe(watchlist_key)` selects
+that producer's committed membership for a separate `DynamicRebalance` in the same
+portfolio. Each key has one producer and may have several consumers. Other action
+types cannot consume this universe.
+
+```python
+producer = nt.update_watchlist(
+    watchlist_key="pelosi-holdings", member_id="P000197", instrument="Equity",
+    amount_basis="Midpoint", chamber="All",
+    output={"name": "Pelosi disclosed holdings", "purpose": "Follow public holdings",
+            "alertSettings": {"onChange": True, "inApp": True, "email": True,
+                              "briefCadence": "weekly"}},
+)
+consumer_universe = nt.watchlist_universe("pelosi-holdings")
+```
+
+`output` supplies initial name, purpose and alerts. Subsequent user renames and
+settings remain authoritative. Live and paper consumers wait for durable list
+publication; backtests keep membership local to the run and never edit the user's
+visible list. Discovery and data loads remain full, so this does not establish a
+performance saving. Omitted amount basis uses `LowerBound`.
 
 ## Complete method reference
 
