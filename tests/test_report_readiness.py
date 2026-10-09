@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from nexustrade import report
 from nexustrade import report_readiness as readiness
-from research_evidence_fixture import stage_handoff
+from tests.research_evidence_fixture import stage_handoff
 
 
 class ReportReadinessTests(unittest.TestCase):

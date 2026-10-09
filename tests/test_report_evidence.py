@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from nexustrade.report_evidence import MAX_INLINE_FILE_BYTES, staged_research_context
-from research_evidence_fixture import stage_handoff
+from tests.research_evidence_fixture import stage_handoff
 
 
 class StagedReportEvidenceTests(unittest.TestCase):
