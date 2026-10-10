@@ -568,6 +568,7 @@ def _notes_payload(
     period_end_to: str | None,
     filing_period_from: str | None,
     filing_period_to: str | None,
+    accession: str | None,
     forms: Sequence[str] | None,
     max_filings: int | None,
     limit: int | None,
@@ -587,7 +588,11 @@ def _notes_payload(
         pattern=_FORM_PATTERN,
         required=False,
     )
+    if accession is not None and (not isinstance(accession, str) or re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession) is None):
+        raise ValueError("accession must be an exact SEC accession number")
     payload: dict[str, Any] = {"as_of": _required_as_of(as_of)}
+    if accession is not None:
+        payload['accession'] = accession
     if normalized_from is not None:
         payload["period_end_from"] = normalized_from
     if normalized_to is not None:
@@ -620,6 +625,7 @@ def fact_instances(
     period_end_to: str | None = None,
     filing_period_from: str | None = None,
     filing_period_to: str | None = None,
+    accession: str | None = None,
     forms: Sequence[str] | None = None,
     dimensional: DimensionalFilter = "all",
     max_filings: int | None = _MAX_FILINGS,
@@ -632,6 +638,10 @@ def fact_instances(
     Rows retain fact IDs, accession, concept, period, unit, raw dimensions,
     availability, immutable snapshot identity, and the exact SEC filing URL.
     No web fallback or semantic segment classification occurs.
+    period_end_from/to filter the fact's date. filing_period_from/to filter the
+    filing's report period; they are independent. For a comparative balance,
+    pass the retained statement's accession, even if its report period is later
+    than the requested balance date. A query miss is not disclosure absence.
     """
     if dimensional not in ("all", "only", "none"):
         raise ValueError("dimensional must be 'all', 'only', or 'none'")
@@ -641,6 +651,7 @@ def fact_instances(
         period_end_to=period_end_to,
         filing_period_from=filing_period_from,
         filing_period_to=filing_period_to,
+        accession=accession,
         forms=forms,
         max_filings=max_filings,
         limit=limit,
@@ -673,6 +684,7 @@ def filed_concepts(
     period_end_to: str | None = None,
     filing_period_from: str | None = None,
     filing_period_to: str | None = None,
+    accession: str | None = None,
     forms: Sequence[str] | None = None,
     max_filings: int | None = 1,
     limit: int | None = None,
@@ -682,7 +694,9 @@ def filed_concepts(
     """Find exact numeric filing tags, including facts without dimensions.
 
     Search is over filed tag names and labels, not prose extraction or semantic
-    classification. The response retains filing and snapshot identity. Query one
+    classification. The response retains filing and snapshot identity. Use the
+    source statement's accession to inventory a comparative filing; omit fact
+    date filters while discovering its comparative contexts. Query one
     filing window when researching one filing, then use an exact returned tag
     with ``fact_instances`` to inspect its raw values and units.
     """
@@ -692,6 +706,7 @@ def filed_concepts(
         period_end_to=period_end_to,
         filing_period_from=filing_period_from,
         filing_period_to=filing_period_to,
+        accession=accession,
         forms=forms,
         max_filings=max_filings,
         limit=limit,
@@ -719,6 +734,7 @@ def dimensioned_concepts(
     period_end_to: str | None = None,
     filing_period_from: str | None = None,
     filing_period_to: str | None = None,
+    accession: str | None = None,
     forms: Sequence[str] | None = None,
     max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
@@ -739,6 +755,7 @@ def dimensioned_concepts(
             period_end_to=period_end_to,
             filing_period_from=filing_period_from,
             filing_period_to=filing_period_to,
+            accession=accession,
             forms=forms,
             max_filings=max_filings,
             limit=limit,
@@ -757,6 +774,7 @@ def business_breakdowns(
     period_end_to: str | None = None,
     filing_period_from: str | None = None,
     filing_period_to: str | None = None,
+    accession: str | None = None,
     forms: Sequence[str] | None = None,
     max_filings: int | None = _MAX_FILINGS,
     limit: int | None = None,
@@ -775,6 +793,7 @@ def business_breakdowns(
         period_end_to=period_end_to,
         filing_period_from=filing_period_from,
         filing_period_to=filing_period_to,
+        accession=accession,
         forms=forms,
         max_filings=max_filings,
         limit=limit,

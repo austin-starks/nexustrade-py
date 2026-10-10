@@ -53,6 +53,17 @@ class ReportReadinessTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 2)
         self.assertEqual(json.loads(before)["model"]["cashFlow"], None)
 
+    def test_transmits_independently_required_results_without_dropping_them(self):
+        result_contract = [{'id':'flow','description':'Annual cash flows','type':'number','minimumCount':3}]
+        criteria_file = self.root / 'acceptance/acceptance_criteria.json'
+        document = json.loads(criteria_file.read_text())
+        document['acceptanceCriteria'][0]['results'] = result_contract
+        criteria_file.write_text(json.dumps(document))
+        with patch.object(readiness.urllib.request, 'urlopen', side_effect=lambda *a, **k: self.response()) as fetch:
+            report.validate(inputs_path=str(self.inputs))
+            body = json.loads(fetch.call_args.args[0].data)
+            self.assertEqual(body['criteria'][0]['results'], result_contract)
+
     def test_ambiguous_failure_uses_replay_only_without_paid_retry(self):
         with patch.object(readiness.urllib.request, "urlopen", side_effect=TimeoutError("ambiguous response")) as fetch:
             self.assertEqual(report.validate(inputs_path=str(self.inputs))['status'], 'validation_pending')

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
 from uuid import uuid4
 from .report_readiness import validate as _validate_readiness
-from .report_analysis import plan_analysis, execute_analysis, analysis_status, attach_analysis_work
+from .report_analysis import plan_analysis, execute_analysis, analysis_status, analysis_requirements, attach_analysis_work
 from .report_json import assert_report_envelope, REPORT_INPUTS_MAX_BYTES
 
 WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")

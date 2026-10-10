@@ -18,7 +18,7 @@ from typing import Any, Mapping, Sequence
 from collections import deque
 
 from .report_json import _resolve_pointer, assert_report_envelope, REPORT_INPUTS_MAX_BYTES
-from .analysis_outputs import validate_output_requirements, missing_required_outputs
+from .analysis_outputs import validate_output_requirements, missing_required_outputs, required_result_binding_findings
 
 PLAN_PATH = "acceptance/analysis_components.json"
 EXECUTION_PATH = ".nexustrade/analysis/execution.json"
@@ -71,8 +71,22 @@ def _report_digest(inputs: Mapping[str, Any]) -> str:
 
 
 def _required() -> set[str]:
+    return {row['id'] for row in _required_criteria()}
+
+
+def _required_criteria() -> list[dict[str, Any]]:
     document = json.loads((_root() / "acceptance/acceptance_criteria.json").read_text())
-    return {row["id"] for row in document["acceptanceCriteria"] if row.get("kind") == "required"}
+    return [row for row in document['acceptanceCriteria'] if row.get('kind') == 'required']
+
+
+def analysis_requirements() -> list[dict[str, Any]]:
+    """Read the host-owned method results before declaring a producer's bindings.
+
+    Each criterion includes its id/text and, for newly interpreted methods,
+    results with id, description, type and minimumCount. This reads the current
+    workspace only; it makes no model call or financial decision.
+    """
+    return _required_criteria()
 
 
 def _ordered_components(components: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -132,6 +146,10 @@ def _validate(plan: Mapping[str, Any]) -> None:
                     raise ValueError("Decision evidence must be frozen inputs, separate from the model output")
     if covered != required:
         raise ValueError(f"Analysis plan omitted required criteria: {sorted(required - covered)}")
+    binding_findings = required_result_binding_findings(
+        [binding for row in components for binding in row.get('outputRequirements', [])], _required_criteria())
+    if binding_findings:
+        raise ValueError('Required result construction incomplete: ' + ' '.join(binding_findings))
     _ordered_components(components)
     producer, model = _path(plan["producerPath"]), _path(plan["modelPath"])
     if producer == model or producer.suffix != ".py" or model.suffix != ".json":
@@ -149,11 +167,15 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     """Declare the current brief's work and direct dependencies before building.
 
     Components include id, kind, criterionIds, dependsOn, outputPaths,
-    outputRequirements ({criterionId,path,type}: number/string/boolean leaves
+    outputRequirements ({criterionId,resultId,path,type}: number/string/boolean leaves
     for every criterion and requested period/case), and optional
     decisions. Each decision has kind, state, explanation and evidencePaths.
     Historical periods depend on their own aligned inputs/definitions, not on
     unrelated future distribution choices. No plan is inferred from financial keys.
+    Read the staged criteria's results first. resultId and type must match that
+    independent contract, and minimumCount needs distinct scalar pointers. The
+    executor cannot substitute a status string or count for numerical results.
+    Legacy criteria without results retain the three-field declaration format.
     All required criteria must be represented, including research/delivery work.
     """
     declarations = json.loads(json.dumps(list(components), allow_nan=False))
@@ -290,6 +312,7 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
     for row in _ordered_components(components):
         if row["status"] == "computed" and any(by_id[x]["status"] != "computed" for x in row["dependsOn"]):
             row["status"] = "not_started"
+    construction_available = {row['id'] for row in components if row['status'] == 'computed'}
     review_path = _root() / ".nexustrade/analysis/readiness.json"
     review = json.loads(review_path.read_text()) if include_review and review_path.exists() else {}
     review_current = current and review.get("execution") == receipt
@@ -311,7 +334,10 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
     for row in components:
         if row["status"] in {"computed", "accepted"}:
             continue
-        waiting = [x for x in row["dependsOn"] if by_id[x]["status"] not in {"computed", "accepted"}]
+        # A semantic rejection does not make executed inputs disappear. Keep
+        # review rejection for acceptance, but allow independent construction
+        # repairs while another research judgment is still being reviewed.
+        waiting = [x for x in row["dependsOn"] if x not in construction_available]
         findings = [finding for finding in (reviewed or {}).get('findings', []) if finding['criterionId'] in row['criterionIds'] and finding['severity'] == 'blocking']
         tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "declare_outputs" if plan['version'] == 1 else ("repair_producer" if row["status"] == "review_rejected" else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer")),
                       "waitingOn": waiting, "readyToWork": not waiting, "missingOutputs": row["missingOutputs"], "unresolvedPrimitives": row["unresolvedPrimitives"],

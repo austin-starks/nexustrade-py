@@ -156,6 +156,41 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
         self.assertEqual(analysis.execute_analysis()["components"][0]["status"], "computed")
         self.assertIsNone(analysis.construction_checkpoint(self.inputs()))
 
+    def test_host_required_results_are_discoverable_and_cannot_be_status_strings(self):
+        criteria_path = self.root / 'acceptance/acceptance_criteria.json'
+        criteria = json.loads(criteria_path.read_text())
+        criteria['acceptanceCriteria'][0]['results'] = [
+            {'id': 'roic', 'description': 'Period capital return', 'type': 'number', 'minimumCount': 1},
+            {'id': 'eva', 'description': 'Period economic value added', 'type': 'number', 'minimumCount': 1}]
+        criteria_path.write_text(json.dumps(criteria))
+        self.assertEqual(analysis.analysis_requirements(), criteria['acceptanceCriteria'])
+        with self.assertRaisesRegex(ValueError, 'independently required'):
+            self.plan()
+        for binding, result in zip(self.components[0]['outputRequirements'], ('roic', 'eva')):
+            binding['resultId'] = result
+        self.plan()
+        self.assertEqual(analysis.execute_analysis()['components'][0]['status'], 'computed')
+        self.components[0]['outputRequirements'][0].update(type='string', path='/historical/status')
+        with self.assertRaisesRegex(ValueError, 'independently required'):
+            self.plan()
+
+    def test_rejected_research_does_not_make_executed_inputs_unavailable_for_repair(self):
+        self.components[1]['dependsOn'] = ['prior-period']
+        self.plan(); analysis.execute_analysis()
+        inputs = self.inputs()
+        receipt = self.root / '.nexustrade/report-readiness/test.json'
+        receipt.parent.mkdir(parents=True)
+        result = {'status': 'needs_repair', 'criteria': [{'id': 'history', 'status': 'gap'}, {'id': 'future', 'status': 'gap'}],
+                  'findings': [{'criterionId': 'history', 'severity': 'blocking', 'problem': 'Definition needs review'}]}
+        receipt.write_text(json.dumps({'result': result}))
+        analysis.record_readiness(receipt, result, inputs)
+        status = analysis.analysis_status()
+        self.assertEqual(status['components'][0]['status'], 'review_rejected')
+        future = next(row for row in status['nextTasks'] if row['componentId'] == 'future-owner')
+        self.assertTrue(future['readyToWork'])
+        self.assertEqual(future['waitingOn'], [])
+        self.assertEqual(status['nextTasks'][0]['findings'], result['findings'])
+
     def test_envelope_supports_deep_values_and_refuses_cycles(self):
         value = {"v": 1}
         for _ in range(30): value = {"nested": value}

@@ -101,7 +101,7 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     if isinstance(inputs, dict) and isinstance(inputs.get(ANALYSIS_FIELD), dict):
         inputs[ANALYSIS_FIELD].pop('readinessReceipt', None)
     criteria_document = _read_json(work / Path(CRITERIA_PATH).relative_to("/work"))
-    criteria = [{"id": row["id"], "text": row["text"]}
+    criteria = [{"id": row["id"], "text": row["text"], **({'results': row['results']} if 'results' in row else {})}
                 for row in criteria_document.get("acceptanceCriteria", []) if row.get("kind") == "required"]
     if not isinstance(inputs, dict) or not criteria:
         raise ValueError("Report validation requires object inputs and staged required method criteria")
