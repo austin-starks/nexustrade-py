@@ -1186,6 +1186,7 @@ def portfolio(
     alerts_enabled: Optional[bool] = None,
     dividend_policy: Optional[Literal["cash", "reinvest"]] = None,
     policy: Optional[Dict[str, Any]] = None,
+    deployment: Optional[Dict[str, Any]] = None,
 ) -> Portfolio:
     """dividend_policy: "cash" (default when omitted) keeps dividends as cash;
     "reinvest" buys more of the paying stock on each pay date.
@@ -1207,6 +1208,7 @@ def portfolio(
                 "alertsEnabled": alerts_enabled,
                 "dividendPolicy": dividend_policy,
                 "policy": policy,
+                "deployment": deployment,
             }
         )
     )
