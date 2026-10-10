@@ -933,7 +933,14 @@ For a calculation report with staged criteria, declare `report.plan_analysis(...
 before construction. Supply one `producer_path`, canonical `model_path`, frozen
 `source_paths`, optional literal `producer_args`, and model-authored `components`: each has `id`, `kind`
 (`calculation`, `research`, `delivery`), actual `criterionIds`, direct `dependsOn`
-IDs and `outputPaths` (RFC 6901 pointers into the model). Optional `decisions`
+IDs, `outputPaths` (RFC 6901 section locators into the model), and
+`outputRequirements`: `{criterionId, path, type}` entries binding every component
+criterion to its actual scalar results. `type` is `number`, `string`, or `boolean`.
+Use exact result leaves, not section containers. Generate paths for every requested
+period/case programmatically. Numbers must be finite; real zero and boolean false
+are valid; null, objects, blank strings and numeric-looking strings are unfinished.
+These version-2 declarations replace section-only plans; old plans return explicit
+`declare_outputs` migration tasks and cannot claim completion. Optional `decisions`
 have `kind` (`reported_fact`, `accounting_definition`, `future_policy`,
 `implementation`), `state` (`resolved`, `unresolved`), `explanation`, and
 `evidencePaths`. Cover all staged required criteria. This is a work plan, not
@@ -958,7 +965,24 @@ If the producer only rebuilt the model, `execute_analysis` returns
 `reportExportRequired=true`; export the report from that current model. A failed
 producer restores the previous model/report snapshot and cannot claim new success.
 An investigated, method-permitted limitation can be an explicit sourced model
-record for semantic review. An unexplained null or unchosen assumption cannot.
+record with nonempty reasoning and source locators for semantic review. Declare
+its actual reasoning result with type `string`; do not declare a missing number
+computed. The validator decides whether that limitation satisfies the method.
+An unexplained null or unchosen assumption cannot.
+
+```python
+components = [{
+    "id": "period-returns", "kind": "calculation",
+    "criterionIds": [returns_criterion_id], "dependsOn": ["capital-reconciliation"],
+    "outputPaths": ["/periods"],
+    "outputRequirements": [
+        {"criterionId": returns_criterion_id, "path": f"/periods/{index}/{field}", "type": "number"}
+        for index in range(len(periods)) for field in ("return_on_capital", "economic_profit")
+    ],
+}]
+# Choose output fields from the requested analysis and your actual model.
+# MissingRequiredOutputs names each result to build; section presence cannot close it.
+```
 
 Before report authoring, compute sandboxes with the report-readiness gateway can
 check a saved handoff against the staged method criteria:
@@ -974,6 +998,8 @@ elif readiness["status"] == "needs_repair":
         print(finding["criterionId"], finding["inputPath"], finding["nextAction"])
         # Delegate researchQuestion to an investigator when present. The parent
         # repairs its producer, integrates evidence and regenerates the handoff.
+elif readiness["status"] == "validation_pending":
+    print(readiness["nextAction"])  # Recover the same request; no new paid attempt.
 ```
 
 This returns repair instructions, not a grade. A declared unfinished construction
@@ -988,7 +1014,9 @@ evidence, unfinished calculations, unsupported assumptions, inconsistencies and
 documented source limitations. It does not rewrite a financial model or run
 model-authored SQL. Calls count toward the existing compute-session cap;
 unchanged handoffs reuse a durable receipt. Following an ambiguous transport
-failure, the next identical call uses replay-only recovery. Independent review
+failure, this call attempts one bounded replay-only recovery within its deadline.
+If still unavailable it returns `validation_pending`, with no readiness verdict;
+the next identical call remains replay-only. Independent review
 and final grading remain required. The helper is compute-only; older pinned
 SDKs/gateways do not provide this capability.
 Plan the findings together: several requirements can depend on the same missing
@@ -997,7 +1025,13 @@ separate paid task for every finding.
 Validation also captures retained child research from
 `/work/.nexustrade/research-evidence` into a separate reserved
 `_report_readiness_evidence` field in the request copy. Saved inputs and the
-calculation model are unchanged. It supplies full handoff questions, source
+calculation model are unchanged. Only SDK-owned `analysisWork.readinessReceipt`
+is saved after validation. The host binds it to this user/job, report, criteria,
+and declared execution; finish requires a current `ready` receipt before authoring.
+Open blocking findings remain in `analysis_status().nextTasks` across producer edits.
+An unchanged model/source/report cannot buy repeated broad review; a changed
+candidate may be reassessed without silently closing those findings.
+It supplies full handoff questions, source
 locators, limitations and file inventories across retained continuation parents.
 Whole UTF-8 selections up to 256 KiB are included within a 2 MiB context budget
 and the existing 4 MiB total request limit; smaller selections are included first.

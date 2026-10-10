@@ -18,6 +18,7 @@ from typing import Any, Mapping, Sequence
 from collections import deque
 
 from .report_json import _resolve_pointer, assert_report_envelope, REPORT_INPUTS_MAX_BYTES
+from .analysis_outputs import validate_output_requirements, missing_required_outputs
 
 PLAN_PATH = "acceptance/analysis_components.json"
 EXECUTION_PATH = ".nexustrade/analysis/execution.json"
@@ -62,6 +63,13 @@ def _save(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
+def _report_digest(inputs: Mapping[str, Any]) -> str:
+    # Completion state and receipt are transport metadata; report edits can be
+    # legitimate repairs even when the underlying numerical model is unchanged.
+    value = {key: child for key, child in inputs.items() if key != ANALYSIS_FIELD}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+
+
 def _required() -> set[str]:
     document = json.loads((_root() / "acceptance/acceptance_criteria.json").read_text())
     return {row["id"] for row in document["acceptanceCriteria"] if row.get("kind") == "required"}
@@ -91,8 +99,8 @@ def _ordered_components(components: Sequence[Mapping[str, Any]]) -> list[Mapping
 def _validate(plan: Mapping[str, Any]) -> None:
     required = _required()
     components = plan.get("components")
-    if plan.get("version") != 1 or not isinstance(components, list) or not components:
-        raise ValueError("Analysis plan needs version 1 and nonempty components")
+    if plan.get("version") not in {1, 2} or not isinstance(components, list) or not components:
+        raise ValueError("Analysis plan needs version 2 and nonempty components")
     ids = [row.get("id") for row in components if isinstance(row, dict)]
     if len(ids) != len(components) or any(not isinstance(x, str) or not x.strip() for x in ids) or len(set(ids)) != len(ids):
         raise ValueError("Analysis component IDs must be unique nonempty strings")
@@ -105,6 +113,8 @@ def _validate(plan: Mapping[str, Any]) -> None:
         if not isinstance(criteria, list) or not criteria or not set(criteria).issubset(required):
             raise ValueError("Components must name actual required criterion IDs")
         covered.update(criteria)
+        if plan['version'] == 2:
+            validate_output_requirements(row.get('outputRequirements'), criteria)
         dependencies = row.get("dependsOn")
         if not isinstance(dependencies, list) or len(set(dependencies)) != len(dependencies) or not set(dependencies).issubset(declared_ids) or row["id"] in dependencies:
             raise ValueError("Component dependencies must name other declared components")
@@ -138,7 +148,9 @@ def _validate(plan: Mapping[str, Any]) -> None:
 def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence[str], components: Sequence[Mapping[str, Any]], producer_args: Sequence[str] = ()) -> str:
     """Declare the current brief's work and direct dependencies before building.
 
-    Components include id, kind, criterionIds, dependsOn, outputPaths and optional
+    Components include id, kind, criterionIds, dependsOn, outputPaths,
+    outputRequirements ({criterionId,path,type}: number/string/boolean leaves
+    for every criterion and requested period/case), and optional
     decisions. Each decision has kind, state, explanation and evidencePaths.
     Historical periods depend on their own aligned inputs/definitions, not on
     unrelated future distribution choices. No plan is inferred from financial keys.
@@ -148,7 +160,7 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     for row in declarations:
         for decision in row.get("decisions", []):
             decision["evidencePaths"] = [_logical(_path(x)) for x in decision.get("evidencePaths", [])]
-    plan = {"version": 1, "producerPath": _logical(_path(producer_path)), "modelPath": _logical(_path(model_path)),
+    plan = {"version": 2, "producerPath": _logical(_path(producer_path)), "modelPath": _logical(_path(model_path)),
             "sourcePaths": [_logical(_path(x)) for x in source_paths], "components": declarations, "producerArgs": list(producer_args)}
     _validate(plan)
     path = _root() / PLAN_PATH
@@ -260,6 +272,10 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
     components: list[dict[str, Any]] = []
     for row in plan["components"]:
         missing = []
+        missing_results = missing_required_outputs(model, row.get('outputRequirements', []))
+        if plan['version'] == 1:
+            missing.append('Typed criterion outputs not declared; migrate the section-only plan')
+        missing.extend(result['path'] for result in missing_results)
         for pointer in row["outputPaths"]:
             try:
                 if _resolve_pointer(model, pointer) is None:
@@ -268,7 +284,8 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
                 missing.append(pointer)
         unresolved = [x for x in row.get("decisions", []) if x["state"] == "unresolved"]
         components.append({**row, "status": "computed" if current and not missing and not unresolved else "not_started",
-                           "missingOutputs": missing, "unresolvedPrimitives": unresolved})
+                           "missingOutputs": list(dict.fromkeys(missing)), "unresolvedPrimitives": unresolved,
+                           "missingRequiredOutputs": missing_results})
     by_id = {row["id"]: row for row in components}
     for row in _ordered_components(components):
         if row["status"] == "computed" and any(by_id[x]["status"] != "computed" for x in row["dependsOn"]):
@@ -276,12 +293,16 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
     review_path = _root() / ".nexustrade/analysis/readiness.json"
     review = json.loads(review_path.read_text()) if include_review and review_path.exists() else {}
     review_current = current and review.get("execution") == receipt
-    if review_current:
+    reviewed = None
+    if review:
         reviewed = json.loads(_path(review["receiptPath"]).read_text())["result"]
         verdicts = {row["id"]: row["status"] for row in reviewed["criteria"]}
         for row in components:
             if row["status"] == "computed":
-                row["status"] = "review_rejected" if any(verdicts[x] == "gap" for x in row["criterionIds"]) else "accepted"
+                if any(verdicts.get(x) == "gap" for x in row["criterionIds"]):
+                    row["status"] = "review_rejected"
+                elif review_current:
+                    row["status"] = "accepted"
     by_id = {row["id"]: row for row in components}
     for row in _ordered_components(components):
         if row["status"] in {"computed", "accepted"} and any(by_id[x]["status"] == "review_rejected" for x in row["dependsOn"]):
@@ -291,9 +312,12 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         if row["status"] in {"computed", "accepted"}:
             continue
         waiting = [x for x in row["dependsOn"] if by_id[x]["status"] not in {"computed", "accepted"}]
-        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "repair_producer" if row["status"] == "review_rejected" else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer"),
-                      "waitingOn": waiting, "readyToWork": not waiting, "missingOutputs": row["missingOutputs"], "unresolvedPrimitives": row["unresolvedPrimitives"]})
-    return {"version": 1, "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
+        findings = [finding for finding in (reviewed or {}).get('findings', []) if finding['criterionId'] in row['criterionIds'] and finding['severity'] == 'blocking']
+        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "declare_outputs" if plan['version'] == 1 else ("repair_producer" if row["status"] == "review_rejected" else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer")),
+                      "waitingOn": waiting, "readyToWork": not waiting, "missingOutputs": row["missingOutputs"], "unresolvedPrimitives": row["unresolvedPrimitives"],
+                      "missingRequiredOutputs": row['missingRequiredOutputs'], "findings": findings,
+                      "requiresSemanticReassessment": bool(findings)})
+    return {"version": plan['version'], "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
             "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks}
 
 
@@ -310,6 +334,13 @@ def attach_analysis_work(inputs: Mapping[str, Any]) -> dict[str, Any]:
             if supplied != saved:
                 raise ValueError("Report calculationModel differs from the authoritative producer's canonical model")
         result[ANALYSIS_FIELD] = analysis_status(include_review=False)
+        review_path = _root() / '.nexustrade/analysis/readiness.json'
+        if review_path.exists():
+            review = json.loads(review_path.read_text())
+            if review.get('execution') == result[ANALYSIS_FIELD]['execution']:
+                reviewed = json.loads(_path(review['receiptPath']).read_text())['result']
+                if reviewed.get('hostReceipt'):
+                    result[ANALYSIS_FIELD]['readinessReceipt'] = reviewed['hostReceipt']
     elif inputs.get("calculationModel") is not None and (_root() / "acceptance/acceptance_criteria.json").exists():
         raise ValueError("Declare report.plan_analysis for the staged criteria and execute its authoritative producer before export")
     return result
@@ -323,10 +354,23 @@ def construction_checkpoint(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
                 "summary": "Declare the required components and their direct dependencies, then execute the authoritative producer before broad semantic review",
                 "components": [], "nextTasks": [{"operation": "plan_analysis", "criterionIds": sorted(_required()), "readyToWork": True, "waitingOn": []}]}
     current = analysis_status(include_review=False)
-    if inputs.get(ANALYSIS_FIELD) != current:
+    supplied = {key: value for key, value in inputs.get(ANALYSIS_FIELD, {}).items() if key != 'readinessReceipt'}
+    if supplied != current:
         raise ValueError("Saved analysisWork is stale; regenerate report inputs from the current authoritative producer")
     if not current["nextTasks"]:
-        return None
+        reviewed = analysis_status()
+        if reviewed['nextTasks']:
+            previous_review = json.loads((_root() / '.nexustrade/analysis/readiness.json').read_text())
+            prior = previous_review['execution']
+            inputs_without_producer = lambda execution: {path: digest for path, digest in execution.get('inputSha256', {}).items() if path != current['producerPath']}
+            if (prior.get('modelSha256') == current['execution'].get('modelSha256') and
+                    inputs_without_producer(prior) == inputs_without_producer(current['execution']) and
+                    previous_review.get('reportSha256') == _report_digest(inputs)):
+                current = reviewed
+            else:
+                return None  # Changed candidate may be reassessed; open findings are not closed.
+        else:
+            return None
     return {"status": "needs_construction", "origin": "local_execution_preflight", "paidCalls": 0,
             "summary": "Required components are unfinished; construct independent ready components before broad semantic review",
             "components": current["components"], "nextTasks": current["nextTasks"]}
@@ -336,6 +380,7 @@ def record_readiness(receipt_path: Path, result: Mapping[str, Any], inputs: Mapp
     if not (_root() / PLAN_PATH).exists():
         return
     current = analysis_status(include_review=False)
-    if inputs.get(ANALYSIS_FIELD) != current:
+    supplied = {key: value for key, value in inputs.get(ANALYSIS_FIELD, {}).items() if key != 'readinessReceipt'}
+    if supplied != current:
         raise ValueError("Analysis changed while semantic review was running; that review cannot accept the new outputs")
-    _save(_root() / ".nexustrade/analysis/readiness.json", {"execution": current["execution"], "receiptPath": _logical(receipt_path)})
+    _save(_root() / ".nexustrade/analysis/readiness.json", {"execution": current["execution"], "receiptPath": _logical(receipt_path), "reportSha256":_report_digest(inputs)})

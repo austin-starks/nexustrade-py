@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from uuid import uuid4
@@ -14,10 +16,10 @@ from typing import Any
 from .host import _gateway_credentials, _touch_host_activity
 from .report_evidence import EVIDENCE_FIELD, MAX_CONTEXT_BYTES, staged_research_context
 from .report_json import _resolve_pointer, assert_report_envelope, REPORT_INPUTS_MAX_BYTES
-from .report_analysis import construction_checkpoint, record_readiness
+from .report_analysis import ANALYSIS_FIELD, construction_checkpoint, record_readiness
 
 MAX_INPUT_BYTES = REPORT_INPUTS_MAX_BYTES
-REQUEST_CONTRACT = "report-readiness-lossless-construction-v3"
+REQUEST_CONTRACT = "report-readiness-typed-construction-v4"
 CRITERIA_PATH = "/work/acceptance/acceptance_criteria.json"
 MISSING_STATES = frozenset({"not_yet_investigated", "unresolved_evidence", "absent_after_investigation", "analysis_not_performed", "unsupported_assumption", "inconsistent"})
 
@@ -95,6 +97,9 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     if not physical.resolve().is_relative_to(work.resolve()):
         raise ValueError("inputs_path must identify a JSON artifact inside the current workspace")
     inputs = _read_json(physical)
+    # Readiness is a host attestation of these inputs, never part of its own identity.
+    if isinstance(inputs, dict) and isinstance(inputs.get(ANALYSIS_FIELD), dict):
+        inputs[ANALYSIS_FIELD].pop('readinessReceipt', None)
     criteria_document = _read_json(work / Path(CRITERIA_PATH).relative_to("/work"))
     criteria = [{"id": row["id"], "text": row["text"]}
                 for row in criteria_document.get("acceptanceCriteria", []) if row.get("kind") == "required"]
@@ -127,6 +132,7 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
         if "result" in existing:
             result = _check_result(existing["result"], payload)
             record_readiness(receipt, result, inputs)
+            _save_acceptance(physical, inputs, result)
             return result
     try:
         with marker.open("x"):
@@ -135,17 +141,42 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     except FileExistsError:
         pending = True
     _touch_host_activity()
-    request = urllib.request.Request(
-        f"{base}/report/validate" + ("/replay" if pending else ""),
-        data=encoded,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
+    deadline = time.monotonic() + timeout_sec
+    def pending_result() -> dict[str, Any]:
+        return {'status':'validation_pending', 'origin':'transport_recovery', 'requestKey':key,
+                'acceptance':False, 'additionalPaidCalls':0,
+                'nextAction':'Call report.validate with the same inputs to recover the existing request through replay only. Do not buy a replacement review or treat this transport state as an analytical verdict.'}
+    def read_response(replay: bool) -> dict[str, Any]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Validator response deadline expired; recover this same pending request')
+        request = urllib.request.Request(f"{base}/report/validate" + ("/replay" if replay else ""), data=encoded,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=remaining) as response:
+            return _check_result(json.loads(response.read().decode("utf-8")), payload)
     try:
-        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
-            result = _check_result(json.loads(response.read().decode("utf-8")), payload)
+        try:
+            result = read_response(pending)
+        except urllib.error.HTTPError:
+            raise
+        except (http.client.IncompleteRead, TimeoutError, ConnectionError, urllib.error.URLError):
+            if pending:
+                return pending_result()
+            pending = True
+            try:
+                result = read_response(True)  # One bounded cache recovery, same payload, no paid retry.
+            except urllib.error.HTTPError:
+                raise
+            except (http.client.IncompleteRead, TimeoutError, ConnectionError, urllib.error.URLError):
+                return pending_result()
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
+        try:
+            kind = json.loads(detail).get('error', {}).get('type')
+        except (json.JSONDecodeError, AttributeError):
+            kind = None
+        if pending and error.code == 409 and kind == 'logical_replay_unavailable':
+            return pending_result()
         raise RuntimeError(f"Report validator HTTP {error.code}: {detail}; no ready verdict and no automatic paid retry") from error
     finally:
         _touch_host_activity()
@@ -154,4 +185,19 @@ def validate(*, inputs_path: str, timeout_sec: int = 180) -> dict[str, Any]:
     temporary.replace(receipt)
     marker.unlink(missing_ok=True)
     record_readiness(receipt, result, inputs)
+    _save_acceptance(physical, inputs, result)
     return result
+
+
+def _save_acceptance(path: Path, inputs: dict[str, Any], result: dict[str, Any]) -> None:
+    if isinstance(inputs.get(ANALYSIS_FIELD), dict) and result.get('hostReceipt'):
+        current = _read_json(path)
+        if isinstance(current, dict) and isinstance(current.get(ANALYSIS_FIELD), dict):
+            current[ANALYSIS_FIELD].pop('readinessReceipt', None)
+        if current != inputs:
+            raise ValueError('Report inputs changed during validation; keep the changed artifact and validate its current handoff')
+        # Update only SDK-owned transport state; do not patch analytical outputs.
+        inputs[ANALYSIS_FIELD]['readinessReceipt'] = result['hostReceipt']
+        temporary = path.with_suffix(f'.{uuid4().hex}.tmp')
+        temporary.write_text(json.dumps(inputs, ensure_ascii=False, allow_nan=False, separators=(',', ':')) + '\n')
+        temporary.replace(path)

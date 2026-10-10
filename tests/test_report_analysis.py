@@ -34,8 +34,10 @@ metrics=finance.operating_period_metrics(operating_income=s['income'], tax_rate=
 Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'\\n')
 ''')
         self.components = [
-            {"id": "prior-period", "kind": "calculation", "criterionIds": ["history"], "dependsOn": [], "outputPaths": ["/historical/roic", "/historical/eva"]},
+            {"id": "prior-period", "kind": "calculation", "criterionIds": ["history"], "dependsOn": [], "outputPaths": ["/historical/roic", "/historical/eva"],
+             "outputRequirements": [{"criterionId":"history", "path":path, "type":"number"} for path in ["/historical/roic", "/historical/eva"]]},
             {"id": "future-owner", "kind": "calculation", "criterionIds": ["future"], "dependsOn": [], "outputPaths": ["/future"],
+             "outputRequirements":[{"criterionId":"future", "path":"/future", "type":"number"}],
              "decisions": [{"kind": "future_policy", "state": "unresolved", "explanation": "Distribution policy not chosen", "evidencePaths": ["/work/source.json"]}]},
         ]
 
@@ -121,7 +123,8 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
 
     def test_long_dependency_chain_does_not_depend_on_python_recursion_depth(self):
         components = [{"id": f"part-{index}", "kind": "calculation", "criterionIds": ["history"],
-            "dependsOn": [] if index == 0 else [f"part-{index-1}"], "outputPaths": ["/historical/roic"]}
+            "dependsOn": [] if index == 0 else [f"part-{index-1}"], "outputPaths": ["/historical/roic"],
+            "outputRequirements":[{"criterionId":"history", "path":"/historical/roic", "type":"number"}]}
             for index in range(1200)]
         components.append(self.components[1])
         self.plan(components)
@@ -148,7 +151,8 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
     def test_unseen_nonfinancial_topology_uses_the_same_mechanism(self):
         (self.root / "acceptance/acceptance_criteria.json").write_text(json.dumps({"acceptanceCriteria": [{"id": "capacity", "kind": "required", "text": "Throughput"}]}))
         (self.root / "producer.py").write_text("import json\nfrom pathlib import Path\ns=json.loads(Path('source.json').read_text())\nPath('model.json').write_text(json.dumps({'throughput':s['closing']-s['opening']}))\n")
-        self.plan([{"id": "warehouse", "kind": "calculation", "criterionIds": ["capacity"], "dependsOn": [], "outputPaths": ["/throughput"]}])
+        self.plan([{"id": "warehouse", "kind": "calculation", "criterionIds": ["capacity"], "dependsOn": [], "outputPaths": ["/throughput"],
+                   "outputRequirements":[{"criterionId":"capacity", "path":"/throughput", "type":"number"}]}])
         self.assertEqual(analysis.execute_analysis()["components"][0]["status"], "computed")
         self.assertIsNone(analysis.construction_checkpoint(self.inputs()))
 
