@@ -23,6 +23,9 @@ from .analysis_outputs import validate_output_requirements, missing_required_out
 PLAN_PATH = "acceptance/analysis_components.json"
 EXECUTION_PATH = ".nexustrade/analysis/execution.json"
 ANALYSIS_FIELD = "analysisWork"
+_COMPONENT_KINDS = ("calculation", "research", "delivery")
+_DECISION_KINDS = ("reported_fact", "accounting_definition", "future_policy", "implementation")
+_DECISION_STATES = ("resolved", "unresolved")
 
 
 def _root() -> Path:
@@ -120,15 +123,19 @@ def _validate(plan: Mapping[str, Any]) -> None:
         raise ValueError("Analysis component IDs must be unique nonempty strings")
     declared_ids = set(ids)
     covered: set[str] = set()
-    for row in components:
-        if row.get("kind") not in {"calculation", "research", "delivery"}:
-            raise ValueError("Component kind must be calculation, research or delivery")
+    for component_index, row in enumerate(components):
+        location = f"components[{component_index}] ({row['id']!r})"
+        if row.get("kind") not in _COMPONENT_KINDS:
+            raise ValueError(f"Component kind must be calculation, research or delivery; {location}.kind received {row.get('kind')!r}, allowed={_COMPONENT_KINDS!r}")
         criteria = row.get("criterionIds")
         if not isinstance(criteria, list) or not criteria or not set(criteria).issubset(required):
-            raise ValueError("Components must name actual required criterion IDs")
+            raise ValueError(f"Components must name actual required criterion IDs; {location}.criterionIds received {criteria!r}, allowed={sorted(required)!r}. Read report.analysis_requirements().")
         covered.update(criteria)
         if plan['version'] == 2:
-            validate_output_requirements(row.get('outputRequirements'), criteria)
+            try:
+                validate_output_requirements(row.get('outputRequirements'), criteria)
+            except ValueError as error:
+                raise ValueError(f"{location}: {error}") from error
         dependencies = row.get("dependsOn")
         if not isinstance(dependencies, list) or len(set(dependencies)) != len(dependencies) or not set(dependencies).issubset(declared_ids) or row["id"] in dependencies:
             raise ValueError("Component dependencies must name other declared components")
@@ -136,11 +143,16 @@ def _validate(plan: Mapping[str, Any]) -> None:
         if not isinstance(outputs, list) or not outputs or any(not isinstance(x, str) or not x.startswith("/") for x in outputs):
             raise ValueError("Each component needs explicit output pointers into the canonical model")
         decisions = row.get("decisions", [])
-        for decision in decisions:
-            if not isinstance(decision, dict) or decision.get("kind") not in {"reported_fact", "accounting_definition", "future_policy", "implementation"}:
-                raise ValueError("Decisions must distinguish facts, definitions, future policies and implementation")
-            if decision.get("state") not in {"resolved", "unresolved"} or not decision.get("explanation") or not isinstance(decision.get("evidencePaths"), list):
-                raise ValueError("Decisions need explicit state, explanation and inspected evidence paths")
+        for decision_index, decision in enumerate(decisions):
+            decision_location = f"{location}.decisions[{decision_index}]"
+            if not isinstance(decision, dict):
+                raise ValueError(f"Decisions must distinguish facts, definitions, future policies and implementation; {decision_location} must be an object with kind, state, explanation and evidencePaths")
+            if decision.get("kind") not in _DECISION_KINDS:
+                raise ValueError(f"Decisions must distinguish facts, definitions, future policies and implementation; {decision_location}.kind received {decision.get('kind')!r}, allowed={_DECISION_KINDS!r}")
+            if decision.get("state") not in _DECISION_STATES:
+                raise ValueError(f"Decisions need explicit state, explanation and inspected evidence paths; {decision_location}.state received {decision.get('state')!r}, allowed={_DECISION_STATES!r}")
+            if not decision.get("explanation") or not isinstance(decision.get("evidencePaths"), list):
+                raise ValueError(f"Decisions need explicit state, explanation and inspected evidence paths; {decision_location} needs nonempty explanation and an evidencePaths list")
             for path in decision["evidencePaths"]:
                 if _path(path) == _path(plan["modelPath"]):
                     raise ValueError("Decision evidence must be frozen inputs, separate from the model output")
@@ -169,7 +181,9 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     Components include id, kind, criterionIds, dependsOn, outputPaths,
     outputRequirements ({criterionId,resultId,path,type}: number/string/boolean leaves
     for every criterion and requested period/case), and optional
-    decisions. Each decision has kind, state, explanation and evidencePaths.
+    decisions. Each decision has kind (reported_fact/accounting_definition/
+    future_policy/implementation), state (resolved/unresolved), explanation and
+    evidencePaths. Component kind is calculation/research/delivery.
     Historical periods depend on their own aligned inputs/definitions, not on
     unrelated future distribution choices. No plan is inferred from financial keys.
     Read the staged criteria's results first. resultId and type must match that

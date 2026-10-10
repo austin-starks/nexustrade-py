@@ -121,6 +121,53 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
         self.components[1]["dependsOn"] = ["prior-period"]
         with self.assertRaisesRegex(ValueError, "cycle"): self.plan()
 
+    def test_live_plan_kind_errors_name_the_exact_location_value_and_allowed_kinds(self):
+        self.components[1]["decisions"][0]["kind"] = "future_analyst_policy"
+        with self.assertRaises(ValueError) as rejected:
+            self.plan()
+        message = str(rejected.exception)
+        self.assertIn("components[1] ('future-owner').decisions[0].kind", message)
+        self.assertIn("'future_analyst_policy'", message)
+        self.assertIn("'future_policy'", message)
+        self.assertIn("'accounting_definition'", message)
+        self.assertFalse((self.root / analysis.PLAN_PATH).exists())
+        self.components[1]["decisions"][0]["kind"] = "future_policy"
+        self.plan()
+
+    def test_live_component_kind_and_criterion_errors_are_actionable(self):
+        self.components[0]["kind"] = "research_calculation"
+        with self.assertRaises(ValueError) as rejected:
+            self.plan()
+        self.assertIn("components[0] ('prior-period').kind", str(rejected.exception))
+        self.assertIn("'research_calculation'", str(rejected.exception))
+        self.assertIn("allowed=('calculation', 'research', 'delivery')", str(rejected.exception))
+        self.components[0]["kind"] = "calculation"
+        self.components[0]["criterionIds"] = []
+        with self.assertRaises(ValueError) as rejected:
+            self.plan()
+        self.assertIn("components[0] ('prior-period').criterionIds", str(rejected.exception))
+        self.assertIn("allowed=['future', 'history']", str(rejected.exception))
+        self.assertIn("report.analysis_requirements()", str(rejected.exception))
+
+    def test_live_output_pointer_error_names_the_component_and_binding(self):
+        self.components[0]["outputRequirements"][1]["path"] = "historical/eva"
+        with self.assertRaises(ValueError) as rejected:
+            self.plan()
+        message = str(rejected.exception)
+        self.assertIn("components[0] ('prior-period')", message)
+        self.assertIn("outputRequirements[1].path", message)
+        self.assertIn("'historical/eva'", message)
+        self.assertIn("Start with '/'", message)
+        self.components[0]["outputRequirements"][1]["path"] = "/historical/eva"
+        self.plan()
+
+    def test_decision_state_error_does_not_require_reading_validator_source(self):
+        self.components[1]["decisions"][0]["state"] = "pending"
+        with self.assertRaises(ValueError) as rejected:
+            self.plan()
+        self.assertIn("decisions[0].state received 'pending'", str(rejected.exception))
+        self.assertIn("allowed=('resolved', 'unresolved')", str(rejected.exception))
+
     def test_long_dependency_chain_does_not_depend_on_python_recursion_depth(self):
         components = [{"id": f"part-{index}", "kind": "calculation", "criterionIds": ["history"],
             "dependsOn": [] if index == 0 else [f"part-{index-1}"], "outputPaths": ["/historical/roic"],

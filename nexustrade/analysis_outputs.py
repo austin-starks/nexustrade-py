@@ -12,13 +12,13 @@ def validate_output_requirements(requirements: Any, criterion_ids: Sequence[str]
         raise ValueError("Declare outputRequirements: criterionId, path and type for actual result leaves, not section containers")
     covered = set()
     seen = set()
-    for row in requirements:
+    for index, row in enumerate(requirements):
         if not isinstance(row, dict) or set(row) not in ({"criterionId", "path", "type"}, {"criterionId", "resultId", "path", "type"}):
             raise ValueError("Output requirements need criterionId, path and type, plus resultId for host-declared results")
         if not isinstance(row['criterionId'], str) or row['criterionId'] not in criterion_ids or not isinstance(row['type'], str) or row['type'] not in {'number', 'string', 'boolean'}:
             raise ValueError("Output requirements must name a component criterion and a scalar result type")
         if not isinstance(row['path'], str) or not row['path'].startswith('/'):
-            raise ValueError("Output requirements need exact RFC6901 pointers")
+            raise ValueError(f"Output requirements need exact RFC6901 pointers; outputRequirements[{index}].path received {row['path']!r}. Start with '/' and name the actual scalar model result (for example '/periods/0/metric').")
         if 'resultId' in row and (not isinstance(row['resultId'], str) or not row['resultId'].strip()):
             raise ValueError("resultId must name an independently required result")
         identity = (row['criterionId'], row['path'])
