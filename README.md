@@ -480,9 +480,15 @@ operations: list[PortfolioEditOperation] = [
 client.update_portfolio(portfolio_id, operations, idempotency_key="aapl-limit-v1")
 ```
 
-The five edits are `rename`, `addStrategies`, `removeStrategies`,
-`replaceStrategy`, and `replaceStrategies`. Deploy, undeploy, delete,
-scheduling, and trading-policy operations are not reachable on this route.
+Prefer one `updatePortfolio` operation with a finished `portfolio` patch.
+It can combine `strategies`, `deployment` (frequency and timing), `name`,
+`policy.stockEligibility`, `dividendPolicy`, and alerts. Omitted fields retain
+their saved values. Draft starting capital and capabilities can change only
+before deployment. The existing strategy and rename operations remain supported.
+Every authored operation for the target in one call commits together; validation
+failure saves none of them. Reusing the same idempotency key replays the saved
+result. Deploy, undeploy, delete and automated approval remain separate account
+operations.
 
 **`replaceStrategies` replaces the whole set**, so a strategy left out of the
 list is deleted. Carry unchanged strategies through verbatim, including the
@@ -812,6 +818,23 @@ statement = nt.sec.statement(
     as_of="2026-08-28",
 )
 
+# Inspect exact required period/field inputs without filling missing values.
+coverage = nt.sec.statement_availability(statement, {
+    "latest_cash": {"period_end": "2025-12-31", "field": "cash",
+                    "cadence": "annual"},
+})
+# selected includes the original row/value. null_in_response, field_not_in_response,
+# period_not_in_response and ambiguous require targeted source review; none proves
+# that an issuer omitted a disclosure. Zero is a usable value, not missing data.
+
+# Locate a document using the exact accession/form returned by SEC data.
+# Older primary filenames are irregular; source_filing_url can be a directory.
+row = statement["rows"][0]
+locator = nt.sec.filing(ticker="GOOGL", accession=row["accession"],
+                       form=row["form"], as_of="2026-08-28")
+# Fetch locator['filing']['primary_document_url'] when status == 'located'.
+# Never append a ticker/year filename to a directory URL.
+
 candidates = nt.sec.fact_candidates(
     ticker="GOOGL",
     roles=[
@@ -929,6 +952,61 @@ results. For a compute report, pass that object with research findings, exact
 source identities, method requirements, and assumptions to
 `nexustrade.report.write(inputs=analysis_outputs, model=model, images=chart_files)`.
 
+For a calculation report with staged criteria, declare `report.plan_analysis(...)`
+before construction. Supply one `producer_path`, canonical `model_path`, frozen
+`source_paths`, optional literal `producer_args`, and model-authored `components`: each has `id`, `kind`
+(`calculation`, `research`, `delivery`), actual `criterionIds`, direct `dependsOn`
+IDs, `outputPaths` (RFC 6901 section locators into the model), and
+`outputRequirements`: `{criterionId, path, type}` entries binding every component
+criterion to its actual scalar results. `type` is `number`, `string`, or `boolean`.
+Use exact result leaves, not section containers. Generate paths for every requested
+period/case programmatically. Numbers must be finite; real zero and boolean false
+are valid; null, objects, blank strings and numeric-looking strings are unfinished.
+These version-2 declarations replace section-only plans; old plans return explicit
+`declare_outputs` migration tasks and cannot claim completion. Optional `decisions`
+have `kind` (`reported_fact`, `accounting_definition`, `future_policy`,
+`implementation`), `state` (`resolved`, `unresolved`), `explanation`, and
+`evidencePaths`. Cover all staged required criteria. This is a work plan, not
+financial definitions supplied by the SDK.
+
+Use `report.execute_analysis(timeout_sec=300)` to execute the declared
+Python producer once. It records current source/producer/model bytes; subsequent
+`report.write` attaches derived `analysisWork`. The producer can write both the
+model and report inputs; successful execution refreshes only that SDK-owned state
+after checking the report contains exactly the current canonical model. Formatting or a patch script cannot
+mark stale outputs complete. `report.analysis_status()` returns current component
+states (`not_started`, `computed`, `review_rejected`, `accepted`) and `nextTasks`.
+Current semantic readiness is required for acceptance; execution alone does not
+establish accounting correctness. Plan historical periods using their own aligned
+inputs and definitions. An unresolved future distribution policy only blocks its
+direct dependents. Choose and justify analyst assumptions rather than treating
+unmade choices as missing issuer disclosures. Preserve real source absence.
+Inspected decision evidence is included in the execution's dependency identity,
+even when it is not repeated in `source_paths`. Only the declared artifacts are
+bound; the SDK does not fingerprint the repository or choose financial answers.
+If the producer only rebuilt the model, `execute_analysis` returns
+`reportExportRequired=true`; export the report from that current model. A failed
+producer restores the previous model/report snapshot and cannot claim new success.
+An investigated, method-permitted limitation can be an explicit sourced model
+record with nonempty reasoning and source locators for semantic review. Declare
+its actual reasoning result with type `string`; do not declare a missing number
+computed. The validator decides whether that limitation satisfies the method.
+An unexplained null or unchosen assumption cannot.
+
+```python
+components = [{
+    "id": "period-returns", "kind": "calculation",
+    "criterionIds": [returns_criterion_id], "dependsOn": ["capital-reconciliation"],
+    "outputPaths": ["/periods"],
+    "outputRequirements": [
+        {"criterionId": returns_criterion_id, "path": f"/periods/{index}/{field}", "type": "number"}
+        for index in range(len(periods)) for field in ("return_on_capital", "economic_profit")
+    ],
+}]
+# Choose output fields from the requested analysis and your actual model.
+# MissingRequiredOutputs names each result to build; section presence cannot close it.
+```
+
 Before report authoring, compute sandboxes with the report-readiness gateway can
 check a saved handoff against the staged method criteria:
 
@@ -936,19 +1014,32 @@ check a saved handoff against the staged method criteria:
 from nexustrade import report
 
 readiness = report.validate(inputs_path="/work/out/report_inputs.json")
-if readiness["status"] == "needs_repair":
+if readiness["status"] == "needs_construction":
+    print(readiness["nextTasks"])  # Build ready components; no paid review was called.
+elif readiness["status"] == "needs_repair":
     for finding in readiness["findings"]:
         print(finding["criterionId"], finding["inputPath"], finding["nextAction"])
         # Delegate researchQuestion to an investigator when present. The parent
         # repairs its producer, integrates evidence and regenerates the handoff.
+elif readiness["status"] == "validation_pending":
+    print(readiness["nextAction"])  # Recover the same request; no new paid attempt.
 ```
 
-This returns repair instructions, not a grade. It distinguishes uninvestigated
+This returns repair instructions, not a grade. A declared unfinished construction
+plan returns `needs_construction` locally without a paid broad review. Current
+producer output and all dependencies must be present before semantic readiness.
+The host transmits complete repeated values through a lossless alias dictionary,
+including repeated provenance and staged evidence, and checks the full assembled
+request's model context budget before dispatch. Capacity refusal is infrastructure,
+not an analytical gap; evidence is never silently truncated.
+It distinguishes uninvestigated
 evidence, unfinished calculations, unsupported assumptions, inconsistencies and
 documented source limitations. It does not rewrite a financial model or run
 model-authored SQL. Calls count toward the existing compute-session cap;
 unchanged handoffs reuse a durable receipt. Following an ambiguous transport
-failure, the next identical call uses replay-only recovery. Independent review
+failure, this call attempts one bounded replay-only recovery within its deadline.
+If still unavailable it returns `validation_pending`, with no readiness verdict;
+the next identical call remains replay-only. Independent review
 and final grading remain required. The helper is compute-only; older pinned
 SDKs/gateways do not provide this capability.
 Plan the findings together: several requirements can depend on the same missing
@@ -957,7 +1048,13 @@ separate paid task for every finding.
 Validation also captures retained child research from
 `/work/.nexustrade/research-evidence` into a separate reserved
 `_report_readiness_evidence` field in the request copy. Saved inputs and the
-calculation model are unchanged. It supplies full handoff questions, source
+calculation model are unchanged. Only SDK-owned `analysisWork.readinessReceipt`
+is saved after validation. The host binds it to this user/job, report, criteria,
+and declared execution; finish requires a current `ready` receipt before authoring.
+Open blocking findings remain in `analysis_status().nextTasks` across producer edits.
+An unchanged model/source/report cannot buy repeated broad review; a changed
+candidate may be reassessed without silently closing those findings.
+It supplies full handoff questions, source
 locators, limitations and file inventories across retained continuation parents.
 Whole UTF-8 selections up to 256 KiB are included within a 2 MiB context budget
 and the existing 4 MiB total request limit; smaller selections are included first.
@@ -1009,6 +1106,15 @@ for batch in result.iter_batches():    # or stream within your own budget
 
 Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
 compatible backing engine; your SQL does not change when it does.
+
+`query_timeout_seconds` sets the server execution budget (default 90 seconds,
+maximum 300). `wait_timeout_seconds` sets only the client's polling allowance;
+it never increases the execution budget. Large intraday coverage scans should
+use bounded date chunks and persist each submitted handle's `id` before waiting.
+After a client timeout, resume with `nt.lake.get(error.operation_id)` rather than
+resubmitting. `LakeQueryFailed.operation_id` retains the failed query receipt.
+Execution errors with code `query_timeout` are not automatically resubmitted
+unchanged; transient service/storage failures still receive bounded retries.
 
 ## Managed watchlist universes
 
@@ -1532,3 +1638,8 @@ The optional helper preserves the supplied passages, normalizes whitespace, and
 reports missing or ambiguous matches. It does not choose facts or certify that a
 claim follows from a quote. The host handles model request capacity separately;
 research should not discard supported claims to satisfy a prompt-size allowance.
+
+Report JSON uses a shared 4 MiB compact UTF-8 envelope and depth 128 in the SDK
+and host. Every supported delivered claim is checked; there is no separate
+2,500-node provenance cap. Over-envelope reports fail with a capacity error,
+not a claim that their numeric references are unbound.

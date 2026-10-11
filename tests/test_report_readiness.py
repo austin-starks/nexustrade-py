@@ -1,4 +1,5 @@
 import json
+import http.client
 import os
 import tempfile
 import unittest
@@ -52,13 +53,51 @@ class ReportReadinessTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 2)
         self.assertEqual(json.loads(before)["model"]["cashFlow"], None)
 
+    def test_transmits_independently_required_results_without_dropping_them(self):
+        result_contract = [{'id':'flow','description':'Annual cash flows','type':'number','minimumCount':3}]
+        criteria_file = self.root / 'acceptance/acceptance_criteria.json'
+        document = json.loads(criteria_file.read_text())
+        document['acceptanceCriteria'][0]['results'] = result_contract
+        criteria_file.write_text(json.dumps(document))
+        with patch.object(readiness.urllib.request, 'urlopen', side_effect=lambda *a, **k: self.response()) as fetch:
+            report.validate(inputs_path=str(self.inputs))
+            body = json.loads(fetch.call_args.args[0].data)
+            self.assertEqual(body['criteria'][0]['results'], result_contract)
+
     def test_ambiguous_failure_uses_replay_only_without_paid_retry(self):
         with patch.object(readiness.urllib.request, "urlopen", side_effect=TimeoutError("ambiguous response")) as fetch:
-            with self.assertRaises(TimeoutError): report.validate(inputs_path=str(self.inputs))
-            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(report.validate(inputs_path=str(self.inputs))['status'], 'validation_pending')
+            self.assertEqual(fetch.call_count, 2)
         with patch.object(readiness.urllib.request, "urlopen", side_effect=lambda *a, **k: self.response()) as fetch:
             report.validate(inputs_path=str(self.inputs))
             self.assertTrue(fetch.call_args.args[0].full_url.endswith("/report/validate/replay"))
+
+    def test_actual_incomplete_read_recovers_the_same_request_immediately(self):
+        from io import BytesIO
+        class BrokenResponse(BytesIO):
+            def read(self):
+                raise http.client.IncompleteRead(b'    ')
+        with patch.object(readiness.urllib.request, 'urlopen', side_effect=[BrokenResponse(), self.response()]) as fetch:
+            self.assertEqual(report.validate(inputs_path=str(self.inputs)), self.result)
+            requests = [call.args[0] for call in fetch.call_args_list]
+            self.assertEqual(requests[0].data, requests[1].data)
+            self.assertTrue(requests[1].full_url.endswith('/replay'))
+            self.assertEqual(sum(not request.full_url.endswith('/replay') for request in requests),1)
+            self.assertFalse(list((self.root / '.nexustrade/report-readiness').glob('*.pending')))
+
+    def test_replay_cache_miss_cannot_launch_a_second_paid_attempt(self):
+        from io import BytesIO
+        import urllib.error
+        miss = urllib.error.HTTPError('replay',409,'pending',{}, BytesIO(b'{"error":{"type":"logical_replay_unavailable"}}'))
+        with patch.object(readiness.urllib.request, 'urlopen', side_effect=[http.client.IncompleteRead(b'    '), miss]) as fetch:
+            result = report.validate(inputs_path=str(self.inputs))
+            self.assertEqual(result['status'], 'validation_pending')
+            self.assertFalse(result['acceptance'])
+            self.assertEqual(fetch.call_count, 2)
+        with patch.object(readiness.urllib.request, 'urlopen', side_effect=TimeoutError('still pending')) as fetch:
+            self.assertEqual(report.validate(inputs_path=str(self.inputs))['status'], 'validation_pending')
+            self.assertEqual(fetch.call_count, 1)
+            self.assertTrue(fetch.call_args.args[0].full_url.endswith('/replay'))
 
     def test_does_not_accept_a_ready_verdict_over_missing_calculations(self):
         self.result["status"] = "ready"

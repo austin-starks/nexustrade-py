@@ -51,7 +51,32 @@ class SignalProvenanceTests(unittest.TestCase):
             patch.object(signal.host, "HOST_RESULTS_PATH", str(self.results_path)),
             patch.object(signal, "DEFAULT_LINEAGE_PATH", str(self.lineage_path)),
         ):
+            # The explicit report diagnostic remains available. Ordinary writes
+            # are tested separately below and must not invoke it.
+            signal.assert_document_provenance(rows)
             return signal.write_rows(rows, path=str(self.output_path))
+
+    def test_normal_write_does_not_read_or_require_provenance(self) -> None:
+        rows = [{"timestamp": "2024-01-01", "value": 0, "ticker": "NVDA"}]
+        self.lineage_path.write_text("malformed unused lineage\n")
+        with (
+            patch.object(signal.host, "HOST_RESULTS_PATH", str(self.results_path)),
+            patch.object(signal, "DEFAULT_LINEAGE_PATH", str(self.lineage_path)),
+            patch.object(signal, "assert_document_provenance", side_effect=AssertionError("non-report attribution check")),
+        ):
+            self.assertEqual(signal.write_rows(rows, path=str(self.output_path)), 1)
+        self.assertEqual(json.loads(self.output_path.read_text()), rows[0])
+
+    def test_normal_write_preserves_optional_source_fields_without_validation(self) -> None:
+        row = {"timestamp": "2024-01-01", "value": 1, "source_id": "publisher-owned-id"}
+        with patch.object(signal.host, "HOST_RESULTS_PATH", str(self.results_path)):
+            self.assertEqual(signal.write_rows([row], path=str(self.output_path)), 1)
+        self.assertEqual(json.loads(self.output_path.read_text()), row)
+
+    def test_normal_write_still_rejects_invalid_values_atomically(self) -> None:
+        with self.assertRaises(ValueError):
+            signal.write_rows([{"timestamp": "2024-01-01", "value": float("nan")}], path=str(self.output_path))
+        self.assertFalse(self.output_path.exists())
 
     def test_accepts_exact_successful_host_fetch_id(self) -> None:
         written = self._write(

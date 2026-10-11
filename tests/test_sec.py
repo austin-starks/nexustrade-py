@@ -270,6 +270,7 @@ class SecSdkTests(unittest.TestCase):
             nt.sec.fact_instances(
                 ticker="GOOGL",
                 as_of="2026-08-28",
+                accession="0001652044-16-000012",
                 concepts=["Assets"],
                 dimensional="none",
                 filing_period_from="2025-01-01",
@@ -310,6 +311,7 @@ class SecSdkTests(unittest.TestCase):
                     "action": "fact_instances",
                     "ticker": "GOOGL",
                     "asOf": "2026-08-28",
+                    "accession": "0001652044-16-000012",
                     "maxFilings": 4,
                     "concepts": ["Assets"],
                     "dimensional": "none",

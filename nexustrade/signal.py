@@ -280,13 +280,11 @@ def assert_document_provenance(
     lineage_path: str | None = None,
     results_path: str | None = None,
 ) -> None:
-    """Enforce the host's attribution contract at WRITE time.
+    """Explicit attribution check for report-specific callers.
 
-    `verifyReconciliationContract` blocks any run that fetched source documents and
-    then emitted rows it cannot attribute. That gate only fires at finish, after
-    every page is OCR'd and the artifact is assembled, so the run burns a full
-    validation cycle to learn about a stamp it could have set here. Same ledger,
-    same test, one exec round instead.
+    Normal signal/dataset writes never invoke this check: source attribution is
+    not a completion requirement for non-report tasks. Report callers may choose
+    this early diagnostic; the host independently checks the final report.
 
     Silent on runs that fetched no documents: a lake, API or computed series has no
     per-document denominator, and demanding one there blocked most of the corpus.
@@ -391,7 +389,6 @@ def write_rows(
     materialized = list(rows)
     for row in materialized:
         validate_row(row)
-    assert_document_provenance(materialized)
     if filter_tickers is not None:
         warnings.warn(
             "filter_tickers is deprecated and ignored; write_rows no longer "
