@@ -179,7 +179,7 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     """Declare the current brief's work and direct dependencies before building.
 
     Components include id, kind, criterionIds, dependsOn, outputPaths,
-    outputRequirements ({criterionId,resultId,path,type}: number/string/boolean leaves
+    outputRequirements ({criterionId,resultId,path,type,coveragePaths?}: number/string/boolean leaves
     for every criterion and requested period/case), and optional
     decisions. Each decision has kind (reported_fact/accounting_definition/
     future_policy/implementation), state (resolved/unresolved), explanation and
@@ -187,8 +187,11 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     Historical periods depend on their own aligned inputs/definitions, not on
     unrelated future distribution choices. No plan is inferred from financial keys.
     Read the staged criteria's results first. resultId and type must match that
-    independent contract, and minimumCount needs distinct scalar pointers. The
-    executor cannot substitute a status string or count for numerical results.
+    independent contract, and minimumCount needs distinct scalar pointers. When
+    results declare coverage, bind each coordinate dimension with coveragePaths
+    to its actual scalar in the executed model (e.g. period: '/history/0/year').
+    Historical and future results are separate; a forecast cannot replace history.
+    The executor cannot substitute a status string or count for numerical results.
     Legacy criteria without results retain the three-field declaration format.
     All required criteria must be represented, including research/delivery work.
     """
@@ -306,6 +309,8 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
                    and receipt.get("inputSha256") == input_hashes and model_path.exists()
                    and receipt.get("modelSha256") == _digest(model_path))
     components: list[dict[str, Any]] = []
+    all_bindings = [binding for row in plan['components'] for binding in row.get('outputRequirements', [])]
+    coverage_findings = {criterion['id']: required_result_binding_findings(all_bindings, [criterion], model) for criterion in _required_criteria()}
     for row in plan["components"]:
         missing = []
         missing_results = missing_required_outputs(model, row.get('outputRequirements', []))
@@ -319,8 +324,10 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
             except (KeyError, IndexError, ValueError):
                 missing.append(pointer)
         unresolved = [x for x in row.get("decisions", []) if x["state"] == "unresolved"]
-        components.append({**row, "status": "computed" if current and not missing and not unresolved else "not_started",
+        contract_findings = [finding for criterion_id in row['criterionIds'] for finding in coverage_findings.get(criterion_id, [])]
+        components.append({**row, "status": "computed" if current and not missing and not unresolved and not contract_findings else "not_started",
                            "missingOutputs": list(dict.fromkeys(missing)), "unresolvedPrimitives": unresolved,
+                           "requiredResultFindings": contract_findings,
                            "missingRequiredOutputs": missing_results})
     by_id = {row["id"]: row for row in components}
     for row in _ordered_components(components):
@@ -353,9 +360,10 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         # repairs while another research judgment is still being reviewed.
         waiting = [x for x in row["dependsOn"] if x not in construction_available]
         findings = [finding for finding in (reviewed or {}).get('findings', []) if finding['criterionId'] in row['criterionIds'] and finding['severity'] == 'blocking']
-        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "declare_outputs" if plan['version'] == 1 else ("repair_producer" if row["status"] == "review_rejected" else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer")),
+        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "declare_outputs" if plan['version'] == 1 else ("repair_producer" if row["status"] == "review_rejected" or row['requiredResultFindings'] else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer")),
                       "waitingOn": waiting, "readyToWork": not waiting, "missingOutputs": row["missingOutputs"], "unresolvedPrimitives": row["unresolvedPrimitives"],
                       "missingRequiredOutputs": row['missingRequiredOutputs'], "findings": findings,
+                      "requiredResultFindings": row['requiredResultFindings'],
                       "requiresSemanticReassessment": bool(findings)})
     return {"version": plan['version'], "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
             "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks}

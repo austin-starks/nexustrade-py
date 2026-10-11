@@ -1,6 +1,6 @@
 import unittest
 
-from nexustrade.analysis_outputs import required_result_binding_findings, missing_required_outputs
+from nexustrade.analysis_outputs import required_result_binding_findings, missing_required_outputs, validate_output_requirements
 
 
 class IndependentResultTests(unittest.TestCase):
@@ -39,3 +39,31 @@ class IndependentResultTests(unittest.TestCase):
 
     def test_legacy_durable_criteria_are_not_reinterpreted(self):
         self.assertEqual(required_result_binding_findings([], [{'id': 'legacy'}]), [])
+
+    def test_requested_history_cannot_be_satisfied_by_forecasts_or_repeated_periods(self):
+        criteria = [{'id': 'observations', 'results': [{'id': 'measured', 'description': 'Historical observations', 'type': 'number', 'minimumCount': 2, 'coverage': [{'period': 2019}, {'period': 2020}]}]}]
+        bindings = [{'criterionId': 'observations', 'resultId': 'measured', 'type': 'number', 'path': f'/rows/{i}/value', 'coveragePaths': {'period': f'/rows/{i}/period'}} for i in range(2)]
+        validate_output_requirements(bindings, ['observations'])
+        self.assertEqual(required_result_binding_findings(bindings, criteria), [])
+        model = {'rows': [{'period': 2019.0, 'value': 0}, {'period': 2020, 'value': 17}]}
+        self.assertEqual(missing_required_outputs(model, bindings), [])
+        self.assertEqual(required_result_binding_findings(bindings, criteria, model), [])
+        for periods in ([2036, 2037], [2019, 2019], ['2019', 2020], [None, 2020]):
+            model = {'rows': [{'period': p, 'value': .1} for p in periods]}
+            self.assertEqual(missing_required_outputs(model, bindings), [])
+            self.assertTrue(required_result_binding_findings(bindings, criteria, model))
+        self.assertTrue(required_result_binding_findings(bindings, criteria, {}))
+        for selectors in (None, {'period': '2019'}, {'year': '/rows/0/period'}):
+            changed = [dict(row, coveragePaths=selectors) for row in bindings]
+            self.assertTrue(required_result_binding_findings(changed, criteria))
+
+    def test_arbitrary_paired_scope_does_not_require_an_invented_cross_product(self):
+        criteria = [{'id': 'ports', 'results': [{'id': 'flow', 'description': 'Port throughput', 'type': 'number', 'minimumCount': 2, 'coverage': [{'window': 'morning', 'port': 'east'}, {'window': 'evening', 'port': 'west'}]}]}]
+        bindings = [{'criterionId': 'ports', 'resultId': 'flow', 'path': f'/rows/{i}/value', 'type': 'number', 'coveragePaths': {'window': f'/rows/{i}/window', 'port': f'/rows/{i}/port'}} for i in range(2)]
+        model = {'rows': [{'window': 'morning', 'port': 'east', 'value': 0}, {'window': 'evening', 'port': 'west', 'value': 10}]}
+        self.assertEqual(required_result_binding_findings(bindings, criteria, model), [])
+
+    def test_malformed_explicit_coverage_is_not_a_weaker_contract(self):
+        for coverage in ([], [{'period': True}], [{'period': ''}], [{'period': 2019}, {'period': '2020'}], [{'period': 2019}, {'year': 2020}], [{'period': 2019}, {'period': 2019}]):
+            with self.assertRaises(ValueError):
+                required_result_binding_findings([], [{'id': 'history', 'results': [{'id': 'r', 'description': 'Required result', 'type': 'number', 'minimumCount': 2, 'coverage': coverage}]}])

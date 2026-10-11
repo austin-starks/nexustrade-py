@@ -66,6 +66,25 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
             self.assertEqual(result["nextTasks"][0]["operation"], "resolve_primitive")
             paid.assert_not_called()
 
+    def test_execution_with_wrong_history_scope_returns_autonomous_repair_without_paid_review(self):
+        criteria_path = self.root / 'acceptance/acceptance_criteria.json'
+        criteria = json.loads(criteria_path.read_text())
+        criteria['acceptanceCriteria'][0]['results'] = [{'id': 'return', 'description': 'Required historical return', 'type': 'number', 'minimumCount': 1, 'coverage': [{'period': '2027-12-31'}]}]
+        criteria_path.write_text(json.dumps(criteria))
+        self.components[0]['outputRequirements'] = [{'criterionId': 'history', 'resultId': 'return', 'path': '/historical/roic', 'type': 'number', 'coveragePaths': {'period': '/historical/period_end'}}]
+        # The unchanged real producer computes 2028. Scalar presence must not accept 2027.
+        self.plan()
+        status = analysis.execute_analysis()
+        self.assertEqual(status['components'][0]['status'], 'not_started')
+        task = status['nextTasks'][0]
+        self.assertEqual(task['operation'], 'repair_producer')
+        self.assertIn('missing required coverage', ' '.join(task['requiredResultFindings']))
+        saved = self.root / 'inputs.json'
+        saved.write_text(json.dumps(self.inputs()))
+        with patch.object(readiness.urllib.request, 'urlopen') as paid:
+            self.assertEqual(readiness.validate(inputs_path=str(saved))['status'], 'needs_construction')
+            paid.assert_not_called()
+
     def test_unplanned_canonical_model_cannot_purchase_broad_review(self):
         saved = self.root / "inputs.json"
         saved.write_text('{"calculationModel":{"historical":null,"future":null}}')
