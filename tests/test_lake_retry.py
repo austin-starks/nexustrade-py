@@ -69,6 +69,19 @@ class LakeRetryTests(unittest.TestCase):
         self.assertTrue(raised.exception.retryable)
         self.assertEqual(len(client.keys), nt.lake.RETRYABLE_QUERY_ATTEMPTS)
 
+    def test_execution_timeout_is_not_resubmitted_even_if_retryable(self) -> None:
+        timeout = {"status": "failed", "error": {
+            "code": "query_timeout", "message": "Lake query exceeded its time limit",
+            "retryable": True,
+        }}
+        client = FakeLakeClient([timeout, COMPLETED])
+        with self.assertRaises(nt.lake.LakeQueryFailed) as raised:
+            nt.lake.sql("SELECT 1", client=client)
+        self.assertEqual(raised.exception.code, "query_timeout")
+        self.assertEqual(raised.exception.operation_id, "lq_1")
+        self.assertEqual(len(client.keys), 1)
+        self.sleep.assert_not_called()
+
     def test_a_long_key_stays_within_the_server_limit(self) -> None:
         client = FakeLakeClient([TRANSIENT, COMPLETED])
         nt.lake.sql("SELECT 1", client=client, idempotency_key="k" * 160)

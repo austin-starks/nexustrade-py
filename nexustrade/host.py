@@ -14,11 +14,11 @@ import urllib.request
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+from nexustrade._activity import touch_activity
 
 WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")
 HOST_REQUESTS_PATH = os.path.join(WORK_DIR, "host_requests.jsonl")
 HOST_RESULTS_PATH = os.path.join(WORK_DIR, "host_results.jsonl")
-_HOST_ACTIVITY_FILE_ENV = "NEXUSTRADE_HOST_ACTIVITY_FILE"
 
 _pending_requests: list[dict[str, Any]] = []
 
@@ -31,16 +31,7 @@ def _touch_host_activity() -> None:
     calls while its outer JSON event stream remains unchanged. The runner owns
     the path and treats only its modification time as advisory progress.
     """
-    path = os.environ.get(_HOST_ACTIVITY_FILE_ENV, "").strip()
-    if not path:
-        return
-    try:
-        with open(path, "ab"):
-            pass
-        os.utime(path, None)
-    except OSError:
-        # Liveness reporting must never turn a valid SDK call into a failure.
-        pass
+    touch_activity()
 
 
 # Keep gateway fan-out below the server's per-host limits. The gateway itself
