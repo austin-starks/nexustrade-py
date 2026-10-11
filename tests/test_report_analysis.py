@@ -51,6 +51,94 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
     def inputs(self):
         return analysis.attach_analysis_work({"calculationModel": json.loads((self.root / "model.json").read_text())})
 
+    def native_finding(self, *, component_ids=None, disposition='open', model_sha=None):
+        row = {'findingId': 'finding:' + 'a' * 64, 'path': 'producer.py',
+               'issue': 'Selected inputs do not establish the declared definition.',
+               'evidence': 'Exact retained source comparison.', 'disposition': disposition,
+               'readAgainstModelSha256': model_sha or analysis.analysis_status(include_review=False)['execution']['modelSha256']}
+        if component_ids is not None:
+            row['componentIds'] = component_ids
+            row['analysisTargets'] = [component for component in self.components if component['id'] in component_ids]
+        target = self.root / '.nexustrade/analysis/review-findings.json'
+        target.write_text(json.dumps({'version': 1, 'findings': [row]}))
+        return target
+
+    def test_incomplete_checkpoint_preserves_native_repair_before_extension(self):
+        self.plan(); analysis.execute_analysis()
+        self.native_finding()
+        status = analysis.construction_checkpoint(self.inputs())
+        self.assertEqual(status['nextTasks'][0]['operation'], 'repair_review_findings')
+        self.assertEqual(status['nextTasks'][0]['findings'][0]['issue'], 'Selected inputs do not establish the declared definition.')
+
+    def test_native_rejection_blocks_dependent_expansion_but_preserves_independent_work(self):
+        self.components[1]['dependsOn'] = ['prior-period']
+        self.plan(); analysis.execute_analysis()
+        self.native_finding(component_ids=['prior-period'])
+        status = analysis.analysis_status()
+        self.assertEqual(status['components'][0]['status'], 'review_rejected')
+        task = next(task for task in status['nextTasks'] if task.get('componentId') == 'future-owner')
+        self.assertFalse(task['readyToWork'])
+        self.assertEqual(task['waitingOn'], ['prior-period'])
+        self.assertEqual(status['nextTasks'][0]['operation'], 'repair_review_findings')
+        self.assertEqual(analysis.analysis_status(include_review=False)['components'][0]['status'], 'computed')
+
+    def test_changed_candidate_requests_reassessment_without_auto_closing_finding(self):
+        self.plan(); analysis.execute_analysis()
+        self.native_finding(component_ids=['prior-period'])
+        (self.root / 'source.json').write_text('{"opening":80,"closing":100,"income":10}')
+        analysis.execute_analysis()
+        status = analysis.analysis_status()
+        self.assertEqual(status['components'][0]['status'], 'review_pending')
+        self.assertEqual(status['nextTasks'][0]['operation'], 'reassess_review_findings')
+        self.assertEqual(status['nextTasks'][0]['findings'][0]['disposition'], 'open')
+
+    def test_renaming_component_does_not_erase_rejected_result_bindings(self):
+        self.plan(); analysis.execute_analysis()
+        self.native_finding(component_ids=['prior-period'])
+        self.components[0]['id'] = 'renamed'
+        self.plan(); analysis.execute_analysis()
+        self.assertEqual(analysis.analysis_status()['components'][0]['status'], 'review_rejected')
+
+    def test_changed_definition_inputs_require_reassessment_even_when_numbers_match(self):
+        self.plan(); analysis.execute_analysis()
+        target = self.native_finding(component_ids=['prior-period'])
+        queue = json.loads(target.read_text())
+        receipt = analysis.analysis_status(include_review=False)['execution']
+        queue['findings'][0]['readAgainstExecution'] = analysis._execution_identity(receipt)
+        target.write_text(json.dumps(queue))
+        self.assertEqual(analysis.analysis_status()['components'][0]['status'], 'review_rejected')
+        script = self.root / 'producer.py'
+        script.write_text(script.read_text() + '\n# Revised implementation evidence; unchanged numeric output.\n')
+        analysis.execute_analysis()
+        status = analysis.analysis_status()
+        self.assertEqual(status['execution']['modelSha256'], receipt['modelSha256'])
+        self.assertEqual(status['components'][0]['status'], 'review_pending')
+        self.assertEqual(status['nextTasks'][0]['operation'], 'reassess_review_findings')
+
+    def test_explicit_repair_after_reexecution_unblocks_only_the_scoped_dependency(self):
+        self.components[1]['dependsOn'] = ['prior-period']
+        self.plan(); analysis.execute_analysis()
+        target = self.native_finding(component_ids=['prior-period'])
+        (self.root / 'source.json').write_text('{"opening":90,"closing":100,"income":9}')
+        analysis.execute_analysis()
+        self.assertFalse(next(task for task in analysis.analysis_status()['nextTasks'] if task.get('componentId') == 'future-owner')['readyToWork'])
+        queue = json.loads(target.read_text()); queue['findings'][0]['disposition'] = 'repaired'
+        target.write_text(json.dumps(queue))
+        status = analysis.analysis_status()
+        self.assertEqual(status['components'][0]['status'], 'computed')
+        self.assertTrue(next(task for task in status['nextTasks'] if task.get('componentId') == 'future-owner')['readyToWork'])
+        self.assertNotEqual(status['components'][0]['status'], 'accepted')
+
+    def test_explicit_disproof_unblocks_scoped_dependency_without_global_acceptance(self):
+        self.plan(); analysis.execute_analysis()
+        target = self.native_finding(component_ids=['prior-period'])
+        self.assertEqual(analysis.analysis_status()['components'][0]['status'], 'review_rejected')
+        queue = json.loads(target.read_text())
+        queue['findings'][0]['disposition'] = 'disproved'
+        target.write_text(json.dumps(queue))
+        self.assertEqual(analysis.analysis_status()['components'][0]['status'], 'computed')
+        self.assertNotEqual(analysis.analysis_status()['components'][0]['status'], 'accepted')
+
     def test_history_completes_while_future_policy_is_unresolved_without_paid_review(self):
         self.plan()
         status = analysis.execute_analysis()

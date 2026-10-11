@@ -317,9 +317,47 @@ def _native_review_findings() -> list[dict[str, Any]]:
                 for key in ('findingId', 'path', 'issue', 'disposition'))
                 or row['disposition'] not in ('open', 'repaired', 'disproved', 'not_reassessed', 'unavailable')):
             raise ValueError('Invalid native review finding')
+        if ('componentIds' in row and (not isinstance(row['componentIds'], list)
+                or any(not isinstance(value, str) or not value for value in row['componentIds']))):
+            raise ValueError('Invalid native review component IDs')
+        if ('analysisTargets' in row and (not isinstance(row['analysisTargets'], list)
+                or any(not isinstance(target, dict) or not isinstance(target.get('id'), str)
+                       or not isinstance(target.get('outputRequirements'), list) for target in row['analysisTargets']))):
+            raise ValueError('Invalid native review analysis targets')
         if row['disposition'] not in ('repaired', 'disproved'):
             rows.append(row)
     return rows
+
+
+def _native_component_findings(components: Sequence[Mapping[str, Any]], findings: Sequence[Mapping[str, Any]]) -> dict[str, list[Mapping[str, Any]]]:
+    """Use reviewer-selected IDs and host-captured bindings, never prose locators.
+
+    Retaining exact logical result identities also survives a component rename.
+    Legacy/report-only findings stay unscoped rather than rejecting guessed work.
+    """
+    def binding_key(binding: Mapping[str, Any]) -> tuple[Any, Any]:
+        return binding.get('criterionId'), binding.get('resultId') or binding.get('path')
+    scoped: dict[str, list[Mapping[str, Any]]] = {row['id']: [] for row in components}
+    for finding in findings:
+        targets = {binding_key(binding) for target in finding.get('analysisTargets', [])
+                   for binding in target['outputRequirements']}
+        for row in components:
+            if (row['id'] in finding.get('componentIds', []) or
+                    targets.intersection(binding_key(binding) for binding in row.get('outputRequirements', []))):
+                scoped[row['id']].append(finding)
+    return scoped
+
+
+def _execution_identity(execution: Mapping[str, Any]) -> str:
+    identity = {key: execution.get(key) for key in ('planSha256', 'inputSha256', 'modelSha256')}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+
+
+def _native_candidate_unchanged(finding: Mapping[str, Any], execution: Mapping[str, Any]) -> bool:
+    if not finding.get('readAgainstModelSha256') or finding['readAgainstModelSha256'] != execution.get('modelSha256'):
+        return False
+    previous = finding.get('readAgainstExecution')
+    return previous is None or previous == _execution_identity(execution)
 
 
 def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
@@ -370,6 +408,21 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         if row["status"] == "computed" and any(by_id[x]["status"] != "computed" for x in row["dependsOn"]):
             row["status"] = "not_started"
     construction_available = {row['id'] for row in components if row['status'] == 'computed'}
+    native_findings = _native_review_findings() if include_review else []
+    native_by_component = _native_component_findings(components, native_findings)
+    native_blocked = set()
+    for row in _ordered_components(components):
+        findings = native_by_component[row['id']]
+        if findings:
+            native_blocked.add(row['id'])
+            row['status'] = ('review_rejected' if any(_native_candidate_unchanged(finding, receipt)
+                                                     for finding in findings) else 'review_pending')
+        elif any(dependency in native_blocked for dependency in row['dependsOn']):
+            native_blocked.add(row['id'])
+            row['status'] = 'review_pending'
+    # Executed numbers still exist, but rejected definitions cannot unlock
+    # dependent expansion. Independent work and execution-only exports remain usable.
+    construction_available -= native_blocked
     review_path = _root() / ".nexustrade/analysis/readiness.json"
     review = json.loads(review_path.read_text()) if include_review and review_path.exists() else {}
     review_current = current and review.get("execution") == receipt
@@ -388,9 +441,18 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         if row["status"] in {"computed", "accepted"} and any(by_id[x]["status"] == "review_rejected" for x in row["dependsOn"]):
             row["status"] = "review_rejected"
     tasks = []
+    if native_findings:
+        unchanged = any(_native_candidate_unchanged(finding, receipt) for finding in native_findings)
+        tasks.append({'operation': 'repair_review_findings' if unchanged else 'reassess_review_findings',
+                      'readyToWork': True, 'waitingOn': [], 'findings': native_findings,
+                      'componentIds': [row['id'] for row in components if native_by_component[row['id']]],
+                      'requiresSemanticReassessment': True,
+                      'nextAction': 'Inspect the recorded concerns and retained source evidence. Resolve inputs and definitions in the authoritative producer, execute it, and request a scoped independent reassessment before dependent expansion. Changed bytes or a resolved author label do not close a finding; withdrawal does not complete required analysis.'})
     for row in components:
         if row["status"] in {"computed", "accepted"}:
             continue
+        if native_by_component[row['id']]:
+            continue  # The first scoped native task owns this repair/reassessment.
         # A semantic rejection does not make executed inputs disappear. Keep
         # review rejection for acceptance, but allow independent construction
         # repairs while another research judgment is still being reviewed.
@@ -412,11 +474,6 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         tasks.append({'operation': 'extend_plan', 'criterionIds': missing_criteria, 'readyToWork': True,
                       'waitingOn': [], 'requiredResultFindings': full_findings,
                       'nextAction': 'Extend the same producer and typed bindings to remaining requested results; partial execution is not final acceptance.'})
-    native_findings = _native_review_findings() if include_review else []
-    if native_findings:
-        tasks.append({'operation': 'repair_review_findings', 'readyToWork': True, 'waitingOn': [],
-                      'findings': native_findings, 'requiresSemanticReassessment': True,
-                      'nextAction': 'Inspect the recorded concerns and retained source evidence; repair the producer and its dependent required results. Withdrawal fixes an overclaim, not missing required analysis. Request a scoped independent reassessment of changed results; do not repeat an unchanged candidate.'})
     return {"version": plan['version'], "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
             "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks,
             "scope": plan.get('scope', 'complete'), 'missingCriterionIds': missing_criteria, 'requiredResultFindings': full_findings}
@@ -484,9 +541,12 @@ def construction_checkpoint(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
                 return None  # Changed candidate may be reassessed; open findings are not closed.
         else:
             return None
+    # Native concerns also matter while construction is incomplete. Previously
+    # this branch silently returned execution-only work and lost early review.
+    reviewed = analysis_status()
     return {"status": "needs_construction", "origin": "local_execution_preflight", "paidCalls": 0,
-            "summary": "Required components are unfinished; construct independent ready components before broad semantic review",
-            "components": current["components"], "nextTasks": current["nextTasks"]}
+            "summary": "Repair scoped reviewer concerns before dependent expansion; construct independent ready components before broad semantic review",
+            "components": reviewed["components"], "nextTasks": reviewed["nextTasks"]}
 
 
 def record_readiness(receipt_path: Path, result: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:
