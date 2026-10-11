@@ -812,6 +812,23 @@ statement = nt.sec.statement(
     as_of="2026-08-28",
 )
 
+# Inspect exact required period/field inputs without filling missing values.
+coverage = nt.sec.statement_availability(statement, {
+    "latest_cash": {"period_end": "2025-12-31", "field": "cash",
+                    "cadence": "annual"},
+})
+# selected includes the original row/value. null_in_response, field_not_in_response,
+# period_not_in_response and ambiguous require targeted source review; none proves
+# that an issuer omitted a disclosure. Zero is a usable value, not missing data.
+
+# Locate a document using the exact accession/form returned by SEC data.
+# Older primary filenames are irregular; source_filing_url can be a directory.
+row = statement["rows"][0]
+locator = nt.sec.filing(ticker="GOOGL", accession=row["accession"],
+                       form=row["form"], as_of="2026-08-28")
+# Fetch locator['filing']['primary_document_url'] when status == 'located'.
+# Never append a ticker/year filename to a directory URL.
+
 candidates = nt.sec.fact_candidates(
     ticker="GOOGL",
     roles=[
@@ -1083,6 +1100,15 @@ for batch in result.iter_batches():    # or stream within your own budget
 
 Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
 compatible backing engine; your SQL does not change when it does.
+
+`query_timeout_seconds` sets the server execution budget (default 90 seconds,
+maximum 300). `wait_timeout_seconds` sets only the client's polling allowance;
+it never increases the execution budget. Large intraday coverage scans should
+use bounded date chunks and persist each submitted handle's `id` before waiting.
+After a client timeout, resume with `nt.lake.get(error.operation_id)` rather than
+resubmitting. `LakeQueryFailed.operation_id` retains the failed query receipt.
+Execution errors with code `query_timeout` are not automatically resubmitted
+unchanged; transient service/storage failures still receive bounded retries.
 
 ## Managed watchlist universes
 

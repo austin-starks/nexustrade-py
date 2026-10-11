@@ -17,6 +17,7 @@ from nexustrade import host
 Cadence = Literal["annual", "quarterly"]
 DimensionalFilter = Literal["all", "only", "none"]
 SecAction = Literal[
+    "filing",
     "statement",
     "fact_candidates",
     "fact_instances",
@@ -430,6 +431,78 @@ def select_facts(
     return resolved
 
 
+def statement_availability(
+    payload: Mapping[str, Any], selections: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Inspect exact period/field inputs without turning missing responses into zero.
+
+    Each named selector requires ``period_end`` and ``field``; optional ``cadence``
+    and ``accession`` disambiguate rows. Only the supplied frozen response is
+    assessed. Missing/null values do not establish absent issuer disclosures.
+    This helper neither fills numbers nor chooses an accounting definition.
+    """
+    if not isinstance(payload, Mapping) or not isinstance(selections, Mapping) or not selections:
+        raise ValueError("supply a statement response and nonempty named selectors")
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows):
+        raise ValueError("statement response requires rows")
+    result = {}
+    for name, selector in selections.items():
+        if not isinstance(name, str) or not name or not isinstance(selector, Mapping):
+            raise ValueError("selectors require nonempty names and mappings")
+        if set(selector) - {"period_end", "field", "cadence", "accession"}:
+            raise ValueError(f"{name} has unsupported selector fields")
+        _required_as_of(selector.get("period_end"))
+        field = selector.get("field")
+        if not isinstance(field, str) or not field:
+            raise ValueError(f"{name}.field must be a nonempty exact field name")
+        for key in ("cadence", "accession"):
+            if key in selector and (not isinstance(selector[key], str) or not selector[key]):
+                raise ValueError(f"{name}.{key} must be a nonempty exact value")
+        matches = [row for row in rows if row.get("period_end") == selector["period_end"]
+                   and all(row.get(key) == selector[key] for key in ("cadence", "accession") if key in selector)]
+        unique = []
+        for row in matches:
+            if row not in unique:
+                unique.append(row)
+        entry = {"selector": deepcopy(dict(selector)), "source_absence_established": False,
+                 "source_id": payload.get("source_id"), "value": None, "row": None}
+        if not unique:
+            status = "period_not_in_response"
+        elif len(unique) > 1:
+            status = "ambiguous"
+        elif field not in unique[0]:
+            status = "field_not_in_response"
+        elif unique[0][field] is None:
+            status = "null_in_response"
+        elif isinstance(unique[0][field], bool) or not isinstance(unique[0][field], (int, float)) or not math.isfinite(unique[0][field]):
+            status = "invalid_numeric_value"
+        else:
+            status = "selected"
+            entry.update(value=unique[0][field], row=deepcopy(dict(unique[0])))
+        result[name] = {**entry, "status": status}
+    return result
+
+
+def filing(
+    *, ticker: str, accession: str, form: str, as_of: str,
+    request_id: str | None = None, _exit: bool = True,
+) -> dict[str, Any]:
+    """Locate the recorded primary document for one exact filing as of a cutoff.
+
+    Pass an accession and form from a statement/fact response. Fetch
+    ``result['filing']['primary_document_url']`` only when status is ``located``.
+    A filing directory is not a document; never guess a ticker/year filename.
+    Missing inventory metadata does not establish missing source disclosures.
+    """
+    if not isinstance(accession, str) or not re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession):
+        raise ValueError("accession must be an exact SEC accession number")
+    forms = _validated_string_list([form], field="forms", maximum=1, pattern=_FORM_PATTERN, required=True)
+    return _run_payload(action="filing", ticker=_normalized_ticker(ticker),
+                        payload={"accession": accession, "forms": forms, "as_of": _required_as_of(as_of)},
+                        request_id=request_id, _exit=_exit)
+
+
 def statement(
     *,
     ticker: str,
@@ -822,11 +895,14 @@ __all__ = [
     "FactSelectionError",
     "business_breakdowns",
     "dimensioned_concepts",
+    "fact_availability",
     "fact_candidates",
     "fact_instances",
     "filed_concepts",
+    "filing",
     "latest_statement",
     "resolved_fact",
     "select_facts",
     "statement",
+    "statement_availability",
 ]
