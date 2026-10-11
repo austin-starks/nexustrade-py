@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
 Number = int | float
+Monetary = Number | Mapping[str, Any]
 
 
 def _decimal_amount(name: str, value: Number | str) -> Decimal:
@@ -86,6 +87,22 @@ def align_amounts(
             raise ValueError(f"{name}: normalized amount is outside finite arithmetic range") from None
         inputs[name] = deepcopy(dict(record))
     return {"unit": unit, "scale": target["scale"], "values": values, "inputs": inputs}
+
+
+def _monetary_inputs(values: Mapping[str, Monetary]) -> tuple[dict[str, float], dict[str, Any] | None]:
+    """Keep scalar compatibility; record mode never mixes undeclared operands.
+
+    A calculation boundary uses base units once. Records preserve each source's
+    scale until this point, so merging dollars with millions does not require a
+    caller-applied multiplier. Rates and share counts are separate operands.
+    """
+    records = [value for value in values.values() if isinstance(value, Mapping)]
+    if not records:
+        return {name: _finite(name, value) for name, value in values.items()}, None
+    if len(records) != len(values):
+        raise ValueError("Monetary record mode requires declared value/unit/scale for every operand; do not mix amounts with bare numbers")
+    aligned = align_amounts(values, unit=records[0].get("unit"), scale=1)
+    return aligned["values"], aligned
 
 
 def sensitivity_cases(
@@ -209,16 +226,19 @@ def fcff(
 
 
 def invested_capital_from_operations(
-    operating_assets: Number,
-    operating_liabilities: Number,
-    capitalized_operating_assets: Number = 0.0,
+    operating_assets: Monetary,
+    operating_liabilities: Monetary,
+    capitalized_operating_assets: Monetary = 0.0,
 ) -> float:
-    """Return operating assets less operating liabilities plus capitalized assets."""
-    return (
-        _finite("operating_assets", operating_assets)
-        - _finite("operating_liabilities", operating_liabilities)
-        + _finite("capitalized_operating_assets", capitalized_operating_assets)
-    )
+    """Return selected assets less liabilities plus capitalized assets.
+
+    With amount records, declare all three inputs (including a real zero) and
+    receive base units. This normalizes scales, never accounting classifications.
+    """
+    values, _ = _monetary_inputs(dict(operating_assets=operating_assets,
+        operating_liabilities=operating_liabilities,
+        capitalized_operating_assets=capitalized_operating_assets))
+    return values["operating_assets"] - values["operating_liabilities"] + values["capitalized_operating_assets"]
 
 
 def net_investment(
@@ -298,15 +318,19 @@ def capm_cost_of_equity(
 
 
 def wacc(
-    equity_value: Number,
-    debt_value: Number,
+    equity_value: Monetary,
+    debt_value: Monetary,
     cost_of_equity: Number,
     pretax_cost_of_debt: Number,
     tax_rate: Number,
 ) -> float:
-    """Return market-value-weighted after-tax cost of capital."""
-    equity = _finite("equity_value", equity_value)
-    debt = _finite("debt_value", debt_value)
+    """Return market-value-weighted after-tax cost of capital.
+
+    Amount records normalize equity/debt scales together before weighting.
+    Rates remain dimensionless; this does not source or choose those rates.
+    """
+    values, _ = _monetary_inputs(dict(equity_value=equity_value, debt_value=debt_value))
+    equity, debt = values["equity_value"], values["debt_value"]
     if equity < 0.0 or debt < 0.0 or equity + debt <= 0.0:
         raise ValueError("equity_value and debt_value must form positive capital")
     equity_cost = _rate("cost_of_equity", cost_of_equity)
@@ -774,18 +798,18 @@ def internal_rate_of_return(
 
 def operating_period_metrics(
     *,
-    operating_income: Number,
+    operating_income: Monetary,
     tax_rate: Number,
-    depreciation_and_amortization: Number,
-    capital_expenditures: Number,
-    current_operating_nwc: Number,
-    prior_operating_nwc: Number,
-    current_invested_capital: Number,
-    prior_invested_capital: Number,
+    depreciation_and_amortization: Monetary,
+    capital_expenditures: Monetary,
+    current_operating_nwc: Monetary,
+    prior_operating_nwc: Monetary,
+    current_invested_capital: Monetary,
+    prior_invested_capital: Monetary,
     cost_of_capital: Number,
     period_start: str | None = None,
     period_end: str | None = None,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Return one reproducible operating-period bridge from explicit inputs.
 
     This composes the public primitives; it does not decide which filing facts
@@ -794,7 +818,20 @@ def operating_period_metrics(
     matched to the actual period when both inclusive dates are supplied. ROIC
     is then annualized so it can be compared with annual WACC; the unannualized
     period return and period fraction are also returned.
+    Supply amount records for every monetary operand to normalize to base units
+    exactly once and retain amount_alignment in the result. Mixed records and
+    bare scalars are refused. Existing entirely scalar calls remain compatible.
     """
+    amounts, alignment = _monetary_inputs(dict(operating_income=operating_income,
+        depreciation_and_amortization=depreciation_and_amortization,
+        capital_expenditures=capital_expenditures, current_operating_nwc=current_operating_nwc,
+        prior_operating_nwc=prior_operating_nwc, current_invested_capital=current_invested_capital,
+        prior_invested_capital=prior_invested_capital))
+    operating_income = amounts["operating_income"]
+    depreciation_and_amortization = amounts["depreciation_and_amortization"]
+    capital_expenditures = amounts["capital_expenditures"]
+    current_operating_nwc, prior_operating_nwc = amounts["current_operating_nwc"], amounts["prior_operating_nwc"]
+    current_invested_capital, prior_invested_capital = amounts["current_invested_capital"], amounts["prior_invested_capital"]
     if (period_start is None) != (period_end is None):
         raise ValueError("period_start and period_end must be supplied together")
     period_years = 1.0
@@ -853,6 +890,8 @@ def operating_period_metrics(
     if period_start is not None:
         result.update(period_years=period_years, period_roic=period_roic,
                       period_capital_charge=capital_charge)
+    if alignment is not None:
+        result["amount_alignment"] = alignment
     return result
 
 

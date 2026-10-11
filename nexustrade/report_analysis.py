@@ -298,6 +298,30 @@ def execute_analysis(*, timeout_sec: int = 300) -> dict[str, Any]:
     return {**analysis_status(), "reportExportRequired": report_export_required}
 
 
+def _native_review_findings() -> list[dict[str, Any]]:
+    """Read the native hook's canonical queue projection, without prose parsing.
+
+    Findings remain judgments. Omitting one in a narrow follow-up does not close
+    it; only the native reviewer's recorded disposition does. This reader never
+    authorizes delivery or maps free-form locators onto guessed criterion IDs.
+    """
+    target = _root() / '.nexustrade/analysis/review-findings.json'
+    if not target.exists():
+        return []
+    queue = json.loads(target.read_text())
+    if not isinstance(queue, dict) or queue.get('version') != 1 or not isinstance(queue.get('findings'), list):
+        raise ValueError('Invalid native review findings queue')
+    rows = []
+    for row in queue['findings']:
+        if (not isinstance(row, dict) or not all(isinstance(row.get(key), str) and row[key]
+                for key in ('findingId', 'path', 'issue', 'disposition'))
+                or row['disposition'] not in ('open', 'repaired', 'disproved', 'not_reassessed', 'unavailable')):
+            raise ValueError('Invalid native review finding')
+        if row['disposition'] not in ('repaired', 'disproved'):
+            rows.append(row)
+    return rows
+
+
 def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
     """Return current construction state and bounded next work; never a grade.
 
@@ -372,17 +396,27 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         # repairs while another research judgment is still being reviewed.
         waiting = [x for x in row["dependsOn"] if x not in construction_available]
         findings = [finding for finding in (reviewed or {}).get('findings', []) if finding['criterionId'] in row['criterionIds'] and finding['severity'] == 'blocking']
-        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "declare_outputs" if plan['version'] == 1 else ("repair_producer" if row["status"] == "review_rejected" or row['requiredResultFindings'] else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer")),
+        operation = ("declare_outputs" if plan['version'] == 1 else
+            "repair_producer" if row["status"] == "review_rejected" or row['requiredResultFindings'] else
+            "resolve_primitive" if row["unresolvedPrimitives"] else
+            "repair_producer" if current and row['missingOutputs'] else "execute_producer")
+        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": operation,
                       "waitingOn": waiting, "readyToWork": not waiting, "missingOutputs": row["missingOutputs"], "unresolvedPrimitives": row["unresolvedPrimitives"],
                       "missingRequiredOutputs": row['missingRequiredOutputs'], "findings": findings,
                       "requiredResultFindings": row['requiredResultFindings'],
-                      "requiresSemanticReassessment": bool(findings)})
+                      "requiresSemanticReassessment": bool(findings),
+                      "nextAction": "Resolve retained inputs and definitions, implement the required outputs in the authoritative producer, execute and regenerate dependent results. Removing a rejected value leaves required work unfinished." if operation == 'repair_producer' else None})
     missing_criteria = sorted(_required() - {id for row in components for id in row['criterionIds']})
     full_findings = required_result_binding_findings(all_bindings, criteria, model)
     if missing_criteria or full_findings:
         tasks.append({'operation': 'extend_plan', 'criterionIds': missing_criteria, 'readyToWork': True,
                       'waitingOn': [], 'requiredResultFindings': full_findings,
                       'nextAction': 'Extend the same producer and typed bindings to remaining requested results; partial execution is not final acceptance.'})
+    native_findings = _native_review_findings() if include_review else []
+    if native_findings:
+        tasks.append({'operation': 'repair_review_findings', 'readyToWork': True, 'waitingOn': [],
+                      'findings': native_findings, 'requiresSemanticReassessment': True,
+                      'nextAction': 'Inspect the recorded concerns and retained source evidence; repair the producer and its dependent required results. Withdrawal fixes an overclaim, not missing required analysis. Request a scoped independent reassessment of changed results; do not repeat an unchanged candidate.'})
     return {"version": plan['version'], "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
             "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks,
             "scope": plan.get('scope', 'complete'), 'missingCriterionIds': missing_criteria, 'requiredResultFindings': full_findings}
@@ -427,7 +461,19 @@ def construction_checkpoint(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
     if not current["nextTasks"]:
         reviewed = analysis_status()
         if reviewed['nextTasks']:
-            previous_review = json.loads((_root() / '.nexustrade/analysis/readiness.json').read_text())
+            native = [finding for task in reviewed['nextTasks'] if task['operation'] == 'repair_review_findings' for finding in task['findings']]
+            unchanged_native = any(finding.get('readAgainstModelSha256') == current['execution'].get('modelSha256')
+                                   and ('readAgainstReportSha256' not in finding or finding['readAgainstReportSha256'] == _report_digest(inputs))
+                                   for finding in native if finding.get('readAgainstModelSha256'))
+            if unchanged_native:
+                current = reviewed
+                return {"status": "needs_construction", "origin": "local_execution_preflight", "paidCalls": 0,
+                        "summary": "Native reviewer concerns still apply to these unchanged model bytes; repair required results before another broad review",
+                        "components": current["components"], "nextTasks": current["nextTasks"]}
+            previous_path = _root() / '.nexustrade/analysis/readiness.json'
+            if not previous_path.exists():
+                return None  # New candidate can be assessed; open native findings remain visible.
+            previous_review = json.loads(previous_path.read_text())
             prior = previous_review['execution']
             inputs_without_producer = lambda execution: {path: digest for path, digest in execution.get('inputSha256', {}).items() if path != current['producerPath']}
             if (prior.get('modelSha256') == current['execution'].get('modelSha256') and
