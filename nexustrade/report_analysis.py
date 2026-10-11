@@ -26,6 +26,14 @@ ANALYSIS_FIELD = "analysisWork"
 _COMPONENT_KINDS = ("calculation", "research", "delivery")
 _DECISION_KINDS = ("reported_fact", "accounting_definition", "future_policy", "implementation")
 _DECISION_STATES = ("resolved", "unresolved")
+_PRODUCER_EXECUTION_ENV = "NEXUSTRADE_ANALYSIS_PRODUCER_EXECUTION"
+
+
+def _assert_orchestrator() -> None:
+    if os.environ.get(_PRODUCER_EXECUTION_ENV):
+        raise RuntimeError("analysis_producer_reentry: A producer cannot declare or launch analysis. "
+                           "Move plan_analysis/execute_analysis to a separate orchestration entrypoint; "
+                           "the declared producer only reads frozen inputs and writes its model.")
 
 
 def _root() -> Path:
@@ -203,6 +211,7 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     incomplete scope never passes final construction or purchases broad review.
     The default complete scope requires every result binding before execution.
     """
+    _assert_orchestrator()
     declarations = json.loads(json.dumps(list(components), allow_nan=False))
     for row in declarations:
         for decision in row.get("decisions", []):
@@ -213,6 +222,18 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
         plan['scope'] = scope
     _validate(plan)
     path = _root() / PLAN_PATH
+    if path.exists():
+        previous = json.loads(path.read_text())
+        owned = lambda rows: {(binding['criterionId'], binding.get('resultId'))
+            for row in rows for binding in row.get('outputRequirements', [])}
+        current_results = {(criterion['id'], result['id']) for criterion in _required_criteria()
+                           for result in criterion.get('results', [])}
+        current_results.update((criterion['id'], None) for criterion in _required_criteria() if not criterion.get('results'))
+        removed = (owned(previous.get('components', [])) & current_results) - owned(declarations)
+        if removed:
+            raise ValueError(f"Required result ownership cannot be removed from the plan: {sorted(removed, key=str)}. "
+                             "Keep the result's component and bind an unfinished null while repairing its producer; "
+                             "renaming components or replacing output paths is supported.")
     _save(path, plan)
     return str(path)
 
@@ -237,6 +258,7 @@ def execute_analysis(*, timeout_sec: int = 300) -> dict[str, Any]:
     One subprocess, no model calls, no retry loop, no automatic assumption choices.
     Failed execution never leaves a successful execution receipt for these bytes.
     """
+    _assert_orchestrator()
     plan = _plan()
     plan_hash = _digest(_root() / PLAN_PATH)
     before = _inputs(plan)
@@ -256,7 +278,9 @@ def execute_analysis(*, timeout_sec: int = 300) -> dict[str, Any]:
         backups[output] = backup
     model.unlink(missing_ok=True)
     try:
-        subprocess.run([sys.executable, str(_path(plan["producerPath"])), *args], cwd=_root(), check=True, timeout=timeout_sec)
+        environment = {**os.environ, _PRODUCER_EXECUTION_ENV: uuid4().hex}
+        subprocess.run([sys.executable, str(_path(plan["producerPath"])), *args], cwd=_root(),
+                       env=environment, check=True, timeout=timeout_sec)
         if not model.exists():
             raise ValueError("Producer exited without writing a new canonical model")
         if _digest(_root() / PLAN_PATH) != plan_hash or _inputs(plan) != before:
@@ -470,13 +494,40 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
                       "nextAction": "Resolve retained inputs and definitions, implement the required outputs in the authoritative producer, execute and regenerate dependent results. Removing a rejected value leaves required work unfinished." if operation == 'repair_producer' else None})
     missing_criteria = sorted(_required() - {id for row in components for id in row['criterionIds']})
     full_findings = required_result_binding_findings(all_bindings, criteria, model)
-    if missing_criteria or full_findings:
-        tasks.append({'operation': 'extend_plan', 'criterionIds': missing_criteria, 'readyToWork': True,
+    required_work = []
+    for criterion in criteria:
+        for result in criterion.get('results', []):
+            owners = [row for row in components if any(binding.get('criterionId') == criterion['id']
+                and binding.get('resultId') == result['id'] for binding in row.get('outputRequirements', []))]
+            bindings = [binding for row in owners for binding in row.get('outputRequirements', [])
+                        if binding['criterionId'] == criterion['id'] and binding.get('resultId') == result['id']]
+            findings = required_result_binding_findings(bindings, [{**criterion, 'results': [result]}], model)
+            missing = missing_required_outputs(model, bindings)
+            work = {'criterionId': criterion['id'], 'result': result,
+                    'componentIds': [row['id'] for row in owners], 'bindings': bindings,
+                    'requiredResultFindings': findings, 'missingRequiredOutputs': missing,
+                    'status': 'computed' if current and owners and not findings and not missing
+                        and all(row['status'] in {'computed', 'accepted'} for row in owners) else 'unfinished'}
+            required_work.append(work)
+            # A dropped/never-declared numerical result has a concrete owner task,
+            # rather than disappearing into an unscoped "extend plan" suggestion.
+            if not owners or findings:
+                waiting = sorted({dependency for row in owners for dependency in row['dependsOn']
+                                  if dependency not in construction_available})
+                tasks.append({**work, 'operation': 'construct_required_result', 'readyToWork': not waiting,
+                              'waitingOn': waiting,
+                              'nextAction': 'Declare or extend a component for this exact required result, resolve its retained inputs and definitions, '
+                                            'then implement and execute it in the same producer. Preserve the requested count and period scope; '
+                                            'an explanation of incompleteness is not this result.'})
+    legacy_missing = [criterion['id'] for criterion in criteria if criterion['id'] in missing_criteria and not criterion.get('results')]
+    if legacy_missing:
+        tasks.append({'operation': 'extend_plan', 'criterionIds': legacy_missing, 'readyToWork': True,
                       'waitingOn': [], 'requiredResultFindings': full_findings,
                       'nextAction': 'Extend the same producer and typed bindings to remaining requested results; partial execution is not final acceptance.'})
     return {"version": plan['version'], "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
             "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks,
-            "scope": plan.get('scope', 'complete'), 'missingCriterionIds': missing_criteria, 'requiredResultFindings': full_findings}
+            "scope": plan.get('scope', 'complete'), 'missingCriterionIds': missing_criteria, 'requiredResultFindings': full_findings,
+            'requiredResults': required_work}
 
 
 def attach_analysis_work(inputs: Mapping[str, Any]) -> dict[str, Any]:

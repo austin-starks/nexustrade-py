@@ -79,7 +79,7 @@ def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], crit
             raise ValueError('Host result contract is malformed')
         known = {}
         for result in results:
-            if (not isinstance(result, dict) or set(result) - {'id', 'description', 'type', 'minimumCount', 'coverage', 'cardinality'}
+            if (not isinstance(result, dict) or set(result) - {'id', 'description', 'type', 'minimumCount', 'coverage', 'cardinality', 'coverageRequirement'}
                     or not {'id', 'description', 'type', 'minimumCount'} <= set(result)
                     or not isinstance(result['id'], str) or not result['id'].strip() or result['id'] in known
                     or not isinstance(result['description'], str) or not result['description'].strip()
@@ -93,6 +93,14 @@ def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], crit
                 raise ValueError('A single result needs minimumCount 1; a series needs at least 2 distinct results')
             if 'coverage' in result:
                 _validate_coverage(result['coverage'], result['minimumCount'])
+            scope = result.get('coverageRequirement')
+            if 'coverageRequirement' in result and (not isinstance(scope, dict)
+                    or set(scope) != {'dimension', 'minimumDistinct', 'sourceExcerpt'}
+                    or not isinstance(scope['dimension'], str) or not scope['dimension'].strip()
+                    or type(scope['minimumDistinct']) is not int or not 2 <= scope['minimumDistinct'] <= result['minimumCount']
+                    or not isinstance(scope['sourceExcerpt'], str) or not scope['sourceExcerpt'].strip() or len(scope['sourceExcerpt']) > 800
+                    or cardinality != 'series'):
+                raise ValueError('Counted result coverage needs a dimension, sourceExcerpt and minimumDistinct within minimumCount; do not shrink the requested horizon')
             known[result['id']] = result
         rows = [row for row in bindings if isinstance(row, Mapping) and row.get('criterionId') == criterion['id']]
         paths = set()
@@ -108,6 +116,36 @@ def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], crit
             count = len({row['path'] for row in rows if row.get('resultId') == result['id'] and row.get('type') == result['type'] and isinstance(row.get('path'), str) and row['path'].startswith('/')})
             if complete and count < result['minimumCount']:
                 findings.append(f"Criterion {criterion['id']}: {result['description']} requires at least {result['minimumCount']} distinct {result['type']} results ({result['id']}); declared {count}.")
+            scope = result.get('coverageRequirement')
+            if scope:
+                observed = set()
+                coordinate_type = None
+                for row in rows:
+                    if row.get('resultId') != result['id']:
+                        continue
+                    selector = row.get('coveragePaths', {}).get(scope['dimension'])
+                    if not isinstance(selector, str) or not selector.startswith('/'):
+                        findings.append(f"Criterion {criterion['id']}: {result['id']} needs coveragePaths for {scope['dimension']} into the executed model.")
+                        continue
+                    if model is _UNSET:
+                        continue
+                    try:
+                        value = _resolve_pointer(model, selector)
+                    except (KeyError, IndexError, ValueError, TypeError):
+                        value = None
+                    if not (isinstance(value, str) and value.strip() or type(value) in {int, float} and math.isfinite(value)):
+                        findings.append(f"Criterion {criterion['id']}: {result['id']} needs a real {scope['dimension']} coordinate.")
+                        continue
+                    identity = _coordinate_key({scope['dimension']: value})
+                    value_type = 'string' if isinstance(value, str) else 'number'
+                    if coordinate_type is not None and coordinate_type != value_type:
+                        findings.append(f"Criterion {criterion['id']}: {result['id']} mixes {scope['dimension']} coordinate types.")
+                    coordinate_type = value_type
+                    if identity in observed:
+                        findings.append(f"Criterion {criterion['id']}: {result['id']} repeats {scope['dimension']} {value}.")
+                    observed.add(identity)
+                if complete and model is not _UNSET and len(observed) < scope['minimumDistinct']:
+                    findings.append(f"Criterion {criterion['id']}: {result['id']} requires {scope['minimumDistinct']} distinct {scope['dimension']} observations; found {len(observed)}.")
             if 'coverage' not in result:
                 continue
             dimensions = set(result['coverage'][0])

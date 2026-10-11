@@ -182,7 +182,8 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
         with patch.object(readiness.urllib.request, 'urlopen') as paid:
             result = readiness.validate(inputs_path=str(saved))
             self.assertEqual(result['status'], 'needs_construction')
-            self.assertEqual(result['nextTasks'][0]['operation'], 'extend_plan')
+            self.assertEqual(result['nextTasks'][0]['operation'], 'construct_required_result')
+            self.assertEqual(result['nextTasks'][0]['result']['id'], 'roic')
             paid.assert_not_called()
 
     def test_incremental_scope_never_admits_unknown_results_wrong_types_or_coordinates(self):

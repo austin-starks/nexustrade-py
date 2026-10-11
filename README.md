@@ -47,6 +47,15 @@ verification. Select contiguous report quotes from `document["visible_text"]`;
 do not concatenate metadata or separate passages. Over-budget text returns an
 explicit error, so a partial source is never presented as complete.
 
+For source tables, `nt.read_source_tables(original_html, source_id=...)` preserves
+cells, spans, equal adjacent values and inline fact attributes. Inspect its grid;
+`nt.select_source_table_cell(document, table=..., row=..., column=...,
+row_headers=[{row, column, text}], column_headers=[{row, column, text}],
+role=..., rationale=..., fact_attributes=...)` asserts the exact source context.
+It raises on a failed selector rather than silently omitting a historical period.
+It does not choose accounting roles or establish absence. Prefer structured SEC
+role candidates/resolved facts when available; preserve selected records intact.
+
 Both web helpers also accept successful fetch receipts typed `text/markdown`,
 including rendered fallback responses. These preserve the returned Markdown
 verbatim in `visible_text` and retain `content_type`; publisher metadata remains
@@ -1016,6 +1025,14 @@ bound; the SDK does not fingerprint the repository or choose financial answers.
 If the producer only rebuilt the model, `execute_analysis` returns
 `reportExportRequired=true`; export the report from that current model. A failed
 producer restores the previous model/report snapshot and cannot claim new success.
+Keep orchestration outside the producer. Calling `plan_analysis` or
+`execute_analysis` inside it raises `analysis_producer_reentry` before SDK control
+mutation. Incremental execution preserves prior required result ownership; keep
+unfinished numerical bindings instead of replacing them with prose. Status includes
+`requiredResults` and specific `construct_required_result` tasks for each unbound
+or under-covered result. Count-defined series carry `coverageRequirement` with
+`dimension`, `minimumDistinct`, and verbatim `sourceExcerpt`; bind `coveragePaths`
+to real observed coordinates. Duplicate periods cannot fill a requested horizon.
 An investigated, method-permitted limitation can be an explicit sourced model
 record with nonempty reasoning and source locators for semantic review. Declare
 its actual reasoning result with type `string`; do not declare a missing number
