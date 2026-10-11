@@ -1348,6 +1348,30 @@ def ChaikinMoneyFlow(
 
 __all__.append("ChaikinMoneyFlow")
 
+def ChartBar(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    bar_minutes: float = 5,
+    line: Literal["open", "high", "low", "close", "sma"] = "close",
+    bars: float = 1,
+    offset_bars: float = 0,
+) -> Indicator:
+    """ChartBar indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    bar_minutes: Completed candles aligned to 9:30 ET for stocks. Must divide the 390-minute regular session.
+    line: open: oldest selected candle; close: newest; high/low: range; sma: mean candle closes.
+    bars: Number of chart candles, not elapsed minutes. SMA20 on five-minute candles: barMinutes=5, bars=20.
+    offset_bars: Skip this many latest completed candles. 1 selects the previous window.
+    """
+    d: Dict[str, Any] = {"type": "ChartBar"}
+    _set_asset(d, "targetAsset", asset)
+    d["barMinutes"] = bar_minutes
+    d["line"] = _enum(line, ["open","high","low","close","sma"], "line")
+    d["bars"] = bars
+    d["offsetBars"] = offset_bars
+    return Indicator(d)
+
+__all__.append("ChartBar")
+
 def CommodityChannelIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
