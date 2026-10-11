@@ -66,6 +66,71 @@ Path('model.json').write_text(json.dumps({'historical':metrics,'future':None})+'
             self.assertEqual(result["nextTasks"][0]["operation"], "resolve_primitive")
             paid.assert_not_called()
 
+    def test_first_period_executes_incrementally_but_cannot_complete_the_method(self):
+        producer = self.root / 'producer.py'
+        producer.write_text(producer.read_text().replace("Path('model.json').write_text", "metrics['period_end']='2028-12-31'\nPath('model.json').write_text"))
+        criteria_path = self.root / 'acceptance/acceptance_criteria.json'
+        criteria = json.loads(criteria_path.read_text())
+        criteria['acceptanceCriteria'][0]['results'] = [
+            {'id': 'roic', 'description': 'Two historical returns', 'type': 'number', 'minimumCount': 2,
+             'coverage': [{'period': '2028-12-31'}, {'period': '2029-12-31'}]},
+            {'id': 'eva', 'description': 'Dollar economic value added', 'type': 'number', 'minimumCount': 2}]
+        criteria_path.write_text(json.dumps(criteria))
+        component = dict(self.components[0], outputRequirements=[
+            {'criterionId': 'history', 'resultId': 'roic', 'path': '/historical/roic', 'type': 'number',
+             'coveragePaths': {'period': '/historical/period_end'}},
+            {'criterionId': 'history', 'resultId': 'eva', 'path': '/historical/eva', 'type': 'number'}])
+        with self.assertRaisesRegex(ValueError, 'omitted'):
+            self.plan([component])
+        analysis.plan_analysis(producer_path='/work/producer.py', model_path='/work/model.json',
+            source_paths=['/work/source.json'], components=[component], scope='incremental')
+        status = analysis.execute_analysis()
+        self.assertEqual(status['components'][0]['status'], 'computed')
+        self.assertEqual(status['missingCriterionIds'], ['future'])
+        self.assertIn('requires at least 2', ' '.join(status['requiredResultFindings']))
+        self.assertAlmostEqual(json.loads((self.root / 'model.json').read_text())['historical']['eva'], 1.8)
+        saved = self.root / 'inputs.json'
+        saved.write_text(json.dumps(self.inputs()))
+        with patch.object(readiness.urllib.request, 'urlopen') as paid:
+            result = readiness.validate(inputs_path=str(saved))
+            self.assertEqual(result['status'], 'needs_construction')
+            self.assertEqual(result['nextTasks'][0]['operation'], 'extend_plan')
+            paid.assert_not_called()
+
+    def test_incremental_scope_never_admits_unknown_results_wrong_types_or_coordinates(self):
+        p = self.root / 'acceptance/acceptance_criteria.json'
+        criteria = json.loads(p.read_text())
+        criteria['acceptanceCriteria'][0]['results'] = [{'id': 'roic', 'description': 'Required historical return',
+            'type': 'number', 'minimumCount': 2, 'coverage': [{'period': '2027-12-31'}, {'period': '2028-12-31'}]}]
+        p.write_text(json.dumps(criteria))
+        binding = {'criterionId': 'history', 'resultId': 'roic', 'path': '/historical/roic', 'type': 'number',
+                   'coveragePaths': {'period': '/historical/period_end'}}
+        for wrong in ({'resultId': 'status'}, {'type': 'string'}, {'coveragePaths': {'year': '/historical/period_end'}}):
+            with self.assertRaises(ValueError):
+                analysis.plan_analysis(producer_path='/work/producer.py', model_path='/work/model.json',
+                    source_paths=['/work/source.json'], components=[dict(self.components[0], outputRequirements=[dict(binding, **wrong)])], scope='incremental')
+        # The valid scope can execute, but a wrong period still remains unfinished.
+        wrong_period = dict(binding, coveragePaths={'period': '/historical/period_start'})
+        analysis.plan_analysis(producer_path='/work/producer.py', model_path='/work/model.json',
+            source_paths=['/work/source.json'], components=[dict(self.components[0], outputRequirements=[wrong_period])], scope='incremental')
+        self.assertEqual(analysis.execute_analysis()['components'][0]['status'], 'not_started')
+
+    def test_extending_the_same_producer_closes_only_actual_executed_results(self):
+        analysis.plan_analysis(producer_path='/work/producer.py', model_path='/work/model.json',
+            source_paths=['/work/source.json'], components=self.components[:1], scope='incremental')
+        first = analysis.execute_analysis()
+        self.assertEqual(first['missingCriterionIds'], ['future'])
+        producer = self.root / 'producer.py'
+        producer.write_text(producer.read_text().replace("'future':None", "'future':metrics['fcff']"))
+        self.assertFalse(analysis.analysis_status()['executionCurrent'])
+        self.components[1].pop('decisions')
+        self.plan()
+        status = analysis.execute_analysis()
+        self.assertEqual([row['status'] for row in status['components']], ['computed', 'computed'])
+        self.assertEqual(status['missingCriterionIds'], [])
+        self.assertEqual(status['requiredResultFindings'], [])
+        self.assertEqual(status['nextTasks'], [])
+
     def test_execution_with_wrong_history_scope_returns_autonomous_repair_without_paid_review(self):
         criteria_path = self.root / 'acceptance/acceptance_criteria.json'
         criteria = json.loads(criteria_path.read_text())

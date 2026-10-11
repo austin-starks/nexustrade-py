@@ -107,6 +107,7 @@ _LAZY_EXPORTS = {
     # `nt.lake` shape rather than importing at package load.
     "nl": ("nexustrade.nl", None),
     "sec": ("nexustrade.sec", None),
+    "research": ("nexustrade.research", None),
     "stats": ("nexustrade.stats", None),
     "flush_requests": ("nexustrade.host", "flush_requests"),
     "gateway_chat": ("nexustrade.host", "gateway_chat"),

@@ -64,7 +64,7 @@ def validate_output_requirements(requirements: Any, criterion_ids: Sequence[str]
         raise ValueError("Every component criterion needs typed result output requirements")
 
 
-def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], criteria: Sequence[Mapping[str, Any]], model: Any = _UNSET) -> list[str]:
+def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], criteria: Sequence[Mapping[str, Any]], model: Any = _UNSET, *, complete: bool = True) -> list[str]:
     """Use the staged host contract; the producer cannot weaken result types/counts.
 
     This is construction coverage, not semantic or arithmetic acceptance. A
@@ -100,7 +100,7 @@ def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], crit
                 paths.add(row['path'])
         for result in results:
             count = len({row['path'] for row in rows if row.get('resultId') == result['id'] and row.get('type') == result['type'] and isinstance(row.get('path'), str) and row['path'].startswith('/')})
-            if count < result['minimumCount']:
+            if complete and count < result['minimumCount']:
                 findings.append(f"Criterion {criterion['id']}: {result['description']} requires at least {result['minimumCount']} distinct {result['type']} results ({result['id']}); declared {count}.")
             if 'coverage' not in result:
                 continue
@@ -127,7 +127,7 @@ def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], crit
                     findings.append(f"Criterion {criterion['id']}: {result['id']} repeats coordinate {identity}; duplicate rows cannot replace missing coverage.")
                 else:
                     observed.add(identity)
-            if model is not _UNSET:
+            if complete and model is not _UNSET:
                 for coordinate in sorted(expected - observed):
                     findings.append(f"Criterion {criterion['id']}: {result['id']} is missing required coverage {coordinate}; execute and bind that requested result.")
     return findings

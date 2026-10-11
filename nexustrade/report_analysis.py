@@ -118,6 +118,9 @@ def _validate(plan: Mapping[str, Any]) -> None:
     components = plan.get("components")
     if plan.get("version") not in {1, 2} or not isinstance(components, list) or not components:
         raise ValueError("Analysis plan needs version 2 and nonempty components")
+    if plan.get('scope', 'complete') not in {'complete', 'incremental'} or (plan['version'] == 1 and 'scope' in plan):
+        raise ValueError("Analysis scope must be complete or incremental (version 2)")
+    incremental = plan.get('scope') == 'incremental'
     ids = [row.get("id") for row in components if isinstance(row, dict)]
     if len(ids) != len(components) or any(not isinstance(x, str) or not x.strip() for x in ids) or len(set(ids)) != len(ids):
         raise ValueError("Analysis component IDs must be unique nonempty strings")
@@ -156,10 +159,10 @@ def _validate(plan: Mapping[str, Any]) -> None:
             for path in decision["evidencePaths"]:
                 if _path(path) == _path(plan["modelPath"]):
                     raise ValueError("Decision evidence must be frozen inputs, separate from the model output")
-    if covered != required:
+    if not incremental and covered != required:
         raise ValueError(f"Analysis plan omitted required criteria: {sorted(required - covered)}")
     binding_findings = required_result_binding_findings(
-        [binding for row in components for binding in row.get('outputRequirements', [])], _required_criteria())
+        [binding for row in components for binding in row.get('outputRequirements', [])], _required_criteria(), complete=not incremental)
     if binding_findings:
         raise ValueError('Required result construction incomplete: ' + ' '.join(binding_findings))
     _ordered_components(components)
@@ -175,7 +178,7 @@ def _validate(plan: Mapping[str, Any]) -> None:
         raise ValueError("sourcePaths must identify frozen inputs, separate from output")
 
 
-def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence[str], components: Sequence[Mapping[str, Any]], producer_args: Sequence[str] = ()) -> str:
+def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence[str], components: Sequence[Mapping[str, Any]], producer_args: Sequence[str] = (), scope: str = 'complete') -> str:
     """Declare the current brief's work and direct dependencies before building.
 
     Components include id, kind, criterionIds, dependsOn, outputPaths,
@@ -193,7 +196,12 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
     Historical and future results are separate; a forecast cannot replace history.
     The executor cannot substitute a status string or count for numerical results.
     Legacy criteria without results retain the three-field declaration format.
-    All required criteria must be represented, including research/delivery work.
+    scope='incremental' lets the first covered result execute before all other
+    bindings are designed. It still requires real method result IDs/types and
+    declared coordinate pointers. Extend the SAME producer/plan as work proceeds.
+    analysis_status exposes all omitted criteria/results/counts/coordinates;
+    incomplete scope never passes final construction or purchases broad review.
+    The default complete scope requires every result binding before execution.
     """
     declarations = json.loads(json.dumps(list(components), allow_nan=False))
     for row in declarations:
@@ -201,6 +209,8 @@ def plan_analysis(*, producer_path: str, model_path: str, source_paths: Sequence
             decision["evidencePaths"] = [_logical(_path(x)) for x in decision.get("evidencePaths", [])]
     plan = {"version": 2, "producerPath": _logical(_path(producer_path)), "modelPath": _logical(_path(model_path)),
             "sourcePaths": [_logical(_path(x)) for x in source_paths], "components": declarations, "producerArgs": list(producer_args)}
+    if scope != 'complete':
+        plan['scope'] = scope
     _validate(plan)
     path = _root() / PLAN_PATH
     _save(path, plan)
@@ -310,7 +320,9 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
                    and receipt.get("modelSha256") == _digest(model_path))
     components: list[dict[str, Any]] = []
     all_bindings = [binding for row in plan['components'] for binding in row.get('outputRequirements', [])]
-    coverage_findings = {criterion['id']: required_result_binding_findings(all_bindings, [criterion], model) for criterion in _required_criteria()}
+    incremental = plan.get('scope') == 'incremental'
+    criteria = _required_criteria()
+    coverage_findings = {criterion['id']: required_result_binding_findings(all_bindings, [criterion], model, complete=not incremental) for criterion in criteria}
     for row in plan["components"]:
         missing = []
         missing_results = missing_required_outputs(model, row.get('outputRequirements', []))
@@ -365,8 +377,15 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
                       "missingRequiredOutputs": row['missingRequiredOutputs'], "findings": findings,
                       "requiredResultFindings": row['requiredResultFindings'],
                       "requiresSemanticReassessment": bool(findings)})
+    missing_criteria = sorted(_required() - {id for row in components for id in row['criterionIds']})
+    full_findings = required_result_binding_findings(all_bindings, criteria, model)
+    if missing_criteria or full_findings:
+        tasks.append({'operation': 'extend_plan', 'criterionIds': missing_criteria, 'readyToWork': True,
+                      'waitingOn': [], 'requiredResultFindings': full_findings,
+                      'nextAction': 'Extend the same producer and typed bindings to remaining requested results; partial execution is not final acceptance.'})
     return {"version": plan['version'], "producerPath": plan["producerPath"], "modelPath": plan["modelPath"],
-            "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks}
+            "executionCurrent": current, "execution": receipt, "components": components, "nextTasks": tasks,
+            "scope": plan.get('scope', 'complete'), 'missingCriterionIds': missing_criteria, 'requiredResultFindings': full_findings}
 
 
 def attach_analysis_work(inputs: Mapping[str, Any]) -> dict[str, Any]:
