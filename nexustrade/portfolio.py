@@ -1356,6 +1356,7 @@ def ChartBar(
     line: Literal["open", "high", "low", "close", "sma"] = "close",
     bars: float = 1,
     offset_bars: float = 0,
+    minute_policy: Literal["strict", "observed"] = "strict",
 ) -> Indicator:
     """ChartBar indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1363,6 +1364,7 @@ def ChartBar(
     line: open: oldest selected candle; close: newest; high/low: range; sma: mean candle closes.
     bars: Number of chart candles, not elapsed minutes. SMA20 on five-minute candles: barMinutes=5, bars=20.
     offset_bars: Skip this many latest completed candles. 1 selects the previous window.
+    minute_policy: strict requires every minute. observed aggregates actual eligible-trade prints, skips empty candles, and publishes after the clock bucket closes. No synthetic prices; source coverage is a separate check.
     """
     d: Dict[str, Any] = {"type": "ChartBar"}
     _set_asset(d, "targetAsset", asset)
@@ -1370,6 +1372,7 @@ def ChartBar(
     d["line"] = _enum(line, ["open","high","low","close","sma"], "line")
     d["bars"] = bars
     d["offsetBars"] = offset_bars
+    d["minutePolicy"] = _enum(minute_policy, ["strict","observed"], "minute_policy")
     return Indicator(d)
 
 __all__.append("ChartBar")
