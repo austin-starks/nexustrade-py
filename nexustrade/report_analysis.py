@@ -298,6 +298,68 @@ def execute_analysis(*, timeout_sec: int = 300) -> dict[str, Any]:
     return {**analysis_status(), "reportExportRequired": report_export_required}
 
 
+def _native_review_findings() -> list[dict[str, Any]]:
+    """Read the native hook's canonical queue projection, without prose parsing.
+
+    Findings remain judgments. Omitting one in a narrow follow-up does not close
+    it; only the native reviewer's recorded disposition does. This reader never
+    authorizes delivery or maps free-form locators onto guessed criterion IDs.
+    """
+    target = _root() / '.nexustrade/analysis/review-findings.json'
+    if not target.exists():
+        return []
+    queue = json.loads(target.read_text())
+    if not isinstance(queue, dict) or queue.get('version') != 1 or not isinstance(queue.get('findings'), list):
+        raise ValueError('Invalid native review findings queue')
+    rows = []
+    for row in queue['findings']:
+        if (not isinstance(row, dict) or not all(isinstance(row.get(key), str) and row[key]
+                for key in ('findingId', 'path', 'issue', 'disposition'))
+                or row['disposition'] not in ('open', 'repaired', 'disproved', 'not_reassessed', 'unavailable')):
+            raise ValueError('Invalid native review finding')
+        if ('componentIds' in row and (not isinstance(row['componentIds'], list)
+                or any(not isinstance(value, str) or not value for value in row['componentIds']))):
+            raise ValueError('Invalid native review component IDs')
+        if ('analysisTargets' in row and (not isinstance(row['analysisTargets'], list)
+                or any(not isinstance(target, dict) or not isinstance(target.get('id'), str)
+                       or not isinstance(target.get('outputRequirements'), list) for target in row['analysisTargets']))):
+            raise ValueError('Invalid native review analysis targets')
+        if row['disposition'] not in ('repaired', 'disproved'):
+            rows.append(row)
+    return rows
+
+
+def _native_component_findings(components: Sequence[Mapping[str, Any]], findings: Sequence[Mapping[str, Any]]) -> dict[str, list[Mapping[str, Any]]]:
+    """Use reviewer-selected IDs and host-captured bindings, never prose locators.
+
+    Retaining exact logical result identities also survives a component rename.
+    Legacy/report-only findings stay unscoped rather than rejecting guessed work.
+    """
+    def binding_key(binding: Mapping[str, Any]) -> tuple[Any, Any]:
+        return binding.get('criterionId'), binding.get('resultId') or binding.get('path')
+    scoped: dict[str, list[Mapping[str, Any]]] = {row['id']: [] for row in components}
+    for finding in findings:
+        targets = {binding_key(binding) for target in finding.get('analysisTargets', [])
+                   for binding in target['outputRequirements']}
+        for row in components:
+            if (row['id'] in finding.get('componentIds', []) or
+                    targets.intersection(binding_key(binding) for binding in row.get('outputRequirements', []))):
+                scoped[row['id']].append(finding)
+    return scoped
+
+
+def _execution_identity(execution: Mapping[str, Any]) -> str:
+    identity = {key: execution.get(key) for key in ('planSha256', 'inputSha256', 'modelSha256')}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+
+
+def _native_candidate_unchanged(finding: Mapping[str, Any], execution: Mapping[str, Any]) -> bool:
+    if not finding.get('readAgainstModelSha256') or finding['readAgainstModelSha256'] != execution.get('modelSha256'):
+        return False
+    previous = finding.get('readAgainstExecution')
+    return previous is None or previous == _execution_identity(execution)
+
+
 def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
     """Return current construction state and bounded next work; never a grade.
 
@@ -346,6 +408,21 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         if row["status"] == "computed" and any(by_id[x]["status"] != "computed" for x in row["dependsOn"]):
             row["status"] = "not_started"
     construction_available = {row['id'] for row in components if row['status'] == 'computed'}
+    native_findings = _native_review_findings() if include_review else []
+    native_by_component = _native_component_findings(components, native_findings)
+    native_blocked = set()
+    for row in _ordered_components(components):
+        findings = native_by_component[row['id']]
+        if findings:
+            native_blocked.add(row['id'])
+            row['status'] = ('review_rejected' if any(_native_candidate_unchanged(finding, receipt)
+                                                     for finding in findings) else 'review_pending')
+        elif any(dependency in native_blocked for dependency in row['dependsOn']):
+            native_blocked.add(row['id'])
+            row['status'] = 'review_pending'
+    # Executed numbers still exist, but rejected definitions cannot unlock
+    # dependent expansion. Independent work and execution-only exports remain usable.
+    construction_available -= native_blocked
     review_path = _root() / ".nexustrade/analysis/readiness.json"
     review = json.loads(review_path.read_text()) if include_review and review_path.exists() else {}
     review_current = current and review.get("execution") == receipt
@@ -364,19 +441,33 @@ def analysis_status(*, include_review: bool = True) -> dict[str, Any]:
         if row["status"] in {"computed", "accepted"} and any(by_id[x]["status"] == "review_rejected" for x in row["dependsOn"]):
             row["status"] = "review_rejected"
     tasks = []
+    if native_findings:
+        unchanged = any(_native_candidate_unchanged(finding, receipt) for finding in native_findings)
+        tasks.append({'operation': 'repair_review_findings' if unchanged else 'reassess_review_findings',
+                      'readyToWork': True, 'waitingOn': [], 'findings': native_findings,
+                      'componentIds': [row['id'] for row in components if native_by_component[row['id']]],
+                      'requiresSemanticReassessment': True,
+                      'nextAction': 'Inspect the recorded concerns and retained source evidence. Resolve inputs and definitions in the authoritative producer, execute it, and request a scoped independent reassessment before dependent expansion. Changed bytes or a resolved author label do not close a finding; withdrawal does not complete required analysis.'})
     for row in components:
         if row["status"] in {"computed", "accepted"}:
             continue
+        if native_by_component[row['id']]:
+            continue  # The first scoped native task owns this repair/reassessment.
         # A semantic rejection does not make executed inputs disappear. Keep
         # review rejection for acceptance, but allow independent construction
         # repairs while another research judgment is still being reviewed.
         waiting = [x for x in row["dependsOn"] if x not in construction_available]
         findings = [finding for finding in (reviewed or {}).get('findings', []) if finding['criterionId'] in row['criterionIds'] and finding['severity'] == 'blocking']
-        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": "declare_outputs" if plan['version'] == 1 else ("repair_producer" if row["status"] == "review_rejected" or row['requiredResultFindings'] else ("resolve_primitive" if row["unresolvedPrimitives"] else "execute_producer")),
+        operation = ("declare_outputs" if plan['version'] == 1 else
+            "repair_producer" if row["status"] == "review_rejected" or row['requiredResultFindings'] else
+            "resolve_primitive" if row["unresolvedPrimitives"] else
+            "repair_producer" if current and row['missingOutputs'] else "execute_producer")
+        tasks.append({"componentId": row["id"], "criterionIds": row["criterionIds"], "operation": operation,
                       "waitingOn": waiting, "readyToWork": not waiting, "missingOutputs": row["missingOutputs"], "unresolvedPrimitives": row["unresolvedPrimitives"],
                       "missingRequiredOutputs": row['missingRequiredOutputs'], "findings": findings,
                       "requiredResultFindings": row['requiredResultFindings'],
-                      "requiresSemanticReassessment": bool(findings)})
+                      "requiresSemanticReassessment": bool(findings),
+                      "nextAction": "Resolve retained inputs and definitions, implement the required outputs in the authoritative producer, execute and regenerate dependent results. Removing a rejected value leaves required work unfinished." if operation == 'repair_producer' else None})
     missing_criteria = sorted(_required() - {id for row in components for id in row['criterionIds']})
     full_findings = required_result_binding_findings(all_bindings, criteria, model)
     if missing_criteria or full_findings:
@@ -427,7 +518,19 @@ def construction_checkpoint(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
     if not current["nextTasks"]:
         reviewed = analysis_status()
         if reviewed['nextTasks']:
-            previous_review = json.loads((_root() / '.nexustrade/analysis/readiness.json').read_text())
+            native = [finding for task in reviewed['nextTasks'] if task['operation'] == 'repair_review_findings' for finding in task['findings']]
+            unchanged_native = any(finding.get('readAgainstModelSha256') == current['execution'].get('modelSha256')
+                                   and ('readAgainstReportSha256' not in finding or finding['readAgainstReportSha256'] == _report_digest(inputs))
+                                   for finding in native if finding.get('readAgainstModelSha256'))
+            if unchanged_native:
+                current = reviewed
+                return {"status": "needs_construction", "origin": "local_execution_preflight", "paidCalls": 0,
+                        "summary": "Native reviewer concerns still apply to these unchanged model bytes; repair required results before another broad review",
+                        "components": current["components"], "nextTasks": current["nextTasks"]}
+            previous_path = _root() / '.nexustrade/analysis/readiness.json'
+            if not previous_path.exists():
+                return None  # New candidate can be assessed; open native findings remain visible.
+            previous_review = json.loads(previous_path.read_text())
             prior = previous_review['execution']
             inputs_without_producer = lambda execution: {path: digest for path, digest in execution.get('inputSha256', {}).items() if path != current['producerPath']}
             if (prior.get('modelSha256') == current['execution'].get('modelSha256') and
@@ -438,9 +541,12 @@ def construction_checkpoint(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
                 return None  # Changed candidate may be reassessed; open findings are not closed.
         else:
             return None
+    # Native concerns also matter while construction is incomplete. Previously
+    # this branch silently returned execution-only work and lost early review.
+    reviewed = analysis_status()
     return {"status": "needs_construction", "origin": "local_execution_preflight", "paidCalls": 0,
-            "summary": "Required components are unfinished; construct independent ready components before broad semantic review",
-            "components": current["components"], "nextTasks": current["nextTasks"]}
+            "summary": "Repair scoped reviewer concerns before dependent expansion; construct independent ready components before broad semantic review",
+            "components": reviewed["components"], "nextTasks": reviewed["nextTasks"]}
 
 
 def record_readiness(receipt_path: Path, result: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:

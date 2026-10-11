@@ -2,7 +2,8 @@
 
 The client is transport-generic: normal callers pass an API key/base URL, while
 run_compute receives short-lived values through NEXUSTRADE_API_* environment
-variables. It has no sandbox filesystem or yielding behavior.
+variables. It has no yielding behavior; a configured runner can receive
+advisory operation-state progress through its activity file.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, TypedDict, Union, runtime_checkable
 
 from nexustrade.env import LazyDotenv, environment_value
+from nexustrade._activity import touch_activity
 
 # sandbox-prune:begin agent-surface
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -954,9 +956,16 @@ def wait_for_operation(
 
     deadline = time.monotonic() + timeout_seconds
     interval = min(poll_interval_seconds, max_poll_interval_seconds)
+    last_state: tuple[str, str] | None = None
     while True:
         operation = dict(fetch(operation_id))
         status = str(operation.get("status") or "")
+        state = (str(operation.get("id") or operation_id), status)
+        # Remote waiting is not child CPU/disk I/O. Status transitions are
+        # evidence; a successful poll of the same frozen state is not.
+        if state != last_state:
+            touch_activity()
+            last_state = state
         if status in _TERMINAL_STATUSES:
             if raise_on_failure and status != "completed":
                 raise _operation_failure(operation, operation_id, status)

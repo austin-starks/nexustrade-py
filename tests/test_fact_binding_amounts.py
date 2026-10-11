@@ -70,6 +70,34 @@ class FactBindingTests(unittest.TestCase):
 
 
 class AmountAlignmentTests(unittest.TestCase):
+    def test_record_boundary_normalizes_millions_and_dollars_once(self):
+        # The observed failure inserted raw debt dollars into HTML millions and
+        # multiplied the entire dictionary again. These operands retain scale.
+        rows = {"operating_income": finance.amount(9, unit="EUR", scale=1e6),
+                "depreciation_and_amortization": finance.amount(1_000_000, unit="EUR"),
+                "capital_expenditures": finance.amount(2, unit="EUR", scale=1e6),
+                "current_operating_nwc": finance.amount(5, unit="EUR", scale=1e6),
+                "prior_operating_nwc": finance.amount(4_000_000, unit="EUR"),
+                "current_invested_capital": finance.amount(100, unit="EUR", scale=1e6),
+                "prior_invested_capital": finance.amount(80_000_000, unit="EUR")}
+        before = deepcopy(rows)
+        result = finance.operating_period_metrics(**rows, tax_rate=0, cost_of_capital=.08)
+        self.assertEqual(result['average_invested_capital'], 90_000_000)
+        self.assertAlmostEqual(result['roic'], .1)
+        self.assertAlmostEqual(result['eva'], 1_800_000)
+        self.assertEqual(result['amount_alignment']['inputs'], before)
+        self.assertEqual(rows, before)
+        self.assertEqual(finance.invested_capital_from_operations(
+            finance.amount(100, unit='EUR', scale=1e6), finance.amount(20_000_000, unit='EUR'),
+            finance.amount(0, unit='EUR')), 80_000_000)
+        self.assertAlmostEqual(finance.wacc(finance.amount(1, unit='EUR', scale=1e9),
+            finance.amount(200_000_000, unit='EUR'), .12, .05, .2), finance.wacc(1, .2, .12, .05, .2))
+        for change in (finance.amount(80, unit='USD', scale=1e6), 80_000_000):
+            with self.assertRaises(ValueError):
+                finance.operating_period_metrics(**{**rows, 'prior_invested_capital': change}, tax_rate=0, cost_of_capital=.08)
+        with self.assertRaisesRegex(ValueError, 'do not mix'):
+            finance.wacc(finance.amount(1, unit='EUR'), 1, .1, .05, .2)
+
     def test_normalizes_raw_dollars_and_forecast_billions_with_retained_inputs(self):
         facts = {"opening": finance.amount("1200000000.0000", unit="USD",
                                            provenance={"sourceIds": ["sec:owned"]}),

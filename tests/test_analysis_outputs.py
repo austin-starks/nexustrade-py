@@ -4,6 +4,15 @@ from nexustrade.analysis_outputs import required_result_binding_findings, missin
 
 
 class IndependentResultTests(unittest.TestCase):
+    def test_explicit_series_cannot_be_weakened_to_one_scalar(self):
+        result = {'id':'throughput', 'description':'Observed throughput', 'type':'number',
+                  'cardinality':'series', 'minimumCount':1}
+        with self.assertRaisesRegex(ValueError, 'series needs at least 2'):
+            required_result_binding_findings([], [{'id':'capacity','results':[result]}])
+        result['minimumCount'] = 3
+        self.assertEqual(required_result_binding_findings(self.bindings, [{'id':'capacity','results':[
+            result, {'id':'constraint','description':'Constraint','type':'string','cardinality':'single','minimumCount':1}]}]), [])
+
     def setUp(self):
         # A held-out logistics brief, not a hardcoded financial checklist.
         self.criteria = [{'id': 'capacity', 'results': [

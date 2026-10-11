@@ -154,11 +154,13 @@ class LakeResultLimitError(RuntimeError):
 
 
 class LakeQueryFailed(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
+    def __init__(self, code: str, message: str, *, retryable: bool = False,
+                 operation_id: str | None = None) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.operation_id = operation_id
 
 
 class LakeSubmitFailed(NexusTradeApiError):
@@ -397,7 +399,8 @@ class LakeQueryHandle:
             )
         except NexusTradeApiError as error:
             raise LakeQueryFailed(
-                error.code, error.message, retryable=error.retryable
+                error.code, error.message, retryable=error.retryable,
+                operation_id=error.operation_id or self.id,
             ) from error
         result = _from_operation(operation, self._client)
         if isinstance(result, LakeQueryResult):
@@ -795,7 +798,10 @@ def sql(
         try:
             return handle.wait(timeout_seconds=wait_timeout_seconds)
         except LakeQueryFailed as error:
-            if not error.retryable or attempt == RETRYABLE_QUERY_ATTEMPTS:
+            # An unchanged query keeps the same execution budget and scan.
+            # Retrying a deterministic timeout hides the need to chunk it.
+            if (not error.retryable or error.code == "query_timeout"
+                    or attempt == RETRYABLE_QUERY_ATTEMPTS):
                 raise
         # The failed job is terminal and unbilled for results, so resubmit
         # under a derived key: reusing the original would return the same

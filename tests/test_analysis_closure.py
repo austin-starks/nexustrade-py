@@ -19,10 +19,66 @@ class OutputContractTests(unittest.TestCase):
         self.components[1]['outputPaths'] = ['/historical']
         self.plan(); analysis.execute_analysis()
         task = analysis.analysis_status()['nextTasks'][0]
+        self.assertEqual(task['operation'], 'repair_producer')
         self.assertEqual(task['missingRequiredOutputs'], [{'criterionId':'future','path':'/future','type':'number','reason':'missing_or_null'}])
         with patch.object(readiness.urllib.request, 'urlopen') as paid:
             self.assertEqual(readiness.validate(inputs_path=self.save_inputs())['status'], 'needs_construction')
             paid.assert_not_called()
+
+    def test_native_review_queue_enters_repair_loop_and_unchanged_bytes_do_not_buy_validation(self):
+        import hashlib
+        self.components[1].pop('decisions')
+        producer = self.root / 'producer.py'
+        producer.write_text(producer.read_text().replace("'future':None", "'future':0"))
+        self.plan(); analysis.execute_analysis()
+        queue = self.root / '.nexustrade/analysis/review-findings.json'
+        finding = {'findingId':'finding:example','path':'retained-source and model locators',
+                   'issue':'Required historical definitions and reconciliation remain unfinished',
+                   'evidence':'Original retained source selections', 'disposition':'open',
+                   'readAgainstModelSha256':hashlib.sha256((self.root/'model.json').read_bytes()).hexdigest(),
+                   'readAgainstReportSha256':analysis._report_digest(self.inputs())}
+        queue.write_text(json.dumps({'version':1,'phase':'local-review','findings':[finding]}))
+        task = analysis.analysis_status()['nextTasks'][0]
+        self.assertEqual(task['operation'], 'repair_review_findings')
+        self.assertEqual(task['findings'], [finding])
+        with patch.object(readiness.urllib.request, 'urlopen') as paid:
+            result = readiness.validate(inputs_path=self.save_inputs())
+            self.assertEqual(result['status'], 'needs_construction')
+            self.assertEqual(result['nextTasks'][0]['operation'], 'repair_review_findings')
+            paid.assert_not_called()
+        producer.write_text(producer.read_text()+'\n# Comment-only repair\n')
+        analysis.execute_analysis()
+        self.assertIsNotNone(analysis.construction_checkpoint(self.inputs()))
+        report_repair = {**self.inputs(), 'readerFacingResult':'Actual report-only repair'}
+        self.assertIsNone(analysis.construction_checkpoint(report_repair))
+        # A report created after a model-only review is a changed candidate too.
+        # Explicit null means there was no report digest, not identical reports.
+        finding['readAgainstReportSha256']=None
+        queue.write_text(json.dumps({'version':1,'phase':'local-review','findings':[finding]}))
+        self.assertIsNone(analysis.construction_checkpoint(self.inputs()))
+        finding['readAgainstReportSha256']=analysis._report_digest(self.inputs())
+        queue.write_text(json.dumps({'version':1,'phase':'local-review','findings':[finding]}))
+        # A changed candidate can be reassessed, but its old concerns stay open.
+        producer.write_text(producer.read_text().replace("'future':0", "'future':1"))
+        analysis.execute_analysis()
+        self.assertIsNone(analysis.construction_checkpoint(self.inputs()))
+        self.assertEqual(analysis.analysis_status()['nextTasks'][0]['findings'], [finding])
+        finding['disposition']='disproved'
+        queue.write_text(json.dumps({'version':1,'phase':'local-review','findings':[finding]}))
+        self.assertEqual(analysis.analysis_status()['nextTasks'], [])
+
+    def test_withdrawing_invalid_value_preserves_required_construction_work(self):
+        self.components[1].pop('decisions')
+        self.plan(); analysis.execute_analysis()
+        status = analysis.analysis_status()
+        task = next(row for row in status['nextTasks'] if row.get('componentId') == 'future-owner')
+        self.assertEqual(task['operation'], 'repair_producer')
+        self.assertIn('Removing a rejected value leaves required work unfinished', task['nextAction'])
+        # A zero computed by the producer remains valid; no heuristic rejects it.
+        producer = self.root / 'producer.py'
+        producer.write_text(producer.read_text().replace("'future':None", "'future':0"))
+        self.plan(); analysis.execute_analysis()
+        self.assertEqual(analysis.analysis_status()['nextTasks'], [])
 
     def save_inputs(self):
         target = self.root / 'inputs.json'

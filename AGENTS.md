@@ -7,9 +7,11 @@ friendlier read.
 ## What this package is
 
 A typed client plus ~170 **generated** builders for authoring trading
-strategies. The builders are generated from the same indicator specification the
-NexusTrade engine executes, so a book assembled from them is structurally valid
-before it ever leaves the process.
+strategies. The builders are generated from the engine's indicator specification.
+They describe draft payloads; the API still validates complete portfolios and
+their conditions. A builder's existence does not guarantee support for every
+trading method. Read the [option selection and execution limits](README.md#option-selection-and-execution-limits)
+before claiming exact option timing, expiration selection, or rolling behavior.
 
 ```
 author a portfolio  →  submit a job  →  poll until terminal  →  read result

@@ -79,12 +79,18 @@ def required_result_binding_findings(bindings: Sequence[Mapping[str, Any]], crit
             raise ValueError('Host result contract is malformed')
         known = {}
         for result in results:
-            if (not isinstance(result, dict) or set(result) not in ({'id', 'description', 'type', 'minimumCount'}, {'id', 'description', 'type', 'minimumCount', 'coverage'})
+            if (not isinstance(result, dict) or set(result) - {'id', 'description', 'type', 'minimumCount', 'coverage', 'cardinality'}
+                    or not {'id', 'description', 'type', 'minimumCount'} <= set(result)
                     or not isinstance(result['id'], str) or not result['id'].strip() or result['id'] in known
                     or not isinstance(result['description'], str) or not result['description'].strip()
                     or not isinstance(result['type'], str) or result['type'] not in {'number', 'string', 'boolean'}
                     or type(result['minimumCount']) is not int or not 1 <= result['minimumCount'] <= 2**53 - 1):
                 raise ValueError('Host result contract is malformed')
+            cardinality = result.get('cardinality')
+            if ('cardinality' in result and cardinality not in ('single', 'series')
+                    or cardinality == 'single' and result['minimumCount'] != 1
+                    or cardinality == 'series' and result['minimumCount'] < 2):
+                raise ValueError('A single result needs minimumCount 1; a series needs at least 2 distinct results')
             if 'coverage' in result:
                 _validate_coverage(result['coverage'], result['minimumCount'])
             known[result['id']] = result

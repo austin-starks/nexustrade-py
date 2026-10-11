@@ -328,6 +328,35 @@ strategies. It keeps the no-worse-than-current-quote protection, but it is not a
 resting price target. Live option strategies must choose an explicit Limit
 policy.
 
+### Option selection and execution limits
+
+Builders describe drafts. Generation does not prove that the engine can execute
+every requested rule; the API validates complete portfolios and their conditions.
+
+- Expiration selectors support a DTE window and `nearest`, `middle`, or
+  `furthest`. `middle` selects the middle eligible expiration by index, not the
+  expiration nearest a target such as 180 days. There is no monthly-only or
+  quarterly-only expiration filter.
+- `rebalance_option` accepts `renew_before_days` (integer 1–90) and
+  `revisit_disclosed_targets`. These maintain modeled political-disclosure
+  option targets. The strategy must contain a `NewPoliticalDisclosure` condition
+  for instrument `Option` with exactly one member ID. These fields do not
+  implement a general close-and-replace roll for a trend strategy.
+- For backtests, the job's `fee_config["OptionSlippageFraction"]` sets quote-side
+  fills: `0` uses the midpoint, `1` uses ask for buys and bid for sells, and the
+  default is `0.5`. This job setting does not add a last-trade fallback or define
+  live order execution.
+- Evaluation timing and order execution are separate. `OpenClose` schedules
+  evaluations at session open and close; it does not itself carry a signal
+  observed at close into an order at the next open. Explicit zero timing offsets
+  and a `gt(MinutesAfterOpen(), Value(0))` condition can restrict evaluations
+  to the calendar session close. `MinutesUntilClose` counts down to 16:00 Eastern,
+  so it cannot identify an early session close.
+
+When authoring an approximation, describe the actual expiration policy, signal
+timing, fills, and replacement behavior. Backtest results describe that
+implementation, not the exact method it approximates.
+
 <details>
 <summary><b>What you can build</b> — 170+ generated builders</summary>
 
