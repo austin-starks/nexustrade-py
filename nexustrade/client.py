@@ -810,6 +810,27 @@ def _inline_point_bytes(points: Sequence[Mapping[str, Any]]) -> int:
     return len(json.dumps(list(points), separators=(",", ":")).encode("utf-8"))
 
 
+class AuthoredPortfolioPatch(TypedDict, total=False):
+    """Finished authored fields; omitted values retain the saved state."""
+
+    name: str
+    initialValue: float
+    strategies: Sequence[Mapping[str, Any]]
+    deployment: Mapping[str, Any]
+    policy: Mapping[str, Any]
+    dividendPolicy: Literal["cash", "reinvest"]
+    alertsEnabled: bool
+    supportsFractionalShares: bool
+    supportsCrypto: bool
+
+
+class UpdatePortfolioOperation(TypedDict):
+    """Save all authored changes together, without a model call."""
+
+    type: Literal["updatePortfolio"]
+    portfolio: AuthoredPortfolioPatch
+
+
 class PortfolioRenameOperation(TypedDict):
     """Rename the book."""
 
@@ -864,9 +885,10 @@ class ReplaceStrategiesOperation(TypedDict):
 #: id of its own. Strategy payloads are FINISHED objects in the shape
 #: ``nexustrade.strategy()`` emits, ``orderExecution`` included; the server
 #: ingests them with no LLM in the path and rejects natural-language strings.
-#: Deploy, undeploy, delete, scheduling and trading-policy operations are
-#: deliberately absent — they are not reachable on this route.
+#: Authored changes in one call commit together. Deploy, undeploy and delete
+#: remain separate account operations.
 PortfolioEditOperation = Union[
+    UpdatePortfolioOperation,
     PortfolioRenameOperation,
     AddStrategiesOperation,
     RemoveStrategiesOperation,
@@ -1131,8 +1153,8 @@ class NexusTradeClient:
     ) -> "Portfolio":
         """Apply deterministic no-code edits without invoking Aurora.
 
-        Guest workspaces may rename and add/remove/replace strategies. Trading,
-        deployment, scheduling, and portfolio-policy operations remain gated.
+        A finished authored patch can combine strategies, cadence, eligibility,
+        dividends and name in one atomic save. Account activation remains gated.
         """
         from nexustrade.portfolio_handle import Portfolio
 

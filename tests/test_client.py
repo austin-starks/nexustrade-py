@@ -228,6 +228,18 @@ class NexusTradeClientTests(unittest.TestCase):
             ],
         )
 
+    def test_complete_authored_patch_uses_one_request(self) -> None:
+        transport = FakeTransport([{"portfolio": {"id": "p-9", "name": "Combined"}}])
+        client = client_module.NexusTradeClient(transport=transport)
+        operations: list[client_module.PortfolioEditOperation] = [{"type": "updatePortfolio", "portfolio": {
+            "name": "Combined", "strategies": [nt.strategy("Entry", nt.always(), nt.buy(nt.stock_asset("SPY"), 42, "dollars"))],
+            "deployment": {"frequency": "Constant", "intervalSeconds": 60}, "dividendPolicy": "reinvest",
+        }}]
+        client.update_portfolio("p-9", operations, idempotency_key="combined-v1")
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0]["body"], {"operations": operations})
+        self.assertEqual(transport.calls[0]["idempotency_key"], "combined-v1")
+
     def test_typed_replace_strategy_keeps_its_waiting_limit_policy(self) -> None:
         transport = FakeTransport([{"portfolio": {"id": "p-9", "name": "AAPL Income"}}])
         client = client_module.NexusTradeClient(transport=transport)

@@ -480,9 +480,15 @@ operations: list[PortfolioEditOperation] = [
 client.update_portfolio(portfolio_id, operations, idempotency_key="aapl-limit-v1")
 ```
 
-The five edits are `rename`, `addStrategies`, `removeStrategies`,
-`replaceStrategy`, and `replaceStrategies`. Deploy, undeploy, delete,
-scheduling, and trading-policy operations are not reachable on this route.
+Prefer one `updatePortfolio` operation with a finished `portfolio` patch.
+It can combine `strategies`, `deployment` (frequency and timing), `name`,
+`policy.stockEligibility`, `dividendPolicy`, and alerts. Omitted fields retain
+their saved values. Draft starting capital and capabilities can change only
+before deployment. The existing strategy and rename operations remain supported.
+Every authored operation for the target in one call commits together; validation
+failure saves none of them. Reusing the same idempotency key replays the saved
+result. Deploy, undeploy, delete and automated approval remain separate account
+operations.
 
 **`replaceStrategies` replaces the whole set**, so a strategy left out of the
 list is deleted. Carry unchanged strategies through verbatim, including the
