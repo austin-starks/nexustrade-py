@@ -3472,6 +3472,7 @@ def backtest(
     start_date: str,
     end_date: str,
     baseline_symbol: Optional[str] = None,
+    baseline_asset: Optional[Dict[str, Any]] = None,
     interval: Optional[Literal["Day", "Minute"]] = None,
     initial_value: Optional[float] = None,
     generate_events: Optional[bool] = None,
@@ -3481,7 +3482,8 @@ def backtest(
     """Submit a backtest. Returns a handle; results are read after it completes.
     start_date: Backtest start date (ISO format, e.g. 2024-01-01). For interval=Minute, default first-look is the last 90 inclusive calendar days and the selected range plus minute-indicator warmup cannot exceed 730 days of minute data. Do not use 2010-01-01 on Minute.
     end_date: Backtest end date (ISO format, e.g. 2024-12-31). Minute allows up to 730 days of minute data from start_date, counting minute-indicator warmup; never split a longer span into yearly Minute jobs.
-    baseline_symbol: Benchmark for comparisonValue (buy-and-hold of this ticker). Defaults to SPY if omitted — use SPY only for broad equity/market strategies. For single-name options, set to that underlying (AAPL options → AAPL). For multi-name options books, run separate backtests with each material underlying as baseline (AAPL for AAPL sleeve, MSFT for MSFT), or equal-weight B&H of the traded universe — do not default to SPY.
+    baseline_symbol: Legacy Stock benchmark shorthand for comparisonValue. Use baseline_asset with explicit Cryptocurrency type for crypto pairs; never provide both fields. When both fields are omitted, the single traded stock/option underlying is inferred, otherwise SPY. For single-name options use that underlying; compare multi-name books against a deliberately chosen benchmark.
+    baseline_asset: Typed buy-and-hold benchmark for comparisonValue. Use {type:'Cryptocurrency',symbol:'BTC-USD',name:'BTC-USD'} for BTC or {type:'Stock',symbol:'SPY',name:'SPY'} for a stock/ETF. Symbol text never determines asset type. Omit baseline_symbol when using this field.
     interval: Time interval: Day or Minute (default Day). Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
     initial_value: Starting portfolio value (default 10000) Range 1..inf.
     generate_events: Generate detailed event data (signals, orders, audits) during backtest. Costs 5x research tokens. Events are Mongo hot-store traces retained for 3 days. Use query_backtest_events to explore them while retained.
@@ -3492,6 +3494,7 @@ def backtest(
         "start_date": start_date,
         "end_date": end_date,
         "baseline_symbol": baseline_symbol,
+        "baseline_asset": baseline_asset,
         "interval": interval,
         "initial_value": initial_value,
         "generate_events": generate_events,
