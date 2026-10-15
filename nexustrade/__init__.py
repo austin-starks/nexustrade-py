@@ -108,6 +108,8 @@ _LAZY_EXPORTS = {
     "nl": ("nexustrade.nl", None),
     "sec": ("nexustrade.sec", None),
     "research": ("nexustrade.research", None),
+    "host": ("nexustrade.host", None),
+    "report": ("nexustrade.report", None),
     "stats": ("nexustrade.stats", None),
     "flush_requests": ("nexustrade.host", "flush_requests"),
     "gateway_chat": ("nexustrade.host", "gateway_chat"),
