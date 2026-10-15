@@ -141,6 +141,8 @@ _LAZY_EXPORTS = {
     "extract_rows": ("nexustrade.scanned_table", "extract_rows"),
     "extract_web_pages": ("nexustrade.scanned_table", "extract_web_pages"),
     "prepare_web_pages": ("nexustrade.scanned_table", "prepare_web_pages"),
+    "read_source_tables": ("nexustrade.source_tables", "read_source_tables"),
+    "select_source_table_cell": ("nexustrade.source_tables", "select_source_table_cell"),
     "audit_inclusions": ("nexustrade.semantic", "audit_inclusions"),
     "derive_rows": ("nexustrade.semantic", "derive_rows"),
     "verify_semantic_citations": (

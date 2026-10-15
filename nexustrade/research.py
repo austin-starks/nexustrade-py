@@ -7,13 +7,28 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
-from .report_analysis import _path
-
 MANIFEST_PATH = "/work/in/data/research-inputs/manifest.json"
 ResponseFamily = Literal["statement", "fact_candidates", "fact_instances", "filed_concepts", "dimensioned_concepts", "business_breakdowns", "filing"]
+
+
+def _path(value: str) -> Path:
+    """Resolve a /work or relative path inside the current workspace, refusing escapes and credentials."""
+    root = Path(os.environ.get("NEXUSTRADE_WORK_DIR", "/work")).resolve()
+    path = Path(value)
+    if path.is_relative_to("/work"):
+        path = root / path.relative_to("/work")
+    elif not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("Research paths must stay inside the current workspace")
+    if path.name in {".jobenv", ".session_env"} or path == root / ".env":
+        raise ValueError("Research paths cannot read host-private credential files")
+    return path
 
 
 def _document(path: str) -> dict[str, Any]:
