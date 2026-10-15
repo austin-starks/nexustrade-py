@@ -19,8 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Union
 from uuid import uuid4
-from .report_readiness import validate as _validate_readiness
-from .report_analysis import plan_analysis, execute_analysis, analysis_status, analysis_requirements, attach_analysis_work
 from .report_json import assert_report_envelope, REPORT_INPUTS_MAX_BYTES
 
 WORK_DIR = os.environ.get("NEXUSTRADE_WORK_DIR", "/work")
@@ -37,15 +35,6 @@ LEGACY_INPUTS_PATH = os.path.join(WORK_DIR, "report_inputs.json")
 # Code is evidence, not a deliverable, so it stays outside the bundle.
 DEFAULT_CODE_DIR = os.path.join(WORK_DIR, "output", "code")
 MODEL_SOURCE_MAX_BYTES = 4 * 1024 * 1024
-
-
-def validate(*, inputs_path: str | None = None, timeout_sec: int = 180) -> dict[str, Any]:
-    """Return method-driven readiness findings; repair them before authoring.
-
-    Uses the compute run's billing/cap, caches unchanged handoffs and never
-    rewrites financial analysis. See report_readiness.validate for recovery.
-    """
-    return _validate_readiness(inputs_path=inputs_path or DEFAULT_INPUTS_PATH, timeout_sec=timeout_sec)
 
 
 def write_model(model: Mapping[str, Any], *, path: str | None = None) -> str:
@@ -826,7 +815,6 @@ def write_inputs(
     # Check the JSON actually delivered, preserving the writer's documented
     # date/custom-scalar conversion before binding the canonical model.
     inputs = json.loads(json.dumps(inputs, ensure_ascii=False, default=str, allow_nan=False))
-    inputs = attach_analysis_work(inputs)
     assert_report_envelope(inputs)
     encoded = (json.dumps(inputs, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
     if len(encoded) > REPORT_INPUTS_MAX_BYTES:
