@@ -2639,6 +2639,24 @@ def NewPoliticalDisclosure(
 
 __all__.append("NewPoliticalDisclosure")
 
+def NewsSentiment(
+    asset: Union[str, Dict[str, Any], _Candidate],
+    measure: Literal["Mean", "NetCount", "ArticleCount"] = "Mean",
+    lookback_days: int = 1,
+) -> Indicator:
+    """Labelled news sentiment about the asset over its last lookbackDays daily news snapshots (default 1, the latest). Each trading day has one snapshot at 09:15 New York, and a row is visible from its snapshot's time. The lake assigns each article to the first snapshot it could have been in: for history that is by publish time, and an article that live collection fetched or labelled after a snapshot's deadline is moved to the next session's snapshot. Backtests and live trading read the same rows by that time. lookbackDays counts trading sessions whether or not the asset had news in them. Only articles in which the asset is the subject or significantly affected count; passing mentions, law-firm solicitations and routine filings never do, and copies of one story within 7 days count once per session. measure (default Mean): Mean is the average sentiment from -1.0 to 1.0, NetCount is positive minus negative articles, ArticleCount is the number of qualifying articles. Every measure has no value when the window cannot be read in full: before coverage begins in May 2021, across sessions with no published snapshot, or when the latest snapshot due has not been published. Mean also has no value when the window holds no qualifying article; the counts are then 0. Rows follow the security, so META reads Facebook-era FB articles.
+    asset: Pass CANDIDATE in a dynamic rebalance pipeline.
+    measure: Mean: average sentiment from -1 to 1, with no value when the window has no qualifying news. NetCount: positive minus negative articles. ArticleCount: qualifying articles. Every measure has no value before May 2021 coverage, across missing snapshots, or when the due snapshot is unpublished.
+    lookback_days: Whole trading sessions of daily 09:15 New York news snapshots; 1 is the latest. A row is visible from the snapshot the lake assigned it, the same time in backtests and live trading.
+    """
+    d: Dict[str, Any] = {"type": "NewsSentiment"}
+    _set_asset(d, "targetAsset", asset)
+    d["measure"] = _enum(measure, ["Mean","NetCount","ArticleCount"], "measure")
+    d["lookbackDays"] = lookback_days
+    return Indicator(d)
+
+__all__.append("NewsSentiment")
+
 def NewTradingWeek() -> Indicator:
     """NewTradingWeek indicator.
     """
