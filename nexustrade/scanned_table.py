@@ -751,8 +751,8 @@ def dataframe_to_rows(
     return rows
 
 
-def ocr_png_bytes(png_bytes: bytes) -> str:
-    """Run liteparse OCR on PNG bytes (best-effort; returns empty string on failure)."""
+def ocr_png_bytes(png_bytes: bytes, *, strict: bool = False) -> str:
+    """OCR PNG bytes; strict callers receive failures instead of a missing page."""
     try:
         from liteparse import LiteParse
 
@@ -760,13 +760,16 @@ def ocr_png_bytes(png_bytes: bytes) -> str:
             handle.write(png_bytes)
             path = handle.name
         try:
-            parser = LiteParse(quiet=True, tessdata_path=_tessdata_path())
-            result = parser.parse(path, ocr_enabled=True, output_format="text")
+            parser = LiteParse(quiet=True, tessdata_path=_tessdata_path(),
+                               ocr_enabled=True, output_format="text")
+            result = parser.parse(path)
             text = getattr(result, "text", None)
             return text if isinstance(text, str) else str(result)
         finally:
             os.unlink(path)
     except Exception:
+        if strict:
+            raise
         return ""
 
 
