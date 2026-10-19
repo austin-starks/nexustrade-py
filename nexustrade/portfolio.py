@@ -3494,6 +3494,7 @@ def backtest(
     interval: Optional[Literal["Day", "Minute"]] = None,
     initial_value: Optional[float] = None,
     generate_events: Optional[bool] = None,
+    force_new_run: Optional[bool] = None,
     fee_config: Optional[FeeConfig] = None,
     dividend_policy: Optional[Literal["cash", "reinvest"]] = None,
 ) -> Dict[str, Any]:
@@ -3505,6 +3506,7 @@ def backtest(
     interval: Time interval: Day or Minute (default Day). Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
     initial_value: Starting portfolio value (default 10000) Range 1..inf.
     generate_events: Generate detailed event data (signals, orders, audits) during backtest. Costs 5x research tokens. Events are Mongo hot-store traces retained for 3 days. Use query_backtest_events to explore them while retained.
+    force_new_run: Create and execute a fresh backtest instead of reusing a prior identical result. Defaults to false. Requires portfolio_id. Use for an explicitly requested rerun or warm-cache timing; this reruns the simulation and incurs the normal backtest cost.
     fee_config: Optional fee contract keyed by AssetTypeEnum (Stock/Cryptocurrency/Option) with {amount, type: percent|dollars}. Omit for shared defaults (Option $0.65/contract). For replay of an optimizer/walk-forward study, pass that study's persisted feeConfig. OptionSlippageFraction is supported: 0 fills at quote mid, 1 at ask for buys/bid for sells; omitted uses the engine default 0.5. Fills require a current executable quote; this does not enable last-trade fallback pricing.
     dividend_policy: Overrides the portfolio's dividend policy for this run only. Omit to use the portfolio's own setting (cash unless it was set to reinvest). "reinvest" buys more of the paying stock on each pay date, which is what a buy-and-hold comparison against the SPY total-return baseline needs.
     """
@@ -3516,6 +3518,7 @@ def backtest(
         "interval": interval,
         "initial_value": initial_value,
         "generate_events": generate_events,
+        "force_new_run": force_new_run,
         "fee_config": fee_config,
         "dividend_policy": dividend_policy,
     }
