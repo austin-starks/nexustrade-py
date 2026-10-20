@@ -509,6 +509,48 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
         "Congressional trades with amendments folded into versions. A trade counts from firstAvailableAt; a version holds from availableAt until supersededAt (NULL means current). "
         "Events exist only for members: group politicians by memberId (Bioguide ID) and show displayName.",
     ),
+    "news_ticker_sentiment": _ds(
+        "news_ticker_sentiment",
+        "year",
+        "ticker_as_tagged",
+        (
+            "article_id",
+            "ticker_as_tagged",
+            "security_id",
+            "issuer_cik",
+            "identity_status",
+            "effective_at",
+            "session_date",
+            "relevance",
+            "about_tagged_security",
+            "value",
+            "direction",
+            "story_cluster_id",
+            "label_status",
+            "labelled_at",
+        ),
+        "GDELT headlines scored per company by NexusTrade's fine-tuned model, one row per (headline, security). Filter effective_at <= as_of "
+        "(09:15 New York on session_date). relevance = 'subject' keeps headlines really about the company; value is -1 to 1 and 0 when neutral. "
+        "Join news_articles on article_id = id for the title and URL. Coverage begins 2019-09-23.",
+    ),
+    "news_articles": _ds(
+        "news_articles",
+        "year",
+        "id",
+        (
+            "id",
+            "effective_at",
+            "session_date",
+            "published_utc",
+            "publisher",
+            "title",
+            "article_url",
+            "duplicate_of",
+            "story_cluster_id",
+            "label_model",
+        ),
+        "One row per GDELT headline that names a covered company: title, source domain (publisher) and URL. duplicate_of marks syndicated copies within 7 days.",
+    ),
     "economic": _ds(
         "economic",
         "year",
