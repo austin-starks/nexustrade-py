@@ -551,6 +551,28 @@ LAKE_CATALOG: dict[str, LakeDataset] = {
         ),
         "One row per GDELT headline that names a covered company: title, source domain (publisher) and URL. duplicate_of marks syndicated copies within 7 days.",
     ),
+    "news_industry_sentiment": _ds(
+        "news_industry_sentiment",
+        "year",
+        "industry",
+        (
+            "headline_id",
+            "industry",
+            "effective_at",
+            "session_date",
+            "relevance",
+            "value",
+            "direction",
+            "duplicate_of",
+            "title",
+            "article_url",
+            "publisher",
+            "label_status",
+        ),
+        "GDELT headlines scored per industry by NexusTrade's fine-tuned model, one row per (headline, industry); title, URL and publisher are on the row. "
+        "industry uses the IsIndustry tags. Filter effective_at <= as_of and relevance = 'subject'; value is -1 to 1 and 0 when neutral. "
+        "Count each COALESCE(duplicate_of, headline_id) once per industry and session. Coverage begins 2019-09-23.",
+    ),
     "economic": _ds(
         "economic",
         "year",
