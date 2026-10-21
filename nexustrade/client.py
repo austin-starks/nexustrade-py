@@ -946,8 +946,8 @@ def wait_for_operation(
 
     Returns the terminal operation. Raises ``NexusTradeApiError`` on timeout,
     and on a failed/cancelled operation unless ``raise_on_failure`` is False.
-    Transport errors from ``fetch`` propagate — a poller that swallowed them
-    would report an infrastructure outage as a still-running job.
+    Transient read failures retry the same operation, with backoff, at most
+    twice consecutively. Persistent outages retain their cause and operation id.
     """
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive.")
@@ -957,8 +957,25 @@ def wait_for_operation(
     deadline = time.monotonic() + timeout_seconds
     interval = min(poll_interval_seconds, max_poll_interval_seconds)
     last_state: tuple[str, str] | None = None
+    consecutive_errors = 0
     while True:
-        operation = dict(fetch(operation_id))
+        try:
+            operation = dict(fetch(operation_id))
+        except NexusTradeApiError as error:
+            consecutive_errors += 1
+            transient = (error.code == "transport_error" or error.retryable
+                         or error.status in (408, 429) or error.status >= 500)
+            remaining = deadline - time.monotonic()
+            if not transient or consecutive_errors >= 3 or remaining <= 0:
+                raise NexusTradeApiError(
+                    error.status, error.code, error.message, operation_id,
+                    retryable=error.retryable or transient,
+                ) from error
+            time.sleep(min(max(1.0, interval), remaining))
+            interval = min(max(1.0, interval) * _POLL_BACKOFF_FACTOR,
+                           max(1.0, max_poll_interval_seconds))
+            continue
+        consecutive_errors = 0
         status = str(operation.get("status") or "")
         state = (str(operation.get("id") or operation_id), status)
         # Remote waiting is not child CPU/disk I/O. Status transitions are

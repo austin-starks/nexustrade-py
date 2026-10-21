@@ -339,6 +339,11 @@ policy.
 
 ### Option selection and execution limits
 
+`strategy(..., pending_order_policy="CancelConflictingBuys")` enables backtest-only
+exit priority over conflicting pending buys. Omission preserves waiting. Paper
+and live deployment reject this opt-in because broker cancellation acknowledgements
+are not implemented. The setting also accepts explicit `"Wait"`.
+
 Builders describe drafts. Generation does not prove that the engine can execute
 every requested rule; the API validates complete portfolios and their conditions.
 
@@ -437,6 +442,10 @@ finished = client.wait_for_backtest(operation["id"])   # blocks on deterministic
 
 A timeout raises `operation_timeout` and does **not** cancel the job — call the
 waiter again with the same id rather than resubmitting.
+
+Transient network and HTTP 408/429/5xx polling failures retry the same operation
+at most twice consecutively, within the wait deadline. Persistent failures keep
+their original error code and operation ID; no new job is submitted.
 
 **Batches.** `create_backtests` submits many in one request and returns one
 operation each; `wait_for_backtests(operations)` waits on all of them. Prefer it
@@ -1029,8 +1038,9 @@ for batch in result.iter_batches():    # or stream within your own budget
 Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
 compatible backing engine; your SQL does not change when it does.
 
-`query_timeout_seconds` sets the server execution budget (default 90 seconds,
-maximum 300). `wait_timeout_seconds` sets only the client's polling allowance;
+`query_timeout_seconds` sets the server execution budget (registered API keys:
+default 900 seconds, maximum 1800; compute tokens: default 90, maximum 180).
+`wait_timeout_seconds` sets only the client's polling allowance;
 it never increases the execution budget. Large intraday coverage scans should
 use bounded date chunks and persist each submitted handle's `id` before waiting.
 After a client timeout, resume with `nt.lake.get(error.operation_id)` rather than

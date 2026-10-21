@@ -1140,6 +1140,7 @@ def strategy(
     *,
     active: Optional[bool] = None,
     order_execution: Optional[Dict[str, Any]] = None,
+    pending_order_policy: Optional[Literal["Wait", "CancelConflictingBuys"]] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -1148,6 +1149,7 @@ def strategy(
             "action": action,
             "active": active,
             "orderExecution": order_execution or {"type": "Market"},
+            "pendingOrderPolicy": pending_order_policy,
         }
     )
 
