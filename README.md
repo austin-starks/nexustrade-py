@@ -339,6 +339,11 @@ policy.
 
 ### Option selection and execution limits
 
+`strategy(..., pending_order_policy="CancelConflictingBuys")` enables backtest-only
+exit priority over conflicting pending buys. Omission preserves waiting. Paper
+and live deployment reject this opt-in because broker cancellation acknowledgements
+are not implemented. The setting also accepts explicit `"Wait"`.
+
 Builders describe drafts. Generation does not prove that the engine can execute
 every requested rule; the API validates complete portfolios and their conditions.
 
