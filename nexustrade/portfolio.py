@@ -3890,6 +3890,21 @@ def gene_allocation_pct(
 
 __all__.append("gene_allocation_pct")
 
+def gene_allocation_dollars(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep AllocationDollars (Action scope) over a value set."""
+    return {
+        "field": "AllocationDollars",
+        "scope": "Action",
+        "target": {"scope": "Action", "field": "AllocationDollars", "strategyIndex": strategy_index},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_allocation_dollars")
+
 def gene_total_budget_pct(
     *,
     strategy_index: int,
