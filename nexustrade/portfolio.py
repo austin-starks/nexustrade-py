@@ -4086,14 +4086,17 @@ __all__.append("gene_max_spread_pct")
 def gene_select_top_limit(
     *,
     strategy_index: int,
-    stage_index: int,
     values: Sequence[Any],
+    sleeve_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sweep SelectTopLimit (UniversePipeline scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "UniversePipeline", "field": "SelectTopLimit", "strategyIndex": strategy_index}
+    if sleeve_name is not None:
+        target["sleeveName"] = sleeve_name
     return {
         "field": "SelectTopLimit",
         "scope": "UniversePipeline",
-        "target": {"scope": "UniversePipeline", "field": "SelectTopLimit", "strategyIndex": strategy_index, "stageIndex": stage_index},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -4114,3 +4117,22 @@ def gene_universe_pipeline_filter(
     }
 
 __all__.append("gene_universe_pipeline_filter")
+
+def gene_append_universe_pipeline_filter(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+    sleeve_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sweep UniversePipelineFilter (UniversePipeline scope) by adding a Filter stage to a pipeline that has none to replace. The stage goes ahead of the first SelectTop/SelectPercentile, so it narrows the universe before ranking."""
+    target: Dict[str, Any] = {"scope": "UniversePipeline", "field": "UniversePipelineFilter", "strategyIndex": strategy_index, "append": True}
+    if sleeve_name is not None:
+        target["sleeveName"] = sleeve_name
+    return {
+        "field": "UniversePipelineFilter",
+        "scope": "UniversePipeline",
+        "target": target,
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_append_universe_pipeline_filter")
