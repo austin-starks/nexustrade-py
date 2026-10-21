@@ -385,8 +385,7 @@ class LakeQueryHandle:
         max_poll_interval_seconds: float | None = None,
     ) -> "LakeQueryResult":
         options: dict[str, Any] = {}
-        if timeout_seconds is not None:
-            options["timeout_seconds"] = timeout_seconds
+        options["timeout_seconds"] = timeout_seconds if timeout_seconds is not None else 1200
         if poll_interval_seconds is not None:
             options["poll_interval_seconds"] = poll_interval_seconds
         if max_poll_interval_seconds is not None:
