@@ -473,8 +473,15 @@ def buy(
     target: Union[str, Dict[str, Any]],
     amount: float,
     allocation_type: str = "percent of portfolio",
+    *, execution_priority: Optional[str] = None, funding: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    options = {}
+    if execution_priority is not None: options["executionPriority"] = execution_priority
+    if funding is not None:
+        options["funding"] = {key: value.d if isinstance(value, (Condition, Indicator)) else value
+                              for key, value in funding.items()}
     return {
+        **options,
         "type": "Buy",
         "targetAsset": _asset(target),
         "amount": {"type": allocation_type, "amount": amount},
@@ -485,12 +492,21 @@ def sell(
     target: Union[str, Dict[str, Any]],
     amount: float,
     allocation_type: str = "percent of portfolio",
+    *, execution_priority: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
+        **({"executionPriority": execution_priority} if execution_priority is not None else {}),
         "type": "Sell",
         "targetAsset": _asset(target),
         "amount": {"type": allocation_type, "amount": amount},
     }
+
+
+def sell_holdings(condition: Condition, amount: float = 100,
+                  allocation_type: str = "percent of current positions", *, execution_priority: Optional[str] = None) -> Dict[str, Any]:
+    action = sell(stock_asset("__PLACEHOLDER__"), amount, allocation_type, execution_priority=execution_priority)
+    action["holdingCondition"] = condition.d
+    return action
 
 
 def alert(message: str) -> Dict[str, Any]:
@@ -1189,6 +1205,7 @@ def portfolio(
     supports_crypto: Optional[bool] = None,
     alerts_enabled: Optional[bool] = None,
     dividend_policy: Optional[Literal["cash", "reinvest"]] = None,
+    cash_settlement: Optional[Literal["T1"]] = None,
     policy: Optional[Dict[str, Any]] = None,
     deployment: Optional[Dict[str, Any]] = None,
 ) -> Portfolio:
@@ -1211,6 +1228,7 @@ def portfolio(
                 "supportsCrypto": supports_crypto,
                 "alertsEnabled": alerts_enabled,
                 "dividendPolicy": dividend_policy,
+                "cashSettlement": cash_settlement,
                 "policy": policy,
                 "deployment": deployment,
             }
@@ -1355,7 +1373,7 @@ __all__.append("ChaikinMoneyFlow")
 def ChartBar(
     asset: Union[str, Dict[str, Any], _Candidate],
     bar_minutes: float = 5,
-    line: Literal["open", "high", "low", "close", "sma"] = "close",
+    line: Literal["open", "high", "low", "close", "sma", "endTime"] = "close",
     bars: float = 1,
     offset_bars: float = 0,
     minute_policy: Literal["strict", "observed"] = "strict",
@@ -1371,7 +1389,7 @@ def ChartBar(
     d: Dict[str, Any] = {"type": "ChartBar"}
     _set_asset(d, "targetAsset", asset)
     d["barMinutes"] = bar_minutes
-    d["line"] = _enum(line, ["open","high","low","close","sma"], "line")
+    d["line"] = _enum(line, ["open","high","low","close","sma","endTime"], "line")
     d["bars"] = bars
     d["offsetBars"] = offset_bars
     d["minutePolicy"] = _enum(minute_policy, ["strict","observed"], "minute_policy")
@@ -1457,14 +1475,18 @@ def ConsecutiveTrue(
     condition: Condition,
     length: float = 1,
     interval: Literal["Day", "Hour", "Minute"] = "Day",
+    check_cadence_minutes: Optional[float] = None,
 ) -> Indicator:
     """ConsecutiveTrue indicator.
     condition: Condition evaluated over the window.
     length: Length of time
     interval: Unit of time
+    check_cadence_minutes: Optional. Counts completed regular-session checks instead of elapsed time. Window length is the required count; resets each session. Missing checks reset the count.
     """
     d: Dict[str, Any] = {"type": "ConsecutiveTrue"}
     d["condition"] = condition.d
+    if check_cadence_minutes is not None:
+        d["checkCadenceMinutes"] = check_cadence_minutes
     d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
     return Indicator(d)
 
@@ -1901,11 +1923,37 @@ def Index(
 
 __all__.append("Index")
 
+def IndicatorAtCondition(
+    operand: Indicator,
+    condition: Condition,
+    selection: Literal["First", "Latest", "Maximum", "Minimum"] = "First",
+    clock: Literal["Calendar", "Trading"] = "Calendar",
+    initial_value: Optional[float] = None,
+    length: Optional[float] = None,
+    interval: Optional[Literal["Minute", "Day"]] = None,
+) -> Indicator:
+    """IndicatorAtCondition indicator.
+    condition: Condition evaluated over the window.
+    """
+    d: Dict[str, Any] = {"type": "IndicatorAtCondition"}
+    d["condition"] = condition.d
+    d["selection"] = _enum(selection, ["First","Latest","Maximum","Minimum"], "selection")
+    d["clock"] = _enum(clock, ["Calendar","Trading"], "clock")
+    if initial_value is not None:
+        d["initialValue"] = initial_value
+    d["indicators"] = [operand.d]
+    if length is not None or interval is not None:
+        d["window"] = {"length": length, "interval": _enum(interval, ["Minute","Day"], "interval")}
+    return Indicator(d)
+
+__all__.append("IndicatorAtCondition")
+
 def IndicatorAtEntry(
     operand: Indicator,
     asset: Union[str, Dict[str, Any], _Candidate],
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
+    anchor: Literal["LatestFill", "HoldingEntry"] = "LatestFill",
 ) -> Indicator:
     """IndicatorAtEntry indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1916,6 +1964,7 @@ def IndicatorAtEntry(
     _set_asset(d, "targetAsset", asset)
     d["side"] = _enum(side, ["Buy","Sell"], "side")
     d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
+    d["anchor"] = _enum(anchor, ["LatestFill","HoldingEntry"], "anchor")
     d["indicators"] = [operand.d]
     return Indicator(d)
 
@@ -2019,12 +2068,18 @@ def IndicatorWindowAgo(
     operand: Indicator,
     length: float,
     interval: Literal["Day", "Hour", "Minute"],
+    sampling: Optional[Literal["Calendar", "Observation", "Session"]] = None,
+    initial_value: Optional[float] = None,
 ) -> Indicator:
     """IndicatorWindowAgo indicator.
     length: Length of time
     interval: Unit of time
     """
     d: Dict[str, Any] = {"type": "IndicatorWindowAgo"}
+    if sampling is not None:
+        d["sampling"] = _enum(sampling, ["Calendar","Observation","Session"], "sampling")
+    if initial_value is not None:
+        d["initialValue"] = initial_value
     d["indicators"] = [operand.d]
     d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
     return Indicator(d)
@@ -2507,15 +2562,19 @@ def MinutesSinceOrder(
     assets: Union[str, Sequence[Any]],
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
+    clock: Optional[Literal["Calendar", "Trading"]] = None,
 ) -> Indicator:
     """MinutesSinceOrder indicator.
     assets: Ticker(s) whose orders are counted. One string or an array.
     side: Buy or Sell
+    clock: Optional elapsed-time clock; omitted retains calendar minutes.
     """
     d: Dict[str, Any] = {"type": "MinutesSinceOrder"}
     _set_assets(d, "targetAssets", assets)
     d["side"] = _enum(side, ["Buy","Sell"], "side")
     d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
+    if clock is not None:
+        d["clock"] = _enum(clock, ["Calendar","Trading"], "clock")
     return Indicator(d)
 
 __all__.append("MinutesSinceOrder")
@@ -3072,6 +3131,18 @@ def PortfolioValue() -> Indicator:
 
 __all__.append("PortfolioValue")
 
+def PositionEntryPrice(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """PositionEntryPrice indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "PositionEntryPrice"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("PositionEntryPrice")
+
 def PositionMaxDrawdown(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
@@ -3095,6 +3166,30 @@ def PositionMaxDrawup(
     return Indicator(d)
 
 __all__.append("PositionMaxDrawup")
+
+def PositionMinutesSinceHigh(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """PositionMinutesSinceHigh indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "PositionMinutesSinceHigh"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("PositionMinutesSinceHigh")
+
+def PositionPeakPrice(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """PositionPeakPrice indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "PositionPeakPrice"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("PositionPeakPrice")
 
 def PositionPercentChange(
     assets: Union[str, Sequence[Any]],

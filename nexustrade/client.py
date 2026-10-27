@@ -821,6 +821,7 @@ class AuthoredPortfolioPatch(TypedDict, total=False):
     deployment: Mapping[str, Any]
     policy: Mapping[str, Any]
     dividendPolicy: Literal["cash", "reinvest"]
+    cashSettlement: Optional[Literal["T1"]]
     alertsEnabled: bool
     supportsFractionalShares: bool
     supportsCrypto: bool

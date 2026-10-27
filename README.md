@@ -1575,3 +1575,53 @@ Report JSON uses a shared 4 MiB compact UTF-8 envelope and depth 128 in the SDK
 and host. Every supported delivered claim is checked; there is no separate
 2,500-node provenance cap. Over-envelope reports fail with a capacity error,
 not a claim that their numeric references are unbound.
+
+
+## Compositional trading controls (2.1)
+
+Account rules compose `PortfolioValue`, arithmetic, `IndicatorWindowAgo`,
+`IndicatorAtCondition` and ordinary conditions. A conditional snapshot can retain
+any numeric operand; it has no built-in gain thresholds or release policy.
+Its `selection` is `First`, `Latest`, `Maximum` or `Minimum`. An initial value
+is only a fallback before a capture (or after expiry), not part of the extrema.
+For a second crossing within an hour, capture with `First` and use
+`andThen(60, "Minute", crossing(), crossing())` as the condition, where
+`crossing()` builds `CrossAbove(Price(asset), Value(level)) > 0`.
+Staying above the level is not another crossing. The first capture remains
+fixed on later crossings unless an expiry was configured.
+`PositionEntryPrice`, `PositionPeakPrice` and `PositionMinutesSinceHigh` are
+narrow position measurements. Reuse `MinutesSinceOrder` for purchase cadence.
+Settlement accounting remains on the portfolio.
+
+`sellHoldings` (Python `sell_holdings`) is a Sell action with a candidate-bound
+holding condition. Its strategy condition supplies the account/market gate;
+only actual qualifying stock holdings are sold. Ordinary fixed-asset Sell
+actions retain their existing behavior.
+
+A Buy action can configure `funding`: candidate `condition`, `rankBy` indicator,
+`direction` (Highest/Lowest), and source sale `amount` expressed as a percentage
+of current positions. The strategy owns its pending workflow and every order.
+It waits for actual fills and settlement and rechecks its current condition;
+proposed proceeds never become cash. Symbol order breaks equal ranking scores.
+
+Buy/Sell `executionPriority` explicitly selects ProtectiveExit, SafetyTrim,
+Increase, Funding or Entry. Priorities apply to dispatch and submission; already
+submitted broker orders cannot be reordered. No portfolio rule infers strength,
+suppresses unrelated signals or automatically sells holdings.
+
+The portfolio retains `cashSettlement: "T1"` and engine-owned actual-fill
+settlement accounting. Configure it before deployment; edits to this setting
+are restricted to undeployed drafts. Current integration supports stock/ETF
+Buy/Sell actions, alerts and watchlist producers. Other asset/executor paths
+remain explicitly rejected with T1 until integrated.
+
+Public cash-only requests use `useMargin: false`. Live admission additionally
+uses Public's cash-only withdrawal balance as a conservative cap, which can be
+stricter than settled trading cash. Missing cash/calendar evidence blocks buys.
+Other brokers need a live T1 evidence adapter. Existing owner approval and trade
+limits apply. Native strategy/indicator runtime uses the existing checkpoint
+path; its verification does not establish live broker execution.
+
+ConsecutiveTrue retains optional distinct session checks at a configured
+cadence; missing/stale quotes reset the count. These are reusable components,
+not a verified complete ftr445 strategy or evidence of profitable returns.
