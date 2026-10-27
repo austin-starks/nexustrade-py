@@ -473,7 +473,7 @@ def buy(
     target: Union[str, Dict[str, Any]],
     amount: float,
     allocation_type: str = "percent of portfolio",
-    *, execution_priority: Optional[str] = None, funding: Optional[Dict[str, Any]] = None,
+    *, execution_priority: Optional[int] = None, funding: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     options = {}
     if execution_priority is not None: options["executionPriority"] = execution_priority
@@ -492,7 +492,7 @@ def sell(
     target: Union[str, Dict[str, Any]],
     amount: float,
     allocation_type: str = "percent of portfolio",
-    *, execution_priority: Optional[str] = None,
+    *, execution_priority: Optional[int] = None,
 ) -> Dict[str, Any]:
     return {
         **({"executionPriority": execution_priority} if execution_priority is not None else {}),
@@ -503,7 +503,7 @@ def sell(
 
 
 def sell_holdings(condition: Condition, amount: float = 100,
-                  allocation_type: str = "percent of current positions", *, execution_priority: Optional[str] = None) -> Dict[str, Any]:
+                  allocation_type: str = "percent of current positions", *, execution_priority: Optional[int] = None) -> Dict[str, Any]:
     action = sell(stock_asset("__PLACEHOLDER__"), amount, allocation_type, execution_priority=execution_priority)
     action["holdingCondition"] = condition.d
     return action
@@ -1156,7 +1156,7 @@ def strategy(
     *,
     active: Optional[bool] = None,
     order_execution: Optional[Dict[str, Any]] = None,
-    pending_order_policy: Optional[Literal["Wait", "CancelConflictingBuys"]] = None,
+    pending_order_policy: Optional[Literal["Wait", "WaitForTarget", "CancelConflictingBuys"]] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -1246,6 +1246,14 @@ def AbsoluteValue(
     return Indicator(d)
 
 __all__.append("AbsoluteValue")
+
+def AccountValue() -> Indicator:
+    """AccountValue indicator.
+    """
+    d: Dict[str, Any] = {"type": "AccountValue"}
+    return Indicator(d)
+
+__all__.append("AccountValue")
 
 def AccumulationDistribution(
     asset: Union[str, Dict[str, Any], _Candidate],

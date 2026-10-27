@@ -22,10 +22,10 @@ class StatefulControlsTests(unittest.TestCase):
         protection=IndicatorAtCondition(Value(10),always(),"Maximum","Calendar",0)
         weak=PositionPercentChange(CANDIDATE)<-1
         book=portfolio("Controls",[
-            strategy("Entry",protection<1,buy(stock_asset("SPY"),2500,"dollars",execution_priority="Entry",funding={
+            strategy(4,protection<1,buy(stock_asset("SPY"),2500,"dollars",execution_priority=4,funding={
                 "condition":weak,"rankBy":PositionPercentChange(CANDIDATE),"direction":"Lowest",
                 "amount":{"type":"percent of current positions","amount":100}})),
-            strategy("Protection",protection>0,sell_holdings(weak,execution_priority="ProtectiveExit"))],
+            strategy("Protection",protection>0,sell_holdings(weak,execution_priority=0))],
             initial_value=60000,supports_fractional_shares=False,cash_settlement="T1")
         saved=json.loads(json.dumps(book))
         self.assertEqual(saved["strategies"][0]["condition"]["lhs"]["type"],"IndicatorAtCondition")

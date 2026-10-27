@@ -379,7 +379,7 @@ implementation, not the exact method it approximates.
 | **Price & volume**  | `Price` `OpeningPrice` `HighOfDay` `MinuteBarHigh` `MinuteBarLow` `HeikinAshi` `VWAP` `Volume` `GapPercentage` |
 | **Technicals**      | `SMA` `EMA` `RSI` `BollingerBand` `AverageTrueRange` `CrossAbove`                              |
 | **Position state**  | `PositionValue` `PositionPercentChange` `PositionMaxDrawdown`                                  |
-| **Portfolio state** | `PortfolioValue` `BuyingPower` `MaxDrawdown` `InitialValue`                                    |
+| **Portfolio state** | `PortfolioValue` `AccountValue` `BuyingPower` `MaxDrawdown` `InitialValue`                                    |
 | **Fundamentals**    | `Fundamental` `Economic` `DaysUntilEarnings` `IsIndexMember` `IsIndustry`                      |
 | **Options**         | `OptionDaysToExpiration` `OptionCollateral` `OptionSpreadEntryPrice` `OptionUnrealizedPnL` `open_option` `close_option` |
 | **Actions**         | `buy` `sell` `alert` `dynamic_rebalance` `rebalance_option`                                    |
@@ -1579,7 +1579,7 @@ not a claim that their numeric references are unbound.
 
 ## Compositional trading controls (2.1)
 
-Account rules compose `PortfolioValue`, arithmetic, `IndicatorWindowAgo`,
+Account rules compose `AccountValue`, arithmetic, `IndicatorWindowAgo`,
 `IndicatorAtCondition` and ordinary conditions. A conditional snapshot can retain
 any numeric operand; it has no built-in gain thresholds or release policy.
 Its `selection` is `First`, `Latest`, `Maximum` or `Minimum`. An initial value
@@ -1604,10 +1604,14 @@ of current positions. The strategy owns its pending workflow and every order.
 It waits for actual fills and settlement and rechecks its current condition;
 proposed proceeds never become cash. Symbol order breaks equal ranking scores.
 
-Buy/Sell `executionPriority` explicitly selects ProtectiveExit, SafetyTrim,
-Increase, Funding or Entry. Priorities apply to dispatch and submission; already
-submitted broker orders cannot be reordered. No portfolio rule infers strength,
-suppresses unrelated signals or automatically sells holdings.
+Buy/Sell `executionPriority` is an integer: lower numbers execute first.
+Funding sales may supply their own numeric priority, otherwise they inherit the
+purchase priority. Untagged trading events keep FIFO order. Broker submission
+ordering is scoped per portfolio; one account cannot delay another account's
+orders through its priority settings. Already submitted broker orders cannot be
+reordered. `pendingOrderPolicy: "WaitForTarget"` checks orders for the actual
+target asset without cancellation; the default waits for portfolio orders.
+Priority never changes a safety gate or chooses which holdings are weak.
 
 The portfolio retains `cashSettlement: "T1"` and engine-owned actual-fill
 settlement accounting. Configure it before deployment; edits to this setting
@@ -1625,3 +1629,16 @@ path; its verification does not establish live broker execution.
 ConsecutiveTrue retains optional distinct session checks at a configured
 cadence; missing/stale quotes reset the count. These are reusable components,
 not a verified complete ftr445 strategy or evidence of profitable returns.
+
+`PortfolioValue` keeps its legacy cash-plus-positions semantics during warmup
+and trading. `AccountValue` is opt-in: it observes simulation equity in
+backtesting/paper trading and verified broker equity in live trading. Simulation
+does not depend on the selected pricing broker. Live capability checks reject
+T1 and AccountValue when the adapter lacks the required evidence or cash-only
+submission support. Porting a T1 strategy preserves its settlement policy.
+
+For conditional capture, expiry runs from the retained observation's capture
+time. Minimum/Maximum with expiry is not a sliding-window minimum/maximum.
+Sampled CountTrue retains at most 10000 observations; its sorted runtime index
+is rebuilt when samples change and omitted from checkpoints. Moving references
+use binary-search queries, following the existing SortedIvWindow design.
