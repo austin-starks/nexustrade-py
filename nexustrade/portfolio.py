@@ -1247,14 +1247,6 @@ def AbsoluteValue(
 
 __all__.append("AbsoluteValue")
 
-def AccountValue() -> Indicator:
-    """AccountValue indicator.
-    """
-    d: Dict[str, Any] = {"type": "AccountValue"}
-    return Indicator(d)
-
-__all__.append("AccountValue")
-
 def AccumulationDistribution(
     asset: Union[str, Dict[str, Any], _Candidate],
     interval: Literal["Day", "Hour", "Minute"] = "Day",
