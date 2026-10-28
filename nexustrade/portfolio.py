@@ -473,8 +473,15 @@ def buy(
     target: Union[str, Dict[str, Any]],
     amount: float,
     allocation_type: str = "percent of portfolio",
+    *, execution_priority: Optional[int] = None, funding: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    options = {}
+    if execution_priority is not None: options["executionPriority"] = execution_priority
+    if funding is not None:
+        options["funding"] = {key: value.d if isinstance(value, (Condition, Indicator)) else value
+                              for key, value in funding.items()}
     return {
+        **options,
         "type": "Buy",
         "targetAsset": _asset(target),
         "amount": {"type": allocation_type, "amount": amount},
@@ -485,12 +492,21 @@ def sell(
     target: Union[str, Dict[str, Any]],
     amount: float,
     allocation_type: str = "percent of portfolio",
+    *, execution_priority: Optional[int] = None,
 ) -> Dict[str, Any]:
     return {
+        **({"executionPriority": execution_priority} if execution_priority is not None else {}),
         "type": "Sell",
         "targetAsset": _asset(target),
         "amount": {"type": allocation_type, "amount": amount},
     }
+
+
+def sell_holdings(condition: Condition, amount: float = 100,
+                  allocation_type: str = "percent of current positions", *, execution_priority: Optional[int] = None) -> Dict[str, Any]:
+    action = sell(stock_asset("__PLACEHOLDER__"), amount, allocation_type, execution_priority=execution_priority)
+    action["holdingCondition"] = condition.d
+    return action
 
 
 def alert(message: str) -> Dict[str, Any]:
@@ -1140,7 +1156,7 @@ def strategy(
     *,
     active: Optional[bool] = None,
     order_execution: Optional[Dict[str, Any]] = None,
-    pending_order_policy: Optional[Literal["Wait", "CancelConflictingBuys"]] = None,
+    pending_order_policy: Optional[Literal["Wait", "WaitForTarget", "CancelConflictingBuys"]] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -1189,6 +1205,7 @@ def portfolio(
     supports_crypto: Optional[bool] = None,
     alerts_enabled: Optional[bool] = None,
     dividend_policy: Optional[Literal["cash", "reinvest"]] = None,
+    cash_settlement: Optional[Literal["T1"]] = None,
     policy: Optional[Dict[str, Any]] = None,
     deployment: Optional[Dict[str, Any]] = None,
 ) -> Portfolio:
@@ -1211,6 +1228,7 @@ def portfolio(
                 "supportsCrypto": supports_crypto,
                 "alertsEnabled": alerts_enabled,
                 "dividendPolicy": dividend_policy,
+                "cashSettlement": cash_settlement,
                 "policy": policy,
                 "deployment": deployment,
             }
@@ -1355,7 +1373,7 @@ __all__.append("ChaikinMoneyFlow")
 def ChartBar(
     asset: Union[str, Dict[str, Any], _Candidate],
     bar_minutes: float = 5,
-    line: Literal["open", "high", "low", "close", "sma"] = "close",
+    line: Literal["open", "high", "low", "close", "sma", "endTime"] = "close",
     bars: float = 1,
     offset_bars: float = 0,
     minute_policy: Literal["strict", "observed"] = "strict",
@@ -1371,7 +1389,7 @@ def ChartBar(
     d: Dict[str, Any] = {"type": "ChartBar"}
     _set_asset(d, "targetAsset", asset)
     d["barMinutes"] = bar_minutes
-    d["line"] = _enum(line, ["open","high","low","close","sma"], "line")
+    d["line"] = _enum(line, ["open","high","low","close","sma","endTime"], "line")
     d["bars"] = bars
     d["offsetBars"] = offset_bars
     d["minutePolicy"] = _enum(minute_policy, ["strict","observed"], "minute_policy")
@@ -1457,14 +1475,18 @@ def ConsecutiveTrue(
     condition: Condition,
     length: float = 1,
     interval: Literal["Day", "Hour", "Minute"] = "Day",
+    check_cadence_minutes: Optional[float] = None,
 ) -> Indicator:
     """ConsecutiveTrue indicator.
     condition: Condition evaluated over the window.
     length: Length of time
     interval: Unit of time
+    check_cadence_minutes: Optional. Counts completed regular-session checks instead of elapsed time. Window length is the required count; resets each session. Missing checks reset the count.
     """
     d: Dict[str, Any] = {"type": "ConsecutiveTrue"}
     d["condition"] = condition.d
+    if check_cadence_minutes is not None:
+        d["checkCadenceMinutes"] = check_cadence_minutes
     d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
     return Indicator(d)
 
@@ -1901,11 +1923,37 @@ def Index(
 
 __all__.append("Index")
 
+def IndicatorAtCondition(
+    operand: Indicator,
+    condition: Condition,
+    selection: Literal["First", "Latest", "Maximum", "Minimum"] = "First",
+    clock: Literal["Calendar", "Trading"] = "Calendar",
+    initial_value: Optional[float] = None,
+    length: Optional[float] = None,
+    interval: Optional[Literal["Minute", "Day"]] = None,
+) -> Indicator:
+    """IndicatorAtCondition indicator.
+    condition: Condition evaluated over the window.
+    """
+    d: Dict[str, Any] = {"type": "IndicatorAtCondition"}
+    d["condition"] = condition.d
+    d["selection"] = _enum(selection, ["First","Latest","Maximum","Minimum"], "selection")
+    d["clock"] = _enum(clock, ["Calendar","Trading"], "clock")
+    if initial_value is not None:
+        d["initialValue"] = initial_value
+    d["indicators"] = [operand.d]
+    if length is not None or interval is not None:
+        d["window"] = {"length": length, "interval": _enum(interval, ["Minute","Day"], "interval")}
+    return Indicator(d)
+
+__all__.append("IndicatorAtCondition")
+
 def IndicatorAtEntry(
     operand: Indicator,
     asset: Union[str, Dict[str, Any], _Candidate],
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
+    anchor: Literal["LatestFill", "HoldingEntry"] = "LatestFill",
 ) -> Indicator:
     """IndicatorAtEntry indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1916,6 +1964,7 @@ def IndicatorAtEntry(
     _set_asset(d, "targetAsset", asset)
     d["side"] = _enum(side, ["Buy","Sell"], "side")
     d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
+    d["anchor"] = _enum(anchor, ["LatestFill","HoldingEntry"], "anchor")
     d["indicators"] = [operand.d]
     return Indicator(d)
 
@@ -2019,12 +2068,18 @@ def IndicatorWindowAgo(
     operand: Indicator,
     length: float,
     interval: Literal["Day", "Hour", "Minute"],
+    sampling: Optional[Literal["Calendar", "Observation", "Session"]] = None,
+    initial_value: Optional[float] = None,
 ) -> Indicator:
     """IndicatorWindowAgo indicator.
     length: Length of time
     interval: Unit of time
     """
     d: Dict[str, Any] = {"type": "IndicatorWindowAgo"}
+    if sampling is not None:
+        d["sampling"] = _enum(sampling, ["Calendar","Observation","Session"], "sampling")
+    if initial_value is not None:
+        d["initialValue"] = initial_value
     d["indicators"] = [operand.d]
     d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
     return Indicator(d)
@@ -2036,9 +2091,9 @@ def IndustryNewsSentiment(
     measure: Literal["Mean", "Median", "NetCount", "ArticleCount"] = "Mean",
     lookback_days: int = 1,
 ) -> Indicator:
-    """News sentiment about an industry over its last lookbackDays daily news snapshots (default 1, the latest). industry is one of the canonical industry tags (the same list IsIndustry uses). Headlines come from the GDELT global news feed, and a fine-tuned model scores every headline that mentions the industry: whether it is really about the industry, and whether it is positive, neutral or negative news for it (a headline it calls neutral scores 0; others score from -1.0 to 1.0). Each trading day has one snapshot at 09:15 New York, and a headline counts toward the first session whose 09:15 cutoff is at or after the time GDELT published it. Backtests and live trading read the same rows. lookbackDays counts trading sessions whether or not the industry had news in them; a single session is noisy, and about 20 sessions is the usual window for a sentiment rule. Only headlines the model judges to be about the industry count, and copies of one story within 7 days count once per session. measure (default Mean): Mean is the average sentiment from -1.0 to 1.0, Median is the middle score (the average of the two middle scores for an even count), NetCount is positive minus negative headlines, ArticleCount is the number of qualifying headlines. Every measure has no value when the window cannot be read in full: before coverage begins on 2019-09-23, across sessions with no published snapshot, or when the latest snapshot due has not been published. Mean and Median also have no value when the window holds no qualifying headline; the counts are then 0. The value is the same for every asset: it takes no target asset.
+    """News sentiment about an industry over its last lookbackDays daily news snapshots (default 1, the latest). industry is one of the canonical industry tags (the same list IsIndustry uses). Headlines come from the GDELT global news feed, and a fine-tuned model scores every headline that mentions the industry: whether it is really about the industry, and whether it is positive, neutral or negative news for it (a headline it calls neutral scores 0; others score from -1.0 to 1.0). Each trading day has one snapshot at 09:15 New York, and a headline counts toward the first session whose 09:15 cutoff is at or after the time GDELT published it. Backtests and live trading read the same rows. lookbackDays counts trading sessions whether or not the industry had news in them; a single session is noisy, and about 20 sessions is the usual window for a sentiment rule. Only headlines the model judges to be about the industry count, and copies of one story within 7 days count once per session. measure (default Mean): Mean is the average sentiment from -1.0 to 1.0, Median is the middle score (the average of the two middle scores for an even count), NetCount is positive minus negative headlines, ArticleCount is the number of qualifying headlines. Coverage begins on 2019-09-23: a window reaching earlier is measured over the sessions since then, and the backtest warns that it held less history than configured. Every measure has no value across sessions with no published snapshot, or when the latest snapshot due has not been published. Mean and Median also have no value when the window holds no qualifying headline; the counts are then 0. The value is the same for every asset: it takes no target asset.
     industry: Canonical industry tag whose news to read, as IsIndustry lists it. Legacy aliases are separate news series and are rejected, never mapped.
-    measure: Median: middle score from -1 to 1 (the average of the two middle scores for an even count), with no value when no qualifying headline. Mean: average sentiment from -1 to 1, with no value when the window has no qualifying headline. NetCount: positive minus negative headlines. ArticleCount: qualifying headlines. Every measure has no value before coverage begins on 2019-09-23, across missing snapshots, or when the due snapshot is unpublished.
+    measure: Median: middle score from -1 to 1 (the average of the two middle scores for an even count), with no value when no qualifying headline. Mean: average sentiment from -1 to 1, with no value when the window has no qualifying headline. NetCount: positive minus negative headlines. ArticleCount: qualifying headlines. Every measure has no value across missing snapshots or when the due snapshot is unpublished. Before coverage begins on 2019-09-23 the window holds the sessions available.
     lookback_days: Whole trading sessions of daily 09:15 New York news snapshots; 1 is the latest and about 20 is the usual window. The same value for every asset.
     """
     d: Dict[str, Any] = {"type": "IndustryNewsSentiment"}
@@ -2507,15 +2562,19 @@ def MinutesSinceOrder(
     assets: Union[str, Sequence[Any]],
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
+    clock: Optional[Literal["Calendar", "Trading"]] = None,
 ) -> Indicator:
     """MinutesSinceOrder indicator.
     assets: Ticker(s) whose orders are counted. One string or an array.
     side: Buy or Sell
+    clock: Optional elapsed-time clock; omitted retains calendar minutes.
     """
     d: Dict[str, Any] = {"type": "MinutesSinceOrder"}
     _set_assets(d, "targetAssets", assets)
     d["side"] = _enum(side, ["Buy","Sell"], "side")
     d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
+    if clock is not None:
+        d["clock"] = _enum(clock, ["Calendar","Trading"], "clock")
     return Indicator(d)
 
 __all__.append("MinutesSinceOrder")
@@ -2664,9 +2723,9 @@ def NewsSentiment(
     measure: Literal["Mean", "Median", "NetCount", "ArticleCount"] = "Mean",
     lookback_days: int = 1,
 ) -> Indicator:
-    """News sentiment about the asset over its last lookbackDays daily news snapshots (default 1, the latest). Headlines come from the GDELT global news feed, and a fine-tuned model scores every headline that names the company: whether it is really about the company, and whether it is positive, neutral or negative news for it (a headline it calls neutral scores 0; others score from -1.0 to 1.0). Each trading day has one snapshot at 09:15 New York, and a headline counts toward the first session whose 09:15 cutoff is at or after the time GDELT published it. Backtests and live trading read the same rows. lookbackDays counts trading sessions whether or not the asset had news in them; a single session is noisy, and about 20 sessions is the usual window for a sentiment rule. Only headlines the model judges to be about the company count, and copies of one story within 7 days count once per session. measure (default Mean): Mean is the average sentiment from -1.0 to 1.0, Median is the middle score (the average of the two middle scores for an even count), NetCount is positive minus negative headlines, ArticleCount is the number of qualifying headlines. Every measure has no value when the window cannot be read in full: before coverage begins on 2019-09-23, across sessions with no published snapshot, or when the latest snapshot due has not been published. Mean and Median also have no value when the window holds no qualifying headline; the counts are then 0. Headlines are matched to the issuer, so every listed share class reads the same news and META reads Facebook-era headlines.
+    """News sentiment about the asset over its last lookbackDays daily news snapshots (default 1, the latest). Headlines come from the GDELT global news feed, and a fine-tuned model scores every headline that names the company: whether it is really about the company, and whether it is positive, neutral or negative news for it (a headline it calls neutral scores 0; others score from -1.0 to 1.0). Each trading day has one snapshot at 09:15 New York, and a headline counts toward the first session whose 09:15 cutoff is at or after the time GDELT published it. Backtests and live trading read the same rows. lookbackDays counts trading sessions whether or not the asset had news in them; a single session is noisy, and about 20 sessions is the usual window for a sentiment rule. Only headlines the model judges to be about the company count, and copies of one story within 7 days count once per session. measure (default Mean): Mean is the average sentiment from -1.0 to 1.0, Median is the middle score (the average of the two middle scores for an even count), NetCount is positive minus negative headlines, ArticleCount is the number of qualifying headlines. Coverage begins on 2019-09-23: a window reaching earlier is measured over the sessions since then, and the backtest warns that it held less history than configured. Every measure has no value across sessions with no published snapshot, or when the latest snapshot due has not been published. Mean and Median also have no value when the window holds no qualifying headline; the counts are then 0. Headlines are matched to the issuer, so every listed share class reads the same news and META reads Facebook-era headlines.
     asset: Pass CANDIDATE in a dynamic rebalance pipeline.
-    measure: Median: middle score from -1 to 1, with no value when no qualifying news. Mean: average sentiment from -1 to 1, with no value when the window has no qualifying news. NetCount: positive minus negative headlines. ArticleCount: qualifying headlines. Every measure has no value before coverage begins on 2019-09-23, across missing snapshots, or when the due snapshot is unpublished.
+    measure: Median: middle score from -1 to 1, with no value when no qualifying news. Mean: average sentiment from -1 to 1, with no value when the window has no qualifying news. NetCount: positive minus negative headlines. ArticleCount: qualifying headlines. Every measure has no value across missing snapshots or when the due snapshot is unpublished. Before coverage begins on 2019-09-23 the window holds the sessions available.
     lookback_days: Whole trading sessions of daily 09:15 New York news snapshots; 1 is the latest. A row is visible from the snapshot the lake assigned it, the same time in backtests and live trading.
     """
     d: Dict[str, Any] = {"type": "NewsSentiment"}
@@ -3072,6 +3131,18 @@ def PortfolioValue() -> Indicator:
 
 __all__.append("PortfolioValue")
 
+def PositionEntryPrice(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """PositionEntryPrice indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "PositionEntryPrice"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("PositionEntryPrice")
+
 def PositionMaxDrawdown(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
@@ -3095,6 +3166,30 @@ def PositionMaxDrawup(
     return Indicator(d)
 
 __all__.append("PositionMaxDrawup")
+
+def PositionMinutesSinceHigh(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """PositionMinutesSinceHigh indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "PositionMinutesSinceHigh"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("PositionMinutesSinceHigh")
+
+def PositionPeakPrice(
+    asset: Union[str, Dict[str, Any], _Candidate],
+) -> Indicator:
+    """PositionPeakPrice indicator.
+    asset: Ticker name (ex. SPY, BTC)
+    """
+    d: Dict[str, Any] = {"type": "PositionPeakPrice"}
+    _set_asset(d, "targetAsset", asset)
+    return Indicator(d)
+
+__all__.append("PositionPeakPrice")
 
 def PositionPercentChange(
     assets: Union[str, Sequence[Any]],
@@ -3523,12 +3618,12 @@ def backtest(
     end_date: Backtest end date (ISO format, e.g. 2024-12-31). Minute allows up to 730 days of minute data from start_date, counting minute-indicator warmup; never split a longer span into yearly Minute jobs.
     baseline_symbol: Legacy Stock benchmark shorthand for comparisonValue. Use baseline_asset with explicit Cryptocurrency type for crypto pairs; never provide both fields. When both fields are omitted, the single traded stock/option underlying is inferred, otherwise SPY. For single-name options use that underlying; compare multi-name books against a deliberately chosen benchmark.
     baseline_asset: Typed buy-and-hold benchmark for comparisonValue. Use {type:'Cryptocurrency',symbol:'BTC-USD',name:'BTC-USD'} for BTC or {type:'Stock',symbol:'SPY',name:'SPY'} for a stock/ETF. Symbol text never determines asset type. Omit baseline_symbol when using this field.
-    interval: Time interval: Day or Minute (default Day). Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
+    interval: Time interval: Day or Minute (default Day). Day uses fixed OHLC decision/fill snapshots and overrides the portfolio deployment frequency, openDelayMinutes, closeLeadMinutes and intervalSeconds. Use Minute when the authored intraday schedule matters. Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
     initial_value: Starting portfolio value (default 10000) Range 1..inf.
     generate_events: Generate detailed event data (signals, orders, audits) during backtest. Costs 5x research tokens. Events are Mongo hot-store traces retained for 3 days. Use query_backtest_events to explore them while retained.
     force_new_run: Create and execute a fresh backtest instead of reusing a prior identical result. Defaults to false. Requires portfolio_id. Use for an explicitly requested rerun or warm-cache timing; this reruns the simulation and incurs the normal backtest cost.
     fee_config: Optional fee contract keyed by AssetTypeEnum (Stock/Cryptocurrency/Option) with {amount, type: percent|dollars}. Omit for shared defaults (Option $0.65/contract). For replay of an optimizer/walk-forward study, pass that study's persisted feeConfig. OptionSlippageFraction is supported: 0 fills at quote mid, 1 at ask for buys/bid for sells; omitted uses the engine default 0.5. Fills require a current executable quote; this does not enable last-trade fallback pricing.
-    dividend_policy: Overrides the portfolio's dividend policy for this run only. Omit to use the portfolio's own setting (cash unless it was set to reinvest). "reinvest" buys more of the paying stock on each pay date, which is what a buy-and-hold comparison against the SPY total-return baseline needs.
+    dividend_policy: Overrides the portfolio's dividend policy for this run only. Omit to use the portfolio's own setting (cash unless it was set to reinvest). "reinvest" buys more of the paying stock on each pay date while that stock is still held. A fully exited position receives its locked dividend entitlement as cash without reopening the position. Reinvest is what a buy-and-hold comparison against the SPY total-return baseline needs.
     """
     args = {
         "start_date": start_date,
@@ -3892,6 +3987,21 @@ def gene_allocation_pct(
 
 __all__.append("gene_allocation_pct")
 
+def gene_allocation_dollars(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+) -> Dict[str, Any]:
+    """Sweep AllocationDollars (Action scope) over a value set."""
+    return {
+        "field": "AllocationDollars",
+        "scope": "Action",
+        "target": {"scope": "Action", "field": "AllocationDollars", "strategyIndex": strategy_index},
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_allocation_dollars")
+
 def gene_total_budget_pct(
     *,
     strategy_index: int,
@@ -4088,14 +4198,17 @@ __all__.append("gene_max_spread_pct")
 def gene_select_top_limit(
     *,
     strategy_index: int,
-    stage_index: int,
     values: Sequence[Any],
+    sleeve_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sweep SelectTopLimit (UniversePipeline scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "UniversePipeline", "field": "SelectTopLimit", "strategyIndex": strategy_index}
+    if sleeve_name is not None:
+        target["sleeveName"] = sleeve_name
     return {
         "field": "SelectTopLimit",
         "scope": "UniversePipeline",
-        "target": {"scope": "UniversePipeline", "field": "SelectTopLimit", "strategyIndex": strategy_index, "stageIndex": stage_index},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -4116,3 +4229,22 @@ def gene_universe_pipeline_filter(
     }
 
 __all__.append("gene_universe_pipeline_filter")
+
+def gene_append_universe_pipeline_filter(
+    *,
+    strategy_index: int,
+    values: Sequence[Any],
+    sleeve_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sweep UniversePipelineFilter (UniversePipeline scope) by adding a Filter stage to a pipeline that has none to replace. The stage goes ahead of the first SelectTop/SelectPercentile, so it narrows the universe before ranking."""
+    target: Dict[str, Any] = {"scope": "UniversePipeline", "field": "UniversePipelineFilter", "strategyIndex": strategy_index, "append": True}
+    if sleeve_name is not None:
+        target["sleeveName"] = sleeve_name
+    return {
+        "field": "UniversePipelineFilter",
+        "scope": "UniversePipeline",
+        "target": target,
+        "values": [_gene_wire_value(value) for value in values],
+    }
+
+__all__.append("gene_append_universe_pipeline_filter")

@@ -13,7 +13,7 @@ import nexustrade as nt
 
 class PackageExportTests(unittest.TestCase):
     def test_strategy_keeps_explicit_pending_order_exit_policy(self) -> None:
-        for policy in ("Wait", "CancelConflictingBuys"):
+        for policy in ("Wait", "WaitForTarget", "CancelConflictingBuys"):
             strategy = nt.strategy("Exit", nt.always(), {"type": "DynamicRebalance"}, pending_order_policy=policy)
             self.assertEqual(strategy["pendingOrderPolicy"], policy)
         self.assertNotIn("pendingOrderPolicy", nt.strategy("Default", nt.always(), {"type": "Buy"}))
