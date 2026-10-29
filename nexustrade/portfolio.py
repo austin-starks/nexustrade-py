@@ -309,8 +309,8 @@ def multi(count: int, comparison: str, *conditions: Condition) -> Condition:
 
 
 def andThen(
-    length: int,
-    interval: Literal["Day", "Hour", "Minute"],
+    length: Union[int, dict],
+    interval: Union[Literal["Day", "Hour", "Minute", "TradingDay"], Condition],
     *conditions: Condition,
 ) -> Condition:
     """A SEQUENCE, not a simultaneity.
@@ -328,13 +328,16 @@ def andThen(
     interval: Day, Hour or Minute — REQUIRED, because a silent Day default
         would kill an intraday setup
     """
+    if isinstance(length, dict):
+        return Condition({"type": "Then", **length,
+            "conditions": [_condition_dict(c) for c in (interval, *conditions)]})
     return Condition(
         {
             "type": "Then",
             "conditions": [_condition_dict(c) for c in conditions],
             "window": {
                 "length": length,
-                "interval": _enum(interval, ["Day", "Hour", "Minute"], "interval"),
+                "interval": _enum(interval, ["Day", "Hour", "Minute", "TradingDay"], "interval"),
             },
         }
     )
@@ -1249,7 +1252,7 @@ __all__.append("AbsoluteValue")
 
 def AccumulationDistribution(
     asset: Union[str, Dict[str, Any], _Candidate],
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """AccumulationDistribution indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1257,7 +1260,7 @@ def AccumulationDistribution(
     """
     d: Dict[str, Any] = {"type": "AccumulationDistribution"}
     _set_asset(d, "targetAsset", asset)
-    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    d["interval"] = _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")
     return Indicator(d)
 
 __all__.append("AccumulationDistribution")
@@ -1265,7 +1268,7 @@ __all__.append("AccumulationDistribution")
 def AverageDirectionalIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     line: Literal["adx", "plusDi", "minusDi"] = "adx",
 ) -> Indicator:
     """AverageDirectionalIndex indicator.
@@ -1277,7 +1280,7 @@ def AverageDirectionalIndex(
     d: Dict[str, Any] = {"type": "AverageDirectionalIndex"}
     _set_asset(d, "targetAsset", asset)
     d["line"] = _enum(line, ["adx","plusDi","minusDi"], "line")
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("AverageDirectionalIndex")
@@ -1285,7 +1288,7 @@ __all__.append("AverageDirectionalIndex")
 def AverageTrueRange(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """AverageTrueRange indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1294,7 +1297,7 @@ def AverageTrueRange(
     """
     d: Dict[str, Any] = {"type": "AverageTrueRange"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("AverageTrueRange")
@@ -1314,7 +1317,7 @@ __all__.append("BearishFairValueGap")
 def BollingerBand(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     num_standard_deviations: float = 1,
 ) -> Indicator:
     """BollingerBand indicator.
@@ -1326,7 +1329,7 @@ def BollingerBand(
     d: Dict[str, Any] = {"type": "BollingerBand"}
     _set_asset(d, "targetAsset", asset)
     d["numStandardDeviations"] = num_standard_deviations
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 BBand = BollingerBand
@@ -1356,7 +1359,7 @@ __all__.append("BuyingPower")
 def ChaikinMoneyFlow(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """ChaikinMoneyFlow indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1365,7 +1368,7 @@ def ChaikinMoneyFlow(
     """
     d: Dict[str, Any] = {"type": "ChaikinMoneyFlow"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("ChaikinMoneyFlow")
@@ -1400,7 +1403,7 @@ __all__.append("ChartBar")
 def CommodityChannelIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     constant: float = 0.015,
 ) -> Indicator:
     """CommodityChannelIndex indicator.
@@ -1412,7 +1415,7 @@ def CommodityChannelIndex(
     d: Dict[str, Any] = {"type": "CommodityChannelIndex"}
     _set_asset(d, "targetAsset", asset)
     d["constant"] = constant
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("CommodityChannelIndex")
@@ -1474,20 +1477,16 @@ __all__.append("ConsecutiveIncrease")
 def ConsecutiveTrue(
     condition: Condition,
     length: float = 1,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
-    check_cadence_minutes: Optional[float] = None,
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
-    """ConsecutiveTrue indicator.
+    """Report whether the ordinary condition has stayed true for the elapsed window. This is elapsed time, not a count of checks.
     condition: Condition evaluated over the window.
     length: Length of time
     interval: Unit of time
-    check_cadence_minutes: Optional. Counts completed regular-session checks instead of elapsed time. Window length is the required count; resets each session. Missing checks reset the count.
     """
     d: Dict[str, Any] = {"type": "ConsecutiveTrue"}
     d["condition"] = condition.d
-    if check_cadence_minutes is not None:
-        d["checkCadenceMinutes"] = check_cadence_minutes
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("ConsecutiveTrue")
@@ -1495,7 +1494,7 @@ __all__.append("ConsecutiveTrue")
 def Correlation(
     operands: Sequence[Indicator],
     length: float = 60,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """Correlation indicator.
     operands: Sub-indicators this compound operates on.
@@ -1504,24 +1503,28 @@ def Correlation(
     """
     d: Dict[str, Any] = {"type": "Correlation"}
     d["indicators"] = [i.d for i in operands]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("Correlation")
 
 def CountTrue(
     condition: Condition,
-    length: float = 1,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    length: int = 1,
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
+    count_interval: Optional[Dict[str, Any]] = None,
 ) -> Indicator:
-    """CountTrue indicator.
-    condition: Condition evaluated over the window.
-    length: Length of time
-    interval: Unit of time
+    """Count matching intervals inside a time lookback. The ordinary condition owns comparisons/events. countInterval contributes at most one match per interval; omitted means one unit of the lookback interval. TradingDay skips closed exchange dates.
+    condition: Ordinary condition whose matching intervals are counted.
+    length: Lookback length.
+    interval: Lookback time unit; TradingDay uses observed exchange sessions.
+    count_interval: Count at most once per this interval. Omit for one unit of the lookback interval.
     """
     d: Dict[str, Any] = {"type": "CountTrue"}
     d["condition"] = condition.d
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    if count_interval is not None:
+        d["countInterval"] = count_interval
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("CountTrue")
@@ -1573,6 +1576,25 @@ def CurrentTimeSeconds() -> Indicator:
     return Indicator(d)
 
 __all__.append("CurrentTimeSeconds")
+
+def CurrentTimestamp() -> Indicator:
+    """Evaluation time in Unix seconds, including fractions. Use with ChartBar endTime for ordinary freshness comparisons; backtests use their simulated clock.
+    """
+    d: Dict[str, Any] = {"type": "CurrentTimestamp"}
+    return Indicator(d)
+
+__all__.append("CurrentTimestamp")
+
+def CurrentValue(
+    operand: Indicator,
+) -> Indicator:
+    """Inside a CountTrue historical condition, bind this operand at its value now while other operands use their historical observations. Elsewhere return the operand normally. Wrap a complete stateful operand, not an expression inside its recurrence.
+    """
+    d: Dict[str, Any] = {"type": "CurrentValue"}
+    d["indicators"] = [operand.d]
+    return Indicator(d)
+
+__all__.append("CurrentValue")
 
 def CustomIndicator(
     asset: Union[str, Dict[str, Any], _Candidate],
@@ -1745,7 +1767,7 @@ __all__.append("Divide")
 def DonchianChannel(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     line: Literal["upper", "lower", "middle"] = "upper",
 ) -> Indicator:
     """DonchianChannel indicator.
@@ -1757,7 +1779,7 @@ def DonchianChannel(
     d: Dict[str, Any] = {"type": "DonchianChannel"}
     _set_asset(d, "targetAsset", asset)
     d["line"] = _enum(line, ["upper","lower","middle"], "line")
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("DonchianChannel")
@@ -1777,7 +1799,7 @@ __all__.append("Economic")
 def ExponentialMovingAverage(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """ExponentialMovingAverage indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -1786,7 +1808,7 @@ def ExponentialMovingAverage(
     """
     d: Dict[str, Any] = {"type": "ExponentialMovingAverage"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 EMA = ExponentialMovingAverage
@@ -1876,7 +1898,7 @@ __all__.append("HighOfDay")
 def IchimokuCloud(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 9,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     span_length: float = 52,
     line: Literal["tenkan", "kijun", "senkouA", "senkouB", "chikou"] = "tenkan",
 ) -> Indicator:
@@ -1891,7 +1913,7 @@ def IchimokuCloud(
     _set_asset(d, "targetAsset", asset)
     d["spanLength"] = span_length
     d["line"] = _enum(line, ["tenkan","kijun","senkouA","senkouB","chikou"], "line")
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IchimokuCloud")
@@ -1930,9 +1952,9 @@ def IndicatorAtCondition(
     clock: Literal["Calendar", "Trading"] = "Calendar",
     initial_value: Optional[float] = None,
     length: Optional[float] = None,
-    interval: Optional[Literal["Minute", "Day"]] = None,
+    interval: Optional[Literal["Day", "Hour", "Minute", "TradingDay"]] = None,
 ) -> Indicator:
-    """IndicatorAtCondition indicator.
+    """Retain the operand from matching observations: First, Latest, Maximum, or Minimum. Ordinary conditions decide when to capture. An optional window expires observations; TradingDay skips closed exchange dates. Use this to freeze a qualified setup before entry or ratchet a numeric level, not IndicatorAtEntry when no fill exists yet.
     condition: Condition evaluated over the window.
     """
     d: Dict[str, Any] = {"type": "IndicatorAtCondition"}
@@ -1943,7 +1965,7 @@ def IndicatorAtCondition(
         d["initialValue"] = initial_value
     d["indicators"] = [operand.d]
     if length is not None or interval is not None:
-        d["window"] = {"length": length, "interval": _enum(interval, ["Minute","Day"], "interval")}
+        d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorAtCondition")
@@ -1987,7 +2009,7 @@ __all__.append("IndicatorAtMinutesAfterOpen")
 def IndicatorExponentialMovingAverage(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IndicatorExponentialMovingAverage indicator.
     length: Length of time
@@ -1995,15 +2017,31 @@ def IndicatorExponentialMovingAverage(
     """
     d: Dict[str, Any] = {"type": "IndicatorExponentialMovingAverage"}
     d["indicators"] = [operand.d]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorExponentialMovingAverage")
 
+def IndicatorMaximum(
+    operand: Indicator,
+    length: float = 30,
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
+) -> Indicator:
+    """Rolling maximum of one numeric operand over a time window. ChartBar observations keep their completed candle end time; repeated reads do not extend their age. Available history is used, so express full-history coverage separately.
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "IndicatorMaximum"}
+    d["indicators"] = [operand.d]
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
+    return Indicator(d)
+
+__all__.append("IndicatorMaximum")
+
 def IndicatorMeanAbsoluteDeviation(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IndicatorMeanAbsoluteDeviation indicator.
     length: Length of time
@@ -2011,15 +2049,31 @@ def IndicatorMeanAbsoluteDeviation(
     """
     d: Dict[str, Any] = {"type": "IndicatorMeanAbsoluteDeviation"}
     d["indicators"] = [operand.d]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorMeanAbsoluteDeviation")
 
+def IndicatorMinimum(
+    operand: Indicator,
+    length: float = 30,
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
+) -> Indicator:
+    """Rolling minimum of one numeric operand over a time window. ChartBar observations keep their completed candle end time; repeated reads do not extend their age. Available history is used, so express full-history coverage separately.
+    length: Length of time
+    interval: Unit of time
+    """
+    d: Dict[str, Any] = {"type": "IndicatorMinimum"}
+    d["indicators"] = [operand.d]
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
+    return Indicator(d)
+
+__all__.append("IndicatorMinimum")
+
 def IndicatorRateOfChange(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IndicatorRateOfChange indicator.
     length: Length of time
@@ -2027,7 +2081,7 @@ def IndicatorRateOfChange(
     """
     d: Dict[str, Any] = {"type": "IndicatorRateOfChange"}
     d["indicators"] = [operand.d]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorRateOfChange")
@@ -2035,7 +2089,7 @@ __all__.append("IndicatorRateOfChange")
 def IndicatorSimpleMovingAverage(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IndicatorSimpleMovingAverage indicator.
     length: Length of time
@@ -2043,7 +2097,7 @@ def IndicatorSimpleMovingAverage(
     """
     d: Dict[str, Any] = {"type": "IndicatorSimpleMovingAverage"}
     d["indicators"] = [operand.d]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorSimpleMovingAverage")
@@ -2051,7 +2105,7 @@ __all__.append("IndicatorSimpleMovingAverage")
 def IndicatorStandardDeviation(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IndicatorStandardDeviation indicator.
     length: Length of time
@@ -2059,7 +2113,7 @@ def IndicatorStandardDeviation(
     """
     d: Dict[str, Any] = {"type": "IndicatorStandardDeviation"}
     d["indicators"] = [operand.d]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorStandardDeviation")
@@ -2067,21 +2121,18 @@ __all__.append("IndicatorStandardDeviation")
 def IndicatorWindowAgo(
     operand: Indicator,
     length: float,
-    interval: Literal["Day", "Hour", "Minute"],
-    sampling: Optional[Literal["Calendar", "Observation", "Session"]] = None,
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"],
     initial_value: Optional[float] = None,
 ) -> Indicator:
-    """IndicatorWindowAgo indicator.
+    """Value at an elapsed time in the past. TradingDay instead reads the confirmed closing value of the reference exchange session, including early closes. Missing session evidence returns no value; initialValue applies before enough history exists.
     length: Length of time
     interval: Unit of time
     """
     d: Dict[str, Any] = {"type": "IndicatorWindowAgo"}
-    if sampling is not None:
-        d["sampling"] = _enum(sampling, ["Calendar","Observation","Session"], "sampling")
     if initial_value is not None:
         d["initialValue"] = initial_value
     d["indicators"] = [operand.d]
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IndicatorWindowAgo")
@@ -2259,7 +2310,7 @@ __all__.append("IVHVRatio")
 def IVPercentile(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 252,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IVPercentile indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2268,7 +2319,7 @@ def IVPercentile(
     """
     d: Dict[str, Any] = {"type": "IVPercentile"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IVPercentile")
@@ -2276,7 +2327,7 @@ __all__.append("IVPercentile")
 def IVRank(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 252,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """IVRank indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2285,7 +2336,7 @@ def IVRank(
     """
     d: Dict[str, Any] = {"type": "IVRank"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("IVRank")
@@ -2293,7 +2344,7 @@ __all__.append("IVRank")
 def KeltnerChannel(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     multiplier: float = 2,
     line: Literal["upper", "middle", "lower"] = "middle",
 ) -> Indicator:
@@ -2308,7 +2359,7 @@ def KeltnerChannel(
     _set_asset(d, "targetAsset", asset)
     d["multiplier"] = multiplier
     d["line"] = _enum(line, ["upper","middle","lower"], "line")
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("KeltnerChannel")
@@ -2384,7 +2435,7 @@ __all__.append("Max")
 def MaxDrawdown(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """MaxDrawdown indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2393,7 +2444,7 @@ def MaxDrawdown(
     """
     d: Dict[str, Any] = {"type": "MaxDrawdown"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("MaxDrawdown")
@@ -2401,7 +2452,7 @@ __all__.append("MaxDrawdown")
 def MaxDrawup(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """MaxDrawup indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2410,7 +2461,7 @@ def MaxDrawup(
     """
     d: Dict[str, Any] = {"type": "MaxDrawup"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("MaxDrawup")
@@ -2418,7 +2469,7 @@ __all__.append("MaxDrawup")
 def MaximumPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """MaximumPrice indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2427,7 +2478,7 @@ def MaximumPrice(
     """
     d: Dict[str, Any] = {"type": "MaximumPrice"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("MaximumPrice")
@@ -2447,7 +2498,7 @@ __all__.append("Min")
 def MinimumPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """MinimumPrice indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2456,7 +2507,7 @@ def MinimumPrice(
     """
     d: Dict[str, Any] = {"type": "MinimumPrice"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("MinimumPrice")
@@ -2590,7 +2641,7 @@ __all__.append("MinutesUntilClose")
 def MoneyFlowIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """MoneyFlowIndex indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2599,7 +2650,7 @@ def MoneyFlowIndex(
     """
     d: Dict[str, Any] = {"type": "MoneyFlowIndex"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("MoneyFlowIndex")
@@ -2617,7 +2668,7 @@ def MovingAverageConvergenceDivergence(
     fast_length: float = 12,
     slow_length: float = 26,
     signal_length: float = 9,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     line: Literal["macd", "signal", "histogram"] = "macd",
 ) -> Indicator:
     """MovingAverageConvergenceDivergence indicator.
@@ -2633,7 +2684,7 @@ def MovingAverageConvergenceDivergence(
     d["fastLength"] = fast_length
     d["slowLength"] = slow_length
     d["signalLength"] = signal_length
-    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    d["interval"] = _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")
     d["line"] = _enum(line, ["macd","signal","histogram"], "line")
     return Indicator(d)
 
@@ -2746,7 +2797,7 @@ __all__.append("NewTradingWeek")
 
 def OnBalanceVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """OnBalanceVolume indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -2754,7 +2805,7 @@ def OnBalanceVolume(
     """
     d: Dict[str, Any] = {"type": "OnBalanceVolume"}
     _set_asset(d, "targetAsset", asset)
-    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    d["interval"] = _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")
     return Indicator(d)
 
 __all__.append("OnBalanceVolume")
@@ -3038,7 +3089,7 @@ __all__.append("OptionUnrealizedPnL")
 
 def ParabolicSar(
     asset: Union[str, Dict[str, Any], _Candidate],
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     step: float = 0.02,
     maximum: float = 0.2,
 ) -> Indicator:
@@ -3050,7 +3101,7 @@ def ParabolicSar(
     """
     d: Dict[str, Any] = {"type": "ParabolicSar"}
     _set_asset(d, "targetAsset", asset)
-    d["interval"] = _enum(interval, ["Day","Hour","Minute"], "interval")
+    d["interval"] = _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")
     d["step"] = step
     d["maximum"] = maximum
     return Indicator(d)
@@ -3134,7 +3185,7 @@ __all__.append("PortfolioValue")
 def PositionEntryPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PositionEntryPrice indicator.
+    """Original filled entry price for the current holding. Added shares preserve this original anchor; closing the holding resets it.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionEntryPrice"}
@@ -3170,7 +3221,7 @@ __all__.append("PositionMaxDrawup")
 def PositionMinutesSinceHigh(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PositionMinutesSinceHigh indicator.
+    """Exchange trading minutes since the current holding's last new high. Closed-market minutes do not count. Added shares preserve the holding's observation path.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionMinutesSinceHigh"}
@@ -3182,7 +3233,7 @@ __all__.append("PositionMinutesSinceHigh")
 def PositionPeakPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PositionPeakPrice indicator.
+    """Highest observed price since the current holding's original entry. Added shares preserve the peak path; closing resets it.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionPeakPrice"}
@@ -3254,7 +3305,7 @@ __all__.append("PriceChangeSinceOpen")
 def PriceMeanAbsoluteDeviation(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """PriceMeanAbsoluteDeviation indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3263,7 +3314,7 @@ def PriceMeanAbsoluteDeviation(
     """
     d: Dict[str, Any] = {"type": "PriceMeanAbsoluteDeviation"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("PriceMeanAbsoluteDeviation")
@@ -3271,7 +3322,7 @@ __all__.append("PriceMeanAbsoluteDeviation")
 def PriceRateOfChange(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """PriceRateOfChange indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3280,7 +3331,7 @@ def PriceRateOfChange(
     """
     d: Dict[str, Any] = {"type": "PriceRateOfChange"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("PriceRateOfChange")
@@ -3288,7 +3339,7 @@ __all__.append("PriceRateOfChange")
 def PriceStandardDeviation(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """PriceStandardDeviation indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3297,7 +3348,7 @@ def PriceStandardDeviation(
     """
     d: Dict[str, Any] = {"type": "PriceStandardDeviation"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 PriceStdDev = PriceStandardDeviation
@@ -3319,7 +3370,7 @@ __all__.append("RebalanceDecisionMetric")
 def RelativeStrengthIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """RelativeStrengthIndex indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3328,7 +3379,7 @@ def RelativeStrengthIndex(
     """
     d: Dict[str, Any] = {"type": "RelativeStrengthIndex"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 RSI = RelativeStrengthIndex
@@ -3338,7 +3389,7 @@ __all__.append("RSI")
 def RelativeVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """RelativeVolume indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3347,7 +3398,7 @@ def RelativeVolume(
     """
     d: Dict[str, Any] = {"type": "RelativeVolume"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("RelativeVolume")
@@ -3355,7 +3406,7 @@ __all__.append("RelativeVolume")
 def SimpleMovingAverage(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """SimpleMovingAverage indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3364,7 +3415,7 @@ def SimpleMovingAverage(
     """
     d: Dict[str, Any] = {"type": "SimpleMovingAverage"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 SMA = SimpleMovingAverage
@@ -3385,7 +3436,7 @@ __all__.append("SquareRoot")
 def Stochastic(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     smooth_k: float = 3,
     smooth_d: float = 3,
     line: Literal["k", "d"] = "k",
@@ -3403,7 +3454,7 @@ def Stochastic(
     d["smoothK"] = smooth_k
     d["smoothD"] = smooth_d
     d["line"] = _enum(line, ["k","d"], "line")
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("Stochastic")
@@ -3424,7 +3475,7 @@ def SumOrderAmount(
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
     length: float = 1,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     assets: Optional[Union[str, Sequence[Any]]] = None,
 ) -> Indicator:
     """SumOrderAmount indicator.
@@ -3438,7 +3489,7 @@ def SumOrderAmount(
     d["side"] = _enum(side, ["Buy","Sell"], "side")
     d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
     _set_assets(d, "targetAssets", assets)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("SumOrderAmount")
@@ -3447,7 +3498,7 @@ def SumOrderQuantity(
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
     length: float = 1,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     assets: Optional[Union[str, Sequence[Any]]] = None,
 ) -> Indicator:
     """SumOrderQuantity indicator.
@@ -3461,7 +3512,7 @@ def SumOrderQuantity(
     d["side"] = _enum(side, ["Buy","Sell"], "side")
     d["orderStatus"] = _enum(order_status, ["Pending","Accepted","Pending User Approval","Canceled","Filled","Partially Filled"], "order_status")
     _set_assets(d, "targetAssets", assets)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("SumOrderQuantity")
@@ -3469,7 +3520,7 @@ __all__.append("SumOrderQuantity")
 def Supertrend(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 10,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
     multiplier: float = 3,
     line: Literal["value", "direction"] = "value",
 ) -> Indicator:
@@ -3484,7 +3535,7 @@ def Supertrend(
     _set_asset(d, "targetAsset", asset)
     d["multiplier"] = multiplier
     d["line"] = _enum(line, ["value","direction"], "line")
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("Supertrend")
@@ -3569,7 +3620,7 @@ __all__.append("VWAP")
 def WilliamsR(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay"] = "Day",
 ) -> Indicator:
     """WilliamsR indicator.
     asset: Ticker name (ex. SPY, BTC)
@@ -3578,7 +3629,7 @@ def WilliamsR(
     """
     d: Dict[str, Any] = {"type": "WilliamsR"}
     _set_asset(d, "targetAsset", asset)
-    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute"], "interval")}
+    d["window"] = {"length": length, "interval": _enum(interval, ["Day","Hour","Minute","TradingDay"], "interval")}
     return Indicator(d)
 
 __all__.append("WilliamsR")

@@ -1626,9 +1626,13 @@ Other brokers need a live T1 evidence adapter. Existing owner approval and trade
 limits apply. Native strategy/indicator runtime uses the existing checkpoint
 path; its verification does not establish live broker execution.
 
-ConsecutiveTrue retains optional distinct session checks at a configured
-cadence; missing/stale quotes reset the count. These are reusable components,
-not a verified complete ftr445 strategy or evidence of profitable returns.
+`ConsecutiveTrue` measures elapsed time while its ordinary condition stays true.
+`CountTrue` counts matching intervals inside a time lookback. For example, a
+20 `TradingDay` lookback with `countInterval: {length: 5, interval: "Minute"}`
+counts at most one match per five-minute interval across twenty exchange sessions.
+Omitting `countInterval` means one unit of the lookback interval. Comparisons and
+visit/crossing events belong in the ordinary `condition`, including `Then`.
+There are no sampled-comparison, distinct, cadence-count or clock modes.
 
 `PortfolioValue` keeps its existing cash-plus-positions semantics during warmup
 and trading. Backtesting and paper trading do not depend on the selected pricing
@@ -1638,6 +1642,14 @@ reconciliation path. Porting a T1 strategy preserves its settlement policy.
 
 For conditional capture, expiry runs from the retained observation's capture
 time. Minimum/Maximum with expiry is not a sliding-window minimum/maximum.
-Sampled CountTrue retains at most 10000 observations; its sorted runtime index
-is rebuilt when samples change and omitted from checkpoints. Moving references
-use binary-search queries, following the existing SortedIvWindow design.
+`IndicatorMinimum` and `IndicatorMaximum` provide rolling extrema of one numeric
+operand. `CurrentValue(operand)` explicitly binds today's reference inside a
+historical CountTrue condition; historical operands retain their observed values.
+Outside that query it returns its operand. Bind the complete stateful operand,
+rather than inserting a reference inside its recurrence.
+
+`TradingDay` windows use observed exchange sessions, including holidays and early
+closes. Elapsed Day/Hour/Minute windows keep their calendar meaning.
+`IndicatorWindowAgo` with `TradingDay` reads the confirmed value at the end of the
+reference session. Missing session evidence returns no value. `CurrentTimestamp`
+returns the evaluation time in Unix seconds, for ordinary candle-age comparisons.
