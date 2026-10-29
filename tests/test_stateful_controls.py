@@ -5,6 +5,13 @@ from nexustrade.portfolio import (portfolio,strategy,always,buy,sell_holdings,st
 from nexustrade.portfolio import Price,CrossAbove,andThen
 
 class StatefulControlsTests(unittest.TestCase):
+    def test_trading_session_sequence_and_native_release_wait(self):
+        step=Value(1)>0
+        self.assertEqual(andThen(20,"TradingDay",step,step).to_dict()["window"],
+            {"length":20,"interval":"TradingDay"})
+        saved=andThen({"transition":{"minimumTradingMinutes":390,"waiting":True}},step,step).to_dict()
+        self.assertNotIn("window",saved)
+        self.assertEqual(saved["transition"],{"minimumTradingMinutes":390,"waiting":True})
     def test_minimum_conditional_capture_is_in_the_generated_builder(self):
         indicator=IndicatorAtCondition(Value(-7),always(),"Minimum","Calendar",0)
         self.assertEqual(indicator.to_dict()["selection"],"Minimum")
