@@ -28,6 +28,8 @@ __all__: List[str] = [
     "universe",
     "buy",
     "sell",
+    "short",
+    "cover",
     "alert",
     "launch_agent",
     "update_watchlist",
@@ -500,6 +502,36 @@ def sell(
     return {
         **({"executionPriority": execution_priority} if execution_priority is not None else {}),
         "type": "Sell",
+        "targetAsset": _asset(target),
+        "amount": {"type": allocation_type, "amount": amount},
+    }
+
+
+def short(
+    target: Union[str, Dict[str, Any]],
+    amount: float,
+    allocation_type: str = "number of assets",
+    *, execution_priority: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Sell-to-open one stock. Never sized as percent of current positions; refused while long."""
+    return {
+        **({"executionPriority": execution_priority} if execution_priority is not None else {}),
+        "type": "Short",
+        "targetAsset": _asset(target),
+        "amount": {"type": allocation_type, "amount": amount},
+    }
+
+
+def cover(
+    target: Union[str, Dict[str, Any]],
+    amount: float = 100,
+    allocation_type: str = "percent of current positions",
+    *, execution_priority: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Buy back an open stock short; capped at the short, never flips long."""
+    return {
+        **({"executionPriority": execution_priority} if execution_priority is not None else {}),
+        "type": "Cover",
         "targetAsset": _asset(target),
         "amount": {"type": allocation_type, "amount": amount},
     }

@@ -1593,6 +1593,15 @@ fixed on later crossings unless an expiry was configured.
 narrow position measurements. Reuse `MinutesSinceOrder` for purchase cadence.
 Settlement accounting remains on the portfolio.
 
+`short` (Python `short`) sells one stock to open a short of exactly the sized
+shares; it defaults to `"number of assets"` and cannot be sized as a percent of
+current positions. `cover` buys the short back; its default is 100 percent of
+the open short, and every size is capped at the short, so it never goes long.
+A Short is refused while the book is long that stock, is capped by Reg-T initial
+margin, and is always whole shares. Backtests and paper books always support
+them; a live book needs a brokerage that can short stock (Alpaca, Tradier,
+TradeStation or Public, on a margin account).
+
 `sellHoldings` (Python `sell_holdings`) is a Sell action with a candidate-bound
 holding condition. Its strategy condition supplies the account/market gate;
 only actual qualifying stock holdings are sold. Ordinary fixed-asset Sell
