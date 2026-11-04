@@ -1415,7 +1415,7 @@ def ChartBar(
 ) -> Indicator:
     """ChartBar indicator.
     asset: Ticker name (ex. SPY, BTC)
-    bar_minutes: Completed candles aligned to 9:30 ET for stocks. Must divide the 390-minute regular session.
+    bar_minutes: Completed candles: stocks divide the 390-minute regular session from 9:30 ET. Crypto divides the 1440-minute UTC day or uses 10080 for a Monday UTC week; legacy intraday sizes remain valid. Observation cadence must be Minute even for daily/weekly candles.
     line: open: oldest selected candle; close: newest; high/low: range; sma: mean candle closes.
     bars: Number of chart candles, not elapsed minutes. SMA20 on five-minute candles: barMinutes=5, bars=20.
     offset_bars: Skip this many latest completed candles. 1 selects the previous window.
