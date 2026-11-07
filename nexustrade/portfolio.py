@@ -1757,21 +1757,6 @@ def DaysSinceStrategyFired() -> Indicator:
 
 __all__.append("DaysSinceStrategyFired")
 
-def DaysSinceTransaction(
-    transaction_type: Literal["Deposit", "Withdraw"],
-    transaction_status: Literal["Pending", "Canceled", "Completed"] = "Completed",
-) -> Indicator:
-    """DaysSinceTransaction indicator.
-    transaction_type: Matches transaction events with this type (deposit or withdraw)
-    transaction_status: Matches transaction events with this status
-    """
-    d: Dict[str, Any] = {"type": "DaysSinceTransaction"}
-    d["transactionType"] = _enum(transaction_type, ["Deposit","Withdraw"], "transaction_type")
-    d["transactionStatus"] = _enum(transaction_status, ["Pending","Canceled","Completed"], "transaction_status")
-    return Indicator(d)
-
-__all__.append("DaysSinceTransaction")
-
 def DaysUntilEarnings(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
@@ -3699,7 +3684,7 @@ def backtest(
     """Submit a backtest. Returns a handle; results are read after it completes.
     start_date: Backtest start date (ISO format, e.g. 2024-01-01). For interval=Minute, default first-look is the last 90 inclusive calendar days and the selected range plus minute-indicator warmup cannot exceed 730 days of minute data. Do not use 2010-01-01 on Minute.
     end_date: Backtest end date (ISO format, e.g. 2024-12-31). Minute allows up to 730 days of minute data from start_date, counting minute-indicator warmup; never split a longer span into yearly Minute jobs.
-    baseline_symbol: Legacy Stock benchmark shorthand for comparisonValue. Use baseline_asset with explicit Cryptocurrency type for crypto pairs; never provide both fields. When both fields are omitted, the single traded stock/option underlying is inferred, otherwise SPY. For single-name options use that underlying; compare multi-name books against a deliberately chosen benchmark.
+    baseline_symbol: Deprecated Stock benchmark shorthand for comparisonValue. Use baseline_asset with an explicit Stock or Cryptocurrency type; never provide both fields. When both fields are omitted, the single traded stock/option underlying is inferred, otherwise SPY. For single-name options use that underlying; compare multi-name books against a deliberately chosen benchmark.
     baseline_asset: Typed buy-and-hold benchmark for comparisonValue. Use {type:'Cryptocurrency',symbol:'BTC-USD',name:'BTC-USD'} for BTC or {type:'Stock',symbol:'SPY',name:'SPY'} for a stock/ETF. Symbol text never determines asset type. Omit baseline_symbol when using this field.
     interval: Time interval: Day or Minute (default Day). Day uses fixed OHLC decision/fill snapshots and overrides the portfolio deployment frequency, openDelayMinutes, closeLeadMinutes and intervalSeconds. Use Minute when the authored intraday schedule matters. Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
     initial_value: Starting portfolio value (default 10000) Range 1..inf.

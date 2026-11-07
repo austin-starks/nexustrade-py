@@ -798,8 +798,7 @@ sequenceDiagram
 
 ```python
 run = client.create_agent("Find momentum names in the S&P 500",
-                      idempotency_key="momentum-scan-v1",
-                      cost_ceiling_usd=20)
+                          idempotency_key="momentum-scan-v1")
 for event in run:
     print(event.text)
     if event.needs_approval:
