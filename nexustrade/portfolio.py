@@ -1415,7 +1415,7 @@ def ChartBar(
 ) -> Indicator:
     """ChartBar indicator.
     asset: Ticker name (ex. SPY, BTC)
-    bar_minutes: Completed candles aligned to 9:30 ET for stocks. Must divide the 390-minute regular session.
+    bar_minutes: Completed candles: stocks divide the 390-minute regular session from 9:30 ET. Crypto divides the 1440-minute UTC day or uses 10080 for a Monday UTC week; legacy intraday sizes remain valid. Observation cadence must be Minute even for daily/weekly candles.
     line: open: oldest selected candle; close: newest; high/low: range; sma: mean candle closes.
     bars: Number of chart candles, not elapsed minutes. SMA20 on five-minute candles: barMinutes=5, bars=20.
     offset_bars: Skip this many latest completed candles. 1 selects the previous window.
@@ -1565,7 +1565,7 @@ def CrossAbove(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """CrossAbove indicator.
+    """CrossAbove and CrossBelow are numeric Indicators, not Conditions: with available operands they return 1 when a crossing is detected and 0 otherwise; an unavailable operand produces no value. Comparing the result with Value(0), for example gt(CrossAbove(left, right), Value(0)), is valid; passing the indicator directly to and/or is not. They compare consecutive market observations, not consecutive strategy decisions or completed chart candles. Stateful operands continue observing behind time and position gates, so a crossing before a scheduled decision can be 0 by the decision. Zero at that decision does not prove the underlying series never crossed. For an ordinary daily moving-average crossover strategy without a more specific observation clock, compare the two most recently completed trading sessions and disclose that execution follows confirmation at a later scheduled decision. Define latestLeft=IndicatorWindowAgo(left,1,'TradingDay'), latestRight=IndicatorWindowAgo(right,1,'TradingDay'), priorLeft=IndicatorWindowAgo(left,2,'TradingDay'), and priorRight=IndicatorWindowAgo(right,2,'TradingDay'). An upward completed-session crossing is gt(latestLeft,latestRight) AND lte(priorLeft,priorRight); reverse the comparisons for a downward crossing. Comparing the forming/current average against lag 1 can miss a crossing that occurs at the close after the scheduled decision: by the next decision the lag-1 relationship has already changed. A bare CrossAbove/CrossBelow impulse has a similar observation-versus-decision limitation. Preserve an explicitly requested partial-session/current-versus-prior comparison or observation-level impulse, and explain its sampling limitations rather than silently changing its clock. TradingDay references a confirmed session closing value; Day is elapsed calendar time, including for the underlying average window. ChartBar already excludes the forming candle, so preserve its intended candle identity and offset instead of blindly adding another lag. For other bar/session/decision references choose operands and lag lengths from the requested observation clock. Before diagnosing a crossover mismatch, inspect saved operand windows, observation/decision cadence, current and referenced values, and retained evaluation evidence. An outer comparison audit without inner operands cannot establish why the crossing was absent. Do not propose removing a valid numeric comparison as a repair.
     """
     d: Dict[str, Any] = {"type": "CrossAbove"}
     d["indicators"] = [left.d, right.d]
@@ -1577,7 +1577,7 @@ def CrossBelow(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """CrossBelow indicator.
+    """CrossAbove and CrossBelow are numeric Indicators, not Conditions: with available operands they return 1 when a crossing is detected and 0 otherwise; an unavailable operand produces no value. Comparing the result with Value(0), for example gt(CrossAbove(left, right), Value(0)), is valid; passing the indicator directly to and/or is not. They compare consecutive market observations, not consecutive strategy decisions or completed chart candles. Stateful operands continue observing behind time and position gates, so a crossing before a scheduled decision can be 0 by the decision. Zero at that decision does not prove the underlying series never crossed. For an ordinary daily moving-average crossover strategy without a more specific observation clock, compare the two most recently completed trading sessions and disclose that execution follows confirmation at a later scheduled decision. Define latestLeft=IndicatorWindowAgo(left,1,'TradingDay'), latestRight=IndicatorWindowAgo(right,1,'TradingDay'), priorLeft=IndicatorWindowAgo(left,2,'TradingDay'), and priorRight=IndicatorWindowAgo(right,2,'TradingDay'). An upward completed-session crossing is gt(latestLeft,latestRight) AND lte(priorLeft,priorRight); reverse the comparisons for a downward crossing. Comparing the forming/current average against lag 1 can miss a crossing that occurs at the close after the scheduled decision: by the next decision the lag-1 relationship has already changed. A bare CrossAbove/CrossBelow impulse has a similar observation-versus-decision limitation. Preserve an explicitly requested partial-session/current-versus-prior comparison or observation-level impulse, and explain its sampling limitations rather than silently changing its clock. TradingDay references a confirmed session closing value; Day is elapsed calendar time, including for the underlying average window. ChartBar already excludes the forming candle, so preserve its intended candle identity and offset instead of blindly adding another lag. For other bar/session/decision references choose operands and lag lengths from the requested observation clock. Before diagnosing a crossover mismatch, inspect saved operand windows, observation/decision cadence, current and referenced values, and retained evaluation evidence. An outer comparison audit without inner operands cannot establish why the crossing was absent. Do not propose removing a valid numeric comparison as a repair.
     """
     d: Dict[str, Any] = {"type": "CrossBelow"}
     d["indicators"] = [left.d, right.d]
@@ -1757,21 +1757,6 @@ def DaysSinceStrategyFired() -> Indicator:
 
 __all__.append("DaysSinceStrategyFired")
 
-def DaysSinceTransaction(
-    transaction_type: Literal["Deposit", "Withdraw"],
-    transaction_status: Literal["Pending", "Canceled", "Completed"] = "Completed",
-) -> Indicator:
-    """DaysSinceTransaction indicator.
-    transaction_type: Matches transaction events with this type (deposit or withdraw)
-    transaction_status: Matches transaction events with this status
-    """
-    d: Dict[str, Any] = {"type": "DaysSinceTransaction"}
-    d["transactionType"] = _enum(transaction_type, ["Deposit","Withdraw"], "transaction_type")
-    d["transactionStatus"] = _enum(transaction_status, ["Pending","Canceled","Completed"], "transaction_status")
-    return Indicator(d)
-
-__all__.append("DaysSinceTransaction")
-
 def DaysUntilEarnings(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
@@ -1833,7 +1818,7 @@ def ExponentialMovingAverage(
     length: float,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """ExponentialMovingAverage indicator.
+    """SMA/EMA window interval Day means elapsed calendar time, including closed exchange dates. TradingDay uses the exchange-session clock for exchange-traded assets and skips closed dates while preserving within-session time. For a conventional N-day stock moving average, author interval TradingDay unless the request explicitly specifies elapsed calendar days. An outer TradingDay lag does not change an inner Day average into an N-session average. Preserve an explicit calendar-day request as Day. Continuous-market daily windows use 24-hour Day intervals. A TradingDay window can still have a forming current reading: choose completed-session references separately when the signal requires confirmed closes. ChartBar periods and offsets already identify completed candles; preserve that clock instead of substituting a time-window average.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3440,7 +3425,7 @@ def SimpleMovingAverage(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """SimpleMovingAverage indicator.
+    """SMA/EMA window interval Day means elapsed calendar time, including closed exchange dates. TradingDay uses the exchange-session clock for exchange-traded assets and skips closed dates while preserving within-session time. For a conventional N-day stock moving average, author interval TradingDay unless the request explicitly specifies elapsed calendar days. An outer TradingDay lag does not change an inner Day average into an N-session average. Preserve an explicit calendar-day request as Day. Continuous-market daily windows use 24-hour Day intervals. A TradingDay window can still have a forming current reading: choose completed-session references separately when the signal requires confirmed closes. ChartBar periods and offsets already identify completed candles; preserve that clock instead of substituting a time-window average.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3699,7 +3684,7 @@ def backtest(
     """Submit a backtest. Returns a handle; results are read after it completes.
     start_date: Backtest start date (ISO format, e.g. 2024-01-01). For interval=Minute, default first-look is the last 90 inclusive calendar days and the selected range plus minute-indicator warmup cannot exceed 730 days of minute data. Do not use 2010-01-01 on Minute.
     end_date: Backtest end date (ISO format, e.g. 2024-12-31). Minute allows up to 730 days of minute data from start_date, counting minute-indicator warmup; never split a longer span into yearly Minute jobs.
-    baseline_symbol: Legacy Stock benchmark shorthand for comparisonValue. Use baseline_asset with explicit Cryptocurrency type for crypto pairs; never provide both fields. When both fields are omitted, the single traded stock/option underlying is inferred, otherwise SPY. For single-name options use that underlying; compare multi-name books against a deliberately chosen benchmark.
+    baseline_symbol: Deprecated Stock benchmark shorthand for comparisonValue. Use baseline_asset with an explicit Stock or Cryptocurrency type; never provide both fields. When both fields are omitted, the single traded stock/option underlying is inferred, otherwise SPY. For single-name options use that underlying; compare multi-name books against a deliberately chosen benchmark.
     baseline_asset: Typed buy-and-hold benchmark for comparisonValue. Use {type:'Cryptocurrency',symbol:'BTC-USD',name:'BTC-USD'} for BTC or {type:'Stock',symbol:'SPY',name:'SPY'} for a stock/ETF. Symbol text never determines asset type. Omit baseline_symbol when using this field.
     interval: Time interval: Day or Minute (default Day). Day uses fixed OHLC decision/fill snapshots and overrides the portfolio deployment frequency, openDelayMinutes, closeLeadMinutes and intervalSeconds. Use Minute when the authored intraday schedule matters. Minute is a daytrade tape. 730 days of minute data (selected range plus warmup) is the HARD CAP; 90 days is only the DEFAULT when you name no dates. Name the dates you actually want — certifying a candidate on a full year or two is a normal second backtest, not an escalation.
     initial_value: Starting portfolio value (default 10000) Range 1..inf.
