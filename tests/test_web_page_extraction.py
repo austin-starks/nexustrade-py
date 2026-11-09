@@ -22,7 +22,7 @@ SCHEMA = {
 
 def _patch_fetch_reader(fetch_store: SimpleNamespace):
     return mock.patch(
-        "nexustrade.host.runtime_fetch_reader",
+        "nexustrade.host._runtime_fetch_reader",
         side_effect=lambda name: getattr(fetch_store, name),
     )
 

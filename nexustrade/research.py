@@ -88,12 +88,12 @@ def catalog(*, query: str = "", kind: str | None = None, offset: int = 0, limit:
 
 
 def files(source_id: str) -> list[dict[str, Any]]:
-    """All complete local files, including every lake part. No singular-path guess."""
+    """All complete local files, including every result part. No singular-path guess."""
     s = _source(source_id)
     if s.get('kind') == 'lake':
         parts = s.get('parts')
         if not isinstance(parts, list) or (s.get('rowCount', 0) > 0 and not parts):
-            raise ValueError(f"Source {source_id!r} has no complete lake parts")
+            raise ValueError(f"Source {source_id!r} has no complete result parts")
         result = [dict(p, contentType='application/vnd.apache.parquet') for p in parts]
     elif s.get('kind') in {'fetch', 'sec'}:
         result = [{key: s[key] for key in ('path', 'bytes', 'sha256', 'contentType') if key in s}]

@@ -610,7 +610,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             mock.patch.object(scanned_table, "_document_batch_progress"),
             mock.patch.object(
                 host,
-                "runtime_fetch_reader",
+                "_runtime_fetch_reader",
                 side_effect=lambda name: getattr(fetch_store, name),
             ),
             mock.patch.object(

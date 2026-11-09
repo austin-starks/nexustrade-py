@@ -7,15 +7,27 @@ one blocking call that returns a result object instead of a raw operation dict.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, TypeVar
 
 from nexustrade.client import NexusTradeClient
 
 __all__ = ["NlScreen", "NlScreenFailed", "screen_stocks"]
 
+# A runtime may supply subclasses of the result and failure types through the
+# package's extension registry (see ``nexustrade/__init__.py``). Without one the
+# public types are used.
+_SCREEN_TYPE_EXPORT = "_nl_screen_type"
+_FAILED_TYPE_EXPORT = "_nl_screen_failed_type"
+
 
 class NlScreenFailed(RuntimeError):
     """A screen that spent its retry budget without producing a usable answer."""
+
+    @classmethod
+    def _from_operation(
+        cls, message: str, operation: Mapping[str, Any]
+    ) -> "NlScreenFailed":
+        return cls(message)
 
 
 @dataclass
@@ -78,6 +90,20 @@ class NlScreen:
         )
 
 
+_Resolved = TypeVar("_Resolved", bound=type)
+
+
+def _result_type(export: str, default: _Resolved) -> _Resolved:
+    import nexustrade
+
+    if export not in nexustrade._extension_exports():
+        return default
+    resolved = nexustrade._resolve_export(export)
+    if not (isinstance(resolved, type) and issubclass(resolved, default)):
+        raise TypeError(f"{export} must be a subclass of {default.__name__}.")
+    return resolved
+
+
 def screen_stocks(
     question: str,
     *,
@@ -98,10 +124,11 @@ def screen_stocks(
         raise_on_failure=False,
         **wait_options,
     )
-    screen = NlScreen._from_operation(operation)
+    screen = _result_type(_SCREEN_TYPE_EXPORT, NlScreen)._from_operation(operation)
     if operation.get("status") == "failed":
         error = operation.get("error") or {}
-        raise NlScreenFailed(
-            str(error.get("message") or "Natural-language screen failed.")
+        raise _result_type(_FAILED_TYPE_EXPORT, NlScreenFailed)._from_operation(
+            str(error.get("message") or "Natural-language screen failed."),
+            operation,
         )
     return screen

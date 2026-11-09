@@ -59,8 +59,7 @@ def _sdk_api_enabled() -> bool:
 
 
 def _sdk_client() -> Any:
-    # Lazy so direct host.py unit tests do not import the package's heavy data
-    # dependencies. Production imports through /opt/nexustrade.
+    # Lazy so loading host.py on its own does not import the client.
     from nexustrade.client import NexusTradeClient
 
     return NexusTradeClient.from_environment()
@@ -74,7 +73,7 @@ def _stable_search_id(query: str, prefer_machine_readable: bool) -> str:
     return f"search:{digest}"
 
 
-def runtime_fetch_reader(name: str) -> Callable[..., Any]:
+def _runtime_fetch_reader(name: str) -> Callable[..., Any]:
     """A staged fetch-body reader supplied by the NexusTrade compute runtime.
 
     Fetch bodies are staged by the compute host, so these readers exist only
@@ -104,7 +103,7 @@ def _hydrate_spilled_row(row: dict[str, Any]) -> dict[str, Any]:
     object_key = data.get("objectKey")
     if not isinstance(object_key, str) or not object_key.strip():
         return row
-    read_fetch_bytes = runtime_fetch_reader("read_fetch_bytes")
+    read_fetch_bytes = _runtime_fetch_reader("read_fetch_bytes")
 
     bucket = data.get("bucket")
     bucket_str = bucket if isinstance(bucket, str) and bucket.strip() else None

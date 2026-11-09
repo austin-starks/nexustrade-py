@@ -319,7 +319,7 @@ def fact_availability(
                       "source_absence_established": False}
         if payload.get("status") == "source_not_covered":
             result[name] = {**inspection, "status": "source_not_retrieved", "fact": None,
-                            "reason": "The lake query does not cover the source; inspect the original filing."}
+                            "reason": "The query does not cover the source; inspect the original filing."}
             continue
         if payload.get("status") in ("source_metadata_incomplete", "query_limit_reached", "truncated_dimension_metadata"):
             result[name] = {**inspection, "status": "incomplete_query", "fact": None,

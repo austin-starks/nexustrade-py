@@ -296,7 +296,7 @@ class PackageExportTests(unittest.TestCase):
 
     def test_runtime_fetch_reader_fails_clearly_outside_compute(self) -> None:
         with self.assertRaises(RuntimeError) as raised:
-            nt.host.runtime_fetch_reader("read_fetch_result")
+            nt.host._runtime_fetch_reader("read_fetch_result")
         self.assertIn("only inside a NexusTrade compute run", str(raised.exception))
 
     def test_missing_extra_names_the_extra_to_install(self) -> None:

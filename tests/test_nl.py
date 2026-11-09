@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from unittest import mock
 
@@ -104,20 +105,16 @@ class NlScreenOutcomeTests(unittest.TestCase):
         self.assertEqual(str(ctx.exception), "generation failed")
         client.create_nl_screen.assert_called_once_with("bad question")
 
-    def test_result_carries_no_generated_query_fields(self) -> None:
+    def test_public_types_carry_no_query_receipt(self) -> None:
         screen = _screen(
-            {
-                "outcome": "ROWS",
-                "rows": [{"ticker": "AAPL"}],
-                "rowCount": 1,
-                "sql": "SELECT ticker FROM t",
-                "engine": "duckdb",
-                "catalogVersion": "v7",
-            }
+            {"outcome": "ROWS", "rows": [{"ticker": "AAPL"}], "rowCount": 1}
         )
+        self.assertIs(type(screen), nt.nl.NlScreen)
+        field_names = {item.name for item in dataclasses.fields(nt.nl.NlScreen)}
         for name in ("sql", "engine", "catalog_version"):
+            self.assertNotIn(name, field_names)
             self.assertFalse(hasattr(screen, name), name)
-
+        self.assertFalse(hasattr(nt.nl.NlScreenFailed("failed"), "sql"))
 
 if __name__ == "__main__":
     unittest.main()

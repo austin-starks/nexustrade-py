@@ -35,8 +35,8 @@ def read_rows(
     """
     Read one of YOUR OWN CustomIndicators' accepted points, via the host broker.
 
-    Indicator data is tenant-private (it is NOT in the market lake), so the host
-    resolves the id, verifies ownership, and returns the rows.
+    Indicator data is private to its owner, so the host resolves the id,
+    verifies ownership, and returns the rows.
 
     Re-run-safe contract (same as host.fetch): when the result is not cached yet,
     this queues the read, flushes, and exits so the host fulfills the request and
@@ -286,7 +286,7 @@ def assert_document_provenance(
     not a completion requirement for non-report tasks. Report callers may choose
     this early diagnostic; the host independently checks the final report.
 
-    Silent on runs that fetched no documents: a lake, API or computed series has no
+    Silent on runs that fetched no documents: a market-data, API or computed series has no
     per-document denominator, and demanding one there blocked most of the corpus.
     """
     if not rows:
@@ -321,9 +321,9 @@ def assert_document_provenance(
             "lineage entry joins is not provenance."
         )
 
-    # Lake query ids are independently minted and verified by the host from its
-    # durable query ledger, which is not exposed in host_results.jsonl. Everything
-    # else in a document-derived run must be an exact successful broker result id.
+    # `lake-query:` ids are minted and verified by the host and do not appear in
+    # host_results.jsonl. Everything else in a document-derived run must be an
+    # exact successful broker result id.
     unknown = sorted(
         {
             source_id

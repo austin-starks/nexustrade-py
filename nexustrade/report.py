@@ -745,7 +745,7 @@ def write_inputs(
     path in error.issues. Its printable message shows at most 50 issues. Fix the
     original calculation references rather than copying numbers into a new model.
     Each validation side names an exact scalar inputPath. The host derives that
-    scalar's sourceIds from its bound model provenance and verifies fetch/lake
+    scalar's sourceIds from its bound model provenance and verifies source
     lineage. Independent sides must be disjoint; same-lineage comparisons are
     reconciliation checks. Never place free values or sourceIds on the check.
 
