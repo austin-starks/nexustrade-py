@@ -114,7 +114,7 @@ def _host_provenance_ids(
     """Return fetched PDF ids and every successful broker result id.
 
     Read straight off the ledger rather than through host.read_results(), which
-    hydrates spilled Tigris payloads; deciding whether a contract applies must not
+    hydrates spilled stored payloads; deciding whether a contract applies must not
     pull bytes over the network. A malformed ledger disarms the early check to
     match the host parser; sandbox_finish remains the authoritative backstop.
     """

@@ -1,5 +1,5 @@
 {
-  "$comment": "SHARED CONFORMANCE FIXTURE. Byte-identical copies live at sdk/python/tests/conformance/ and sdk/typescript/test/conformance/; checkSdkClientParity.ts fails the build if they diverge. Each case drives a client method through a recording fake transport and pins the exact wire traffic, so the two SDKs cannot silently disagree about what they send. `method` is snake_case; the TypeScript runner camel-cases it.",
+  "$comment": "SHARED CONFORMANCE FIXTURE. Byte-identical copies live at sdk/python/tests/conformance/ and sdk/typescript/test/conformance/; the release gate fails if they diverge. Each case drives a client method through a recording fake transport and pins the exact wire traffic, so the two SDKs cannot silently disagree about what they send. `method` is snake_case; the TypeScript runner camel-cases it.",
   "cases": [
     {
       "name": "create_portfolio sends the book verbatim",
@@ -1180,7 +1180,7 @@
       }
     },
     {
-      "name": "create_nl_screen posts the question and asks for the query back",
+      "name": "create_nl_screen posts the question",
       "method": "create_nl_screen",
       "input": "large cap technology with a PE under 20",
       "responses": [
@@ -1197,8 +1197,7 @@
           "method": "POST",
           "path": "nl/screens",
           "body": {
-            "question": "large cap technology with a PE under 20",
-            "returnQuery": true
+            "question": "large cap technology with a PE under 20"
           },
           "idempotency_key": null
         }
@@ -1221,9 +1220,7 @@
             "status": "completed",
             "result": {
               "outcome": "ROWS",
-              "rowCount": 2,
-              "sql": "SELECT ticker FROM lake.sec_daily_ohlc",
-              "engine": "motherduck"
+              "rowCount": 2
             }
           }
         }
@@ -1242,9 +1239,7 @@
         "status": "completed",
         "result": {
           "outcome": "ROWS",
-          "rowCount": 2,
-          "sql": "SELECT ticker FROM lake.sec_daily_ohlc",
-          "engine": "motherduck"
+          "rowCount": 2
         }
       }
     },
@@ -1299,127 +1294,6 @@
       "expected_result": {
         "id": "a b/c!d",
         "kind": "nl_screen",
-        "status": "running"
-      }
-    },
-    {
-      "name": "create_lake_ask posts the question",
-      "method": "create_lake_ask",
-      "input": "average daily volume for SPY in 2024",
-      "idempotency_key": null,
-      "responses": [
-        {
-          "operation": {
-            "id": "la-1",
-            "kind": "lake_ask",
-            "status": "running"
-          }
-        }
-      ],
-      "expected_calls": [
-        {
-          "method": "POST",
-          "path": "lake/ask",
-          "body": {
-            "question": "average daily volume for SPY in 2024"
-          },
-          "idempotency_key": null
-        }
-      ],
-      "expected_result": {
-        "id": "la-1",
-        "kind": "lake_ask",
-        "status": "running"
-      }
-    },
-    {
-      "name": "get_lake_ask reads an owner-scoped path with no body",
-      "method": "get_lake_ask",
-      "input": "la-1",
-      "responses": [
-        {
-          "operation": {
-            "id": "la-1",
-            "kind": "lake_ask",
-            "status": "completed",
-            "result": {
-              "outcome": "QUERY",
-              "sql": "SELECT avg(volume) FROM lake.sec_daily_ohlc WHERE ticker = 'SPY'",
-              "lakeQueryId": "lq-1"
-            }
-          }
-        }
-      ],
-      "expected_calls": [
-        {
-          "method": "GET",
-          "path": "lake/ask/la-1",
-          "body": null,
-          "idempotency_key": null
-        }
-      ],
-      "expected_result": {
-        "id": "la-1",
-        "kind": "lake_ask",
-        "status": "completed",
-        "result": {
-          "outcome": "QUERY",
-          "sql": "SELECT avg(volume) FROM lake.sec_daily_ohlc WHERE ticker = 'SPY'",
-          "lakeQueryId": "lq-1"
-        }
-      }
-    },
-    {
-      "name": "cancel_lake_ask posts to the cancel sub-path",
-      "method": "cancel_lake_ask",
-      "input": "la-1",
-      "responses": [
-        {
-          "operation": {
-            "id": "la-1",
-            "kind": "lake_ask",
-            "status": "cancelled"
-          }
-        }
-      ],
-      "expected_calls": [
-        {
-          "method": "POST",
-          "path": "lake/ask/la-1/cancel",
-          "body": null,
-          "idempotency_key": null
-        }
-      ],
-      "expected_result": {
-        "id": "la-1",
-        "kind": "lake_ask",
-        "status": "cancelled"
-      }
-    },
-    {
-      "name": "a lake ask id with reserved characters is path-escaped identically",
-      "method": "get_lake_ask",
-      "input": "a b/c!d",
-      "responses": [
-        {
-          "operation": {
-            "id": "a b/c!d",
-            "kind": "lake_ask",
-            "status": "running"
-          }
-        }
-      ],
-      "expected_calls": [
-        {
-          "method": "GET",
-          "path": "lake/ask/a%20b%2Fc%21d",
-          "body": null,
-          "idempotency_key": null
-        }
-      ],
-      "expected_result": {
-        "id": "a b/c!d",
-        "kind": "lake_ask",
         "status": "running"
       }
     },

@@ -96,8 +96,8 @@ environment first, then from a `.env` at or above the working directory. Never
 hardcode a key into a file you write, and never print one. Exported values win
 over the file, so a `.env` cannot silently override a deployment's real config.
 
-**7. The base install is stdlib-only.** `nt.lake.*` needs `pip install
-'nexustrade[lake]'`; `nt.spec_curve` and friends need `[stats]`; PDF inspection,
+**7. The base install is stdlib-only.** `nt.spec_curve` and friends need
+`pip install 'nexustrade[stats]'`; PDF inspection,
 OCR, and schema-bound extraction need `[documents]`. Missing extras raise an
 `AttributeError` that names the extra to install — read it rather than guessing.
 
@@ -164,10 +164,6 @@ Declare `point_kind="observation"` for point-in-time samples so date-only rows
 retain same-day UTC availability on both inline and large-upload paths. Use
 `period_aggregate` plus `aggregate_period` for closed periods, or `disclosed`
 with per-row publication times.
-
-For daily market prices, prefer `nt.lake.query("sec_daily_ohlc", ...)` or
-`nt.tigris.read_ohlc(...)`. `daily_ohlc` is a legacy/vendor table and may lag
-the canonical daily series.
 
 `client.list_orders(portfolio_id=..., statuses=..., page=..., limit=...)` lists owned orders with a read key. `client.cancel_orders(order_ids, idempotency_key=..., portfolio_id=...)` cancels explicit IDs with a trade key. Inspect both `canceled` and `rejected`, and reuse the same key/payload for retries. Defaults and status gates are documented in README.
 
@@ -306,27 +302,18 @@ not `start_date` / `end_date`. Each handle goes to its matching
 </details>
 
 <details>
-<summary><b>Query the data lake</b></summary>
+<summary><b>Screen stocks in plain language</b></summary>
 
 ```python
-result = nt.lake.sql(
-    "SELECT ticker, date, closingPrice FROM lake.daily_ohlc WHERE ticker = ?",
-    ["AAPL"],
-    max_rows=10_000,
-)
-frame = result.to_pandas()
+screen = nt.nl.screen_stocks("large cap biotech with positive free cash flow")
+if screen.outcome == "ROWS":
+    for row in screen.rows:
+        ...
+elif screen.needs_clarification:
+    print(screen.clarification)
 ```
 
-When the right table or column set is unknown, prefer a one-shot discovery pass:
-
-```python
-ask = nt.lake.ask("average daily volume for SPY in 2024")
-print(ask.sql)  # log the generated SQL
-frame = ask.result().to_pandas()  # materialize the delegated query
-```
-
-Always parameterize with `?` rather than interpolating into the SQL string.
-Requires the `[lake]` extra.
+Market data is available through this screener only.
 </details>
 
 <details>
@@ -366,7 +353,7 @@ All failures raise `NexusTradeApiError` with a stable `.status`, `.code`, and
 | Code | What to do |
 | --- | --- |
 | `invalid_token` | Key missing/expired, or an OAuth JWT was used. Only `sk-` keys work here. |
-| `insufficient_scope` | The key lacks `read` / `write` / `lake`. Do not retry. |
+| `insufficient_scope` | The key lacks the required scope. Do not retry. |
 | `invalid_portfolio` | The book is malformed — fix the builders, do not retry as-is. |
 | `idempotency_conflict` | Same key, different payload. Version the key. |
 | `idempotency_in_progress` | Same key, first call still running. Wait and re-read; never resubmit. |
@@ -393,35 +380,24 @@ the connected brokerage. `undeploy` is the same in reverse. Read
 `deploymentType` on the response to know which one you got, and treat any id
 you did not create in this session as possibly live.
 
-**The screener IS here now.** `nt.nl.screen_stocks("...")` turns a plain-language
-question into validated `lake.*` SQL, runs it, and returns the rows *and the
-statement*. Prefer it over hand-writing SQL for stock selection: the server
-picks tables from the same catalog the validator enforces, so it cannot name a
-column that does not exist.
+**Market data comes from the screener.** `nt.nl.screen_stocks("...")` answers a
+plain-language stock screen and returns the rows. It is the only market-data
+path in this SDK. `EMPTY` is an answer (every filter ran, nothing cleared them
+all), and `CLARIFICATION` means the question was ambiguous: answer it rather
+than rephrasing blindly. Only `GENERATION_FAILED` is worth a retry. Screening
+spends LLM credits.
 
-Drop to `nt.lake.sql(...)` when the NL screen returns `outcome ==
-"GENERATION_FAILED"`, or when the question is not a stock screen. Note what is
-*not* a reason to fall back: `EMPTY` is an answer (every filter ran, nothing
-cleared them all), and `CLARIFICATION` means the question was ambiguous — answer
-it rather than guessing SQL, because you do not know what to write either.
+Check `screen.used_fallback_tables` before you trust which tables were read.
+When the screener cannot narrow its sources first it falls back to all of them,
+so a `True` here means "verify `screen.tables` is what you expected": the rows
+can look perfectly reasonable and come from the wrong table. Attributes are
+snake_case: the camelCase spellings in the JSON envelope (`usedFallbackTables`,
+`rowCount`, `asOfDate`) are the wire format and raise `AttributeError` on the
+object.
 
-Always report `screen.sql` alongside the numbers. It is model-generated, so it
-is the only way anyone can check the result. This method spends LLM credits;
-`nt.lake.sql` does not.
-
-Check `screen.used_fallback_tables` before you trust which tables were read. The
-screen narrows the catalog with a table-selector round first; when that round
-fails it falls back to the whole stored index, and the SQL is then written
-against a much broader context. A `True` here means "verify `screen.tables` is
-what you expected" — the rows can look perfectly reasonable and come from the
-wrong table. Attributes are snake_case: the camelCase spellings in the JSON
-envelope (`usedFallbackTables`, `rowCount`, `asOfDate`) are the wire format and
-raise `AttributeError` on the object.
-
-The symbol column is whatever the generated SQL named it. Probe `screen.rows[0]`
-for `ticker` / `symbol` / `asset` / `targetAsset` rather than indexing a fixed
-key, which raises `KeyError` on a screen that aliased the column or returned an
-aggregate.
+Row keys vary with the question. Probe `screen.rows[0]` for `ticker` / `symbol`
+/ `asset` / `targetAsset` rather than indexing a fixed key, which raises
+`KeyError` on a screen that returned an aggregate.
 
 Not in this SDK. Do not attempt to reach them through it:
 
@@ -464,11 +440,10 @@ count matches `remaining_period_flow`; subtracting dates by hand is a day short.
 
 A quote or any other time series is selected with
 `finance.observation_as_of(rows, as_of=..., timestamp_field=..., value_field=...)`,
-and the returned `observed_at` goes into the model beside the value. Every `date`
-column in the lake is a TIMESTAMP, and a daily bar stamped `2026-09-04 20:00:00`
-is an observation FOR 2026-09-04 that `WHERE date <= '2026-09-04'` excludes,
-because that compares against midnight; cast both sides to DATE when a SQL cutoff
-is a calendar day. Never retype a number printed by an earlier command into a
+and the returned `observed_at` goes into the model beside the value. A daily bar
+stamped `2026-09-04 20:00:00` is an observation FOR 2026-09-04 that a
+`date <= "2026-09-04"` comparison excludes, because that compares against
+midnight; compare calendar dates when a cutoff is a calendar day. Never retype a number printed by an earlier command into a
 producer: read it from the row you selected.
 
 Keep retrieval in its own producer that writes what it fetched to a file, and

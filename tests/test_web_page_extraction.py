@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-import sys
 import unittest
-from types import ModuleType
+from types import SimpleNamespace
 from unittest import mock
 
 import nexustrade as nt
@@ -19,6 +18,13 @@ SCHEMA = {
     "required": ["quality", "facts"],
     "additionalProperties": False,
 }
+
+
+def _patch_fetch_reader(fetch_store: SimpleNamespace):
+    return mock.patch(
+        "nexustrade.host.runtime_fetch_reader",
+        side_effect=lambda name: getattr(fetch_store, name),
+    )
 
 
 class WebPagePreparationTests(unittest.TestCase):
@@ -52,12 +58,12 @@ class WebPagePreparationTests(unittest.TestCase):
     def test_accepts_staged_receipts_and_keeps_body_failures_source_local(self) -> None:
         good = {"ok": True, "data": {"contentType": "text/html", "url": "https://example.test/page"}}
         bad = {"ok": True, "data": {"contentType": "text/html"}}
-        tigris = ModuleType("nexustrade.tigris")
-        tigris.read_fetch_result = mock.Mock(side_effect=[
+        fetch_store = SimpleNamespace()
+        fetch_store.read_fetch_result = mock.Mock(side_effect=[
             b"<html><body><article>Actual text &amp; facts.</article></body></html>",
             RuntimeError("private transport details"),
         ])
-        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}):
+        with _patch_fetch_reader(fetch_store):
             result = scanned_table.prepare_web_pages({"good": good, "bad": bad})
         self.assertEqual(result["good"]["document"]["visible_text"], "Actual text & facts.")
         self.assertEqual(result["good"]["document"]["url"], "https://example.test/page")
@@ -87,14 +93,14 @@ class WebPagePreparationTests(unittest.TestCase):
             "url": "https://example.test/old", "finalUrl": "https://example.test/report",
         }}
         markdown = "# Report\n\n| Period | Amount |\n|---|---|\n| 2030 | <5 & >2 |\n"
-        tigris = ModuleType("nexustrade.tigris")
-        tigris.read_fetch_result = mock.Mock(return_value=markdown.encode())
-        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}), mock.patch(
+        fetch_store = SimpleNamespace()
+        fetch_store.read_fetch_result = mock.Mock(return_value=markdown.encode())
+        with _patch_fetch_reader(fetch_store), mock.patch(
             "nexustrade.host.gateway_chat_json"
         ) as chat:
             result = nt.prepare_web_pages({"rendered": receipt})
         chat.assert_not_called()
-        tigris.read_fetch_result.assert_called_once_with(receipt)
+        fetch_store.read_fetch_result.assert_called_once_with(receipt)
         page = result["rendered"]["document"]
         self.assertIsNone(result["rendered"]["error"])
         self.assertEqual(page["visible_text"], markdown)
@@ -105,9 +111,9 @@ class WebPagePreparationTests(unittest.TestCase):
 
     def test_markdown_limits_apply_without_html_projection(self) -> None:
         receipt = {"ok": True, "data": {"contentType": "Text/Markdown; charset=UTF-8"}}
-        tigris = ModuleType("nexustrade.tigris")
-        tigris.read_fetch_result = mock.Mock(return_value=b"<amount>12345</amount>")
-        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}):
+        fetch_store = SimpleNamespace()
+        fetch_store.read_fetch_result = mock.Mock(return_value=b"<amount>12345</amount>")
+        with _patch_fetch_reader(fetch_store):
             result = nt.prepare_web_pages({"rendered": receipt}, max_chars_per_document=8)
         self.assertIn("character limit", result["rendered"]["error"])
         self.assertEqual(result["rendered"]["document"], {})
@@ -302,12 +308,12 @@ class WebPageExtractionTests(unittest.TestCase):
                 "objectKey": "sandbox/fetch/safety-bulletin",
             },
         }
-        tigris = ModuleType("nexustrade.tigris")
+        fetch_store = SimpleNamespace()
         read_fetch = mock.Mock(
             return_value=b"<html><body><main>Valve inspection due Friday.</main></body></html>"
         )
-        tigris.read_fetch_result = read_fetch  # type: ignore[attr-defined]
-        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}), mock.patch(
+        fetch_store.read_fetch_result = read_fetch  # type: ignore[attr-defined]
+        with _patch_fetch_reader(fetch_store), mock.patch(
             "nexustrade.host.gateway_chat_json", side_effect=self._response
         ) as chat:
             result = scanned_table.extract_web_pages(
@@ -346,9 +352,9 @@ class WebPageExtractionTests(unittest.TestCase):
             "status": 403, "url": "https://example.test/bulletin",
         }}
         markdown = "# Maintenance\n\nPressure must remain <5 bar."
-        tigris = ModuleType("nexustrade.tigris")
-        tigris.read_fetch_result = mock.Mock(return_value=markdown.encode())
-        with mock.patch.dict(sys.modules, {"nexustrade.tigris": tigris}), mock.patch(
+        fetch_store = SimpleNamespace()
+        fetch_store.read_fetch_result = mock.Mock(return_value=markdown.encode())
+        with _patch_fetch_reader(fetch_store), mock.patch(
             "nexustrade.host.gateway_chat_json", side_effect=self._response
         ) as chat:
             result = scanned_table.extract_web_pages(

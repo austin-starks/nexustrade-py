@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Types](https://img.shields.io/badge/types-py.typed-informational.svg)](https://peps.python.org/pep-0561/)
 
-[Quickstart](#quickstart) · [Authoring](#authoring-strategies) · [Polling](#jobs-run-on-the-engine--you-poll) · [Agents](#agent-runs) · [Lake SQL](#lake-sql) · [Auth](#authentication) · [Errors](#errors)
+[Quickstart](#quickstart) · [Authoring](#authoring-strategies) · [Polling](#jobs-run-on-the-engine--you-poll) · [Agents](#agent-runs) · [Screener](#natural-language-screener) · [Auth](#authentication) · [Errors](#errors)
 
 </div>
 
@@ -24,17 +24,15 @@ pip install nexustrade
 The base install is **stdlib-only** — no third-party dependencies, importable anywhere.
 
 ```bash
-pip install 'nexustrade[lake]'    # DuckDB/pandas analysis of lake results
 pip install 'nexustrade[stats]'   # spec curves, Newey-West, bootstrap
 pip install 'nexustrade[documents]' # PDF inspection, OCR, structured extraction
 pip install 'nexustrade[compute]' # exact union used by NexusTrade compute
 ```
 
-The public distribution is also the package installed in NexusTrade compute
-sandboxes. Agent-facing helpers such as `nexustrade.host`,
-`nexustrade.scanned_table`, `nexustrade.signal`, `nexustrade.report`, and
-`nexustrade.tigris` therefore have one canonical implementation. Host-backed
-operations still require the short-lived environment supplied by a compute run.
+Compute helpers such as `nexustrade.host`, `nexustrade.scanned_table`,
+`nexustrade.signal`, and `nexustrade.report` ship in this package. Host-backed
+operations require the short-lived environment supplied by a NexusTrade compute
+run.
 
 Use `nt.prepare_web_pages(pages, max_chars_per_document=1_000_000)` for
 deterministic HTML inspection without a model call. `pages` maps source IDs to
@@ -807,11 +805,10 @@ for event in run:
         run.say("Focus on tech")
 ```
 
-## Natural language
+## Natural-language screener
 
-Describe the screen instead of writing the SQL. The server generates it,
-validates it against the same `lake.*` catalog the engine reads, executes it,
-and hands back both the rows and the statement.
+Market data is available through the natural-language screener: describe the
+screen and NexusTrade returns the matching rows.
 
 ```python
 import nexustrade as nt
@@ -819,8 +816,8 @@ import nexustrade as nt
 screen = nt.nl.screen_stocks(
     "technology stocks with a market cap over 100 billion and a PE under 30"
 )
+print(screen.outcome, screen.row_count)
 print(screen.rows)
-print(screen.sql)  # always check the SQL — it is model-generated
 ```
 
 The low-level client methods are there when you want to poll yourself:
@@ -829,10 +826,6 @@ The low-level client methods are there when you want to poll yourself:
 started = client.create_nl_screen("large cap biotech with positive free cash flow")
 done = client.wait_for_nl_screen(started["id"])
 ```
-
-`return_query` defaults to `True` because the SQL is the audit trail: without it
-the rows are a number you cannot re-derive. It is returned on failure whatever
-you pass, since a rejected query is the most useful thing to read.
 
 Branch on `outcome`, not on status alone:
 
@@ -843,12 +836,15 @@ Branch on `outcome`, not on status alone:
 | `CLARIFICATION`     | The question was ambiguous; `clarification` asks           |
 | `GENERATION_FAILED` | The retry budget was spent — the only case worth retrying  |
 
-This spends LLM credits. The structured `nt.lake` API below does not.
+`screen.tables` names the datasets the answer drew on, and
+`screen.used_fallback_tables` is `True` when the screener could not narrow its
+sources first, which makes a wrong-table answer more likely. Screening spends
+LLM credits.
 
 ## SEC statements and filing facts
 
 Run Compute can read point-in-time SEC fundamentals without reconstructing
-filing selection in ad hoc SQL:
+filing selection yourself:
 
 ```python
 import nexustrade as nt
@@ -912,7 +908,7 @@ the result says when a component set is incomplete or requires review. SEC
 CompanyFacts does not expose inline-XBRL dimensional contexts, so candidates
 also say that their consolidated-versus-dimensional scope is not proven.
 
-The audited SEC Financial Statement and Notes lake exposes exact filing facts
+The audited SEC Financial Statement and Notes dataset exposes exact filing facts
 without downloading or parsing filing HTML during a compute run. Start with
 discovery, then query only exact returned concepts:
 
@@ -1005,48 +1001,6 @@ source documents separately.
 The host Report Generator authors the report, and the same generated document
 is graded and delivered. Optional local Markdown exports are not report inputs.
 
-## Lake SQL
-
-Read-only SQL over the NexusTrade market-data lake. Results are durable Parquet
-parts rather than an implicitly materialized array, so a large result is
-explicit rather than an out-of-memory surprise.
-
-```mermaid
-flowchart LR
-    A[create_lake_query] --> B[wait_for_lake_query]
-    B --> C[get_lake_query_manifest]
-    C --> D[download_lake_query_part]
-    D --> E[Stream Parquet within your memory budget]
-```
-
-The `[lake]` extra wraps this pipeline in one call:
-
-```python
-import nexustrade as nt
-
-result = nt.lake.sql(
-    "SELECT ticker, date, closingPrice FROM lake.daily_ohlc WHERE ticker = ?",
-    ["AAPL"],
-    max_rows=10_000,
-)
-frame = result.to_pandas()             # memory-bounded
-for batch in result.iter_batches():    # or stream within your own budget
-    ...
-```
-
-Requires the `[lake]` extra. NexusTrade resolves `lake.*` server-side and picks a
-compatible backing engine; your SQL does not change when it does.
-
-`query_timeout_seconds` sets the server execution budget (registered API keys:
-default 900 seconds, maximum 1800; compute tokens: default 90, maximum 180).
-`wait_timeout_seconds` sets only the client's polling allowance;
-it never increases the execution budget. Large intraday coverage scans should
-use bounded date chunks and persist each submitted handle's `id` before waiting.
-After a client timeout, resume with `nt.lake.get(error.operation_id)` rather than
-resubmitting. `LakeQueryFailed.operation_id` retains the failed query receipt.
-Execution errors with code `query_timeout` are not automatically resubmitted
-unchanged; transient service/storage failures still receive bounded retries.
-
 ## Managed watchlist universes
 
 `nt.update_watchlist(watchlist_key=..., member_id=..., instrument=..., amount_basis=..., chamber=..., output=...)`
@@ -1102,8 +1056,7 @@ between refreshes. Missing facts remain unknown. `screen_any` composes OR rules;
 `screen_bar_volume` and `screen_bar_dollar_volume` require a completed historical
 bar; live quotes do not supply those metrics in this release. Price and disclosure
 metrics support live screens. Failed coverage or publication blocks new allocation
-while consumers retain their exit behavior. Screen execution uses in-memory DuckDB;
-no local database volume or LLM call is required for refreshes.
+while consumers retain their exit behavior. Refreshes require no LLM call.
 
 ## Complete method reference
 
@@ -1181,28 +1134,11 @@ is missing here, so this list cannot drift from the code.
 | `get_agent(agent_id)`                     | Read its status                     |
 | `attach_agent(agent_id, cursor=…)`        | Reattach to a run already in flight |
 
-**Lake SQL**
-
-| Method                                          | Purpose                              |
-| ----------------------------------------------- | ------------------------------------ |
-| `create_lake_query(request, idempotency_key=…)` | Submit read-only SQL                 |
-| `get_lake_query(query_id)`                      | Read the operation                   |
-| `wait_for_lake_query(query_id, …)`              | Block until terminal                 |
-| `cancel_lake_query(query_id)`                   | Cancel an owned query                |
-| `create_lake_ask(question)`                     | Ask the lake in plain language       |
-| `get_lake_ask(ask_id)`                          | Read the operation                   |
-| `wait_for_lake_ask(ask_id, …)`                  | Block until terminal                 |
-| `cancel_lake_ask(ask_id)`                       | Cancel an owned ask                  |
-| `get_lake_query_manifest(query_id)`             | Schema, checksums, and part metadata |
-| `download_lake_query_part(query_id, part, …)`   | Download one Parquet part            |
-| `get_lake_catalog()`                            | List queryable tables                |
-| `describe_lake_table(table)`                    | Columns and types for one table      |
-
 **Natural language**
 
 | Method                                        | Purpose                                      |
 | --------------------------------------------- | -------------------------------------------- |
-| `create_nl_screen(question, return_query=…)`  | Screen stocks from a plain-language question |
+| `create_nl_screen(question)`                  | Screen stocks from a plain-language question |
 | `get_nl_screen(screen_id)`                    | Read the operation                           |
 | `wait_for_nl_screen(screen_id, **options)`    | Block until terminal                         |
 | `cancel_nl_screen(screen_id)`                 | Cancel an owned screen                       |
@@ -1277,9 +1213,8 @@ written back to `os.environ`. Opt out with `NEXUSTRADE_DISABLE_DOTENV=1`.
 
 | Scope   | Grants                                                                                 |
 | ------- | -------------------------------------------------------------------------------------- |
-| `read`  | `get_backtest`, `get_optimization`, `get_walk_forward`                                 |
+| `read`  | `get_backtest`, `get_optimization`, `get_walk_forward`, NL screens                     |
 | `write` | `create_portfolio`, `create_backtest(s)`, `create_optimization`, `create_walk_forward` |
-| `lake`  | Lake catalog, query lifecycle, manifests, result parts                                 |
 
 A key missing the scope gets `403 insufficient_scope`.
 
@@ -1318,7 +1253,7 @@ except NexusTradeApiError as error:
 | Status | Code                                   | Meaning                                                      |
 | ------ | -------------------------------------- | ------------------------------------------------------------ |
 | 401    | `invalid_token`                        | Missing, malformed, or expired key (or an OAuth JWT)         |
-| 403    | `insufficient_scope`                   | Key lacks `read`, `write`, or `lake`                         |
+| 403    | `insufficient_scope`                   | Key lacks the required scope                                 |
 | 400    | `invalid_request`, `invalid_portfolio` | Malformed input                                              |
 | 400    | `invalid_idempotency_key`              | Must match `[A-Za-z0-9._:-]{1,160}`                          |
 | 409    | `idempotency_conflict`                 | Key reused with a different payload                          |
@@ -1338,11 +1273,12 @@ nor the poll timeout bounds how long a _job_ takes.
 
 ## Scope
 
-Portfolio drafting, backtesting, optimization, walk-forward studies, and
-read-only SQL over the market-data lake, versioned under `/api/v1/nexustrade`.
-The full surface requires a registered API key; anonymous workspaces are limited
-to portfolio authoring/forking, backtests, and programmatic agent/chat calls.
-The screener and creating a live deployment remain outside this surface.
+Portfolio drafting, backtesting, optimization, walk-forward studies, and the
+natural-language stock screener, versioned under `/api/v1/nexustrade`. Market
+data is available only through the screener. The full surface requires a
+registered API key; anonymous workspaces are limited to portfolio
+authoring/forking, backtests, and programmatic agent/chat calls. Creating a live
+deployment remains outside this surface.
 Orders are reachable, but a live order is only ever staged for human approval —
 never submitted. `deploy` and `undeploy` act on whatever an existing id already
 is, live included.
@@ -1451,10 +1387,9 @@ Successful research calls still append shared durable receipt/cache rows.
   value_field=...)` selects the latest observation whose CALENDAR DATE is on or
   before `as_of`, and returns the exact `observed_at` instant beside the value.
   A daily bar stamped `2026-09-04 20:00:00` is an observation for 2026-09-04 but
-  is after the instant `2026-09-04`, so a `WHERE date <= '2026-09-04'` cutoff
-  drops that whole day. Compare dates to dates in SQL — `CAST(date AS DATE) <=
-  CAST(? AS DATE)` — and select the row with this helper rather than reading a
-  number out of console output. A timezone offset is converted, not discarded.
+  is after the instant `2026-09-04`, so a `date <= "2026-09-04"` cutoff drops
+  that whole day. Compare dates to dates, and select the row with this helper
+  rather than reading a number out of console output. A timezone offset is converted, not discarded.
   On an exact timestamp tie the last such row in the supplied order wins.
 - `nt.finance.price_comparison(intrinsic_value, market_price)` returns the
   discount, upside and premium together with `definitions` naming each

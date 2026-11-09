@@ -64,13 +64,11 @@ class NlScreenFieldTests(unittest.TestCase):
                 "rows": [{"ticker": "AAPL"}],
                 "rowCount": 1,
                 "asOfDate": "2026-08-08",
-                "catalogVersion": "v7",
                 "usedFallbackTables": True,
             }
         )
         self.assertEqual(screen.row_count, 1)
         self.assertEqual(screen.as_of_date, "2026-08-08")
-        self.assertEqual(screen.catalog_version, "v7")
         # The camelCase spellings are the wire format only.
         self.assertFalse(hasattr(screen, "usedFallbackTables"))
         self.assertFalse(hasattr(screen, "rowCount"))
@@ -92,18 +90,33 @@ class NlScreenOutcomeTests(unittest.TestCase):
         self.assertFalse(screen.is_empty)
         self.assertEqual(screen.clarification, "Which sector?")
 
-    def test_generation_failure_raises_and_keeps_the_sql(self) -> None:
+    def test_generation_failure_raises(self) -> None:
         client = mock.Mock()
         client.create_nl_screen.return_value = {"id": "ns-1", "status": "running"}
         client.wait_for_nl_screen.return_value = {
             "id": "ns-1",
             "status": "failed",
-            "result": {"outcome": "GENERATION_FAILED", "sql": "SELECT bad"},
+            "result": {"outcome": "GENERATION_FAILED"},
             "error": {"message": "generation failed"},
         }
         with self.assertRaises(nt.nl.NlScreenFailed) as ctx:
             nt.nl.screen_stocks("bad question", client=client)
-        self.assertEqual(ctx.exception.sql, "SELECT bad")
+        self.assertEqual(str(ctx.exception), "generation failed")
+        client.create_nl_screen.assert_called_once_with("bad question")
+
+    def test_result_carries_no_generated_query_fields(self) -> None:
+        screen = _screen(
+            {
+                "outcome": "ROWS",
+                "rows": [{"ticker": "AAPL"}],
+                "rowCount": 1,
+                "sql": "SELECT ticker FROM t",
+                "engine": "duckdb",
+                "catalogVersion": "v7",
+            }
+        )
+        for name in ("sql", "engine", "catalog_version"):
+            self.assertFalse(hasattr(screen, name), name)
 
 
 if __name__ == "__main__":

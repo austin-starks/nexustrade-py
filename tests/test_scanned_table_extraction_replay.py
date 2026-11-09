@@ -590,8 +590,8 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
     def test_schema_batch_accepts_host_fetch_results_without_manual_hydration(self) -> None:
         scanned_table = importlib.import_module("nexustrade.scanned_table")
         host = importlib.import_module("nexustrade.host")
-        tigris = mock.Mock()
-        tigris.read_fetch_result.side_effect = [b"pdf-a", b"pdf-b"]
+        fetch_store = mock.Mock()
+        fetch_store.read_fetch_result.side_effect = [b"pdf-a", b"pdf-b"]
         receipts = {
             "filing-a": {
                 "ok": True,
@@ -608,7 +608,11 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
             mock.patch.object(scanned_table, "_document_result_lookup", return_value=None),
             mock.patch.object(scanned_table, "_document_result_record"),
             mock.patch.object(scanned_table, "_document_batch_progress"),
-            mock.patch.dict("sys.modules", {"nexustrade.tigris": tigris}),
+            mock.patch.object(
+                host,
+                "runtime_fetch_reader",
+                side_effect=lambda name: getattr(fetch_store, name),
+            ),
             mock.patch.object(
                 host,
                 "gateway_chat_json",
@@ -627,7 +631,7 @@ class ScannedTableExtractionReplayTests(unittest.TestCase):
                 max_workers=1,
             )
 
-        self.assertEqual(tigris.read_fetch_result.call_count, 2)
+        self.assertEqual(fetch_store.read_fetch_result.call_count, 2)
         self.assertEqual(list(result), ["filing-a", "filing-b"])
         self.assertEqual(result["filing-a"]["rows"][0]["source_id"], "filing-a")
         self.assertEqual(result["filing-b"]["rows"][0]["ticker"], "BBB")
