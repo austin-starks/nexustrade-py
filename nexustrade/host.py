@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from nexustrade._activity import touch_activity
@@ -59,8 +59,7 @@ def _sdk_api_enabled() -> bool:
 
 
 def _sdk_client() -> Any:
-    # Lazy so direct host.py unit tests do not import the package's heavy data
-    # dependencies. Production imports through /opt/nexustrade.
+    # Lazy so loading host.py on its own does not import the client.
     from nexustrade.client import NexusTradeClient
 
     return NexusTradeClient.from_environment()
@@ -74,8 +73,28 @@ def _stable_search_id(query: str, prefer_machine_readable: bool) -> str:
     return f"search:{digest}"
 
 
+def _runtime_fetch_reader(name: str) -> Callable[..., Any]:
+    """A staged fetch-body reader supplied by the NexusTrade compute runtime.
+
+    Fetch bodies are staged by the compute host, so these readers exist only
+    inside a compute run. Elsewhere this raises a clear error instead.
+    """
+    import nexustrade
+
+    try:
+        reader = nexustrade._resolve_export(name)
+    except AttributeError as error:
+        raise RuntimeError(
+            f"Reading staged fetch results ({name}) is available only inside "
+            f"a NexusTrade compute run ({error})."
+        ) from error
+    if not callable(reader):
+        raise RuntimeError(f"nexustrade.{name} is not callable.")
+    return reader
+
+
 def _hydrate_spilled_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Replace spilled Tigris refs with the logical payload (transparent to callers)."""
+    """Replace spilled payload refs with the logical payload (transparent to callers)."""
     if not row.get("ok"):
         return row
     data = row.get("data")
@@ -84,8 +103,7 @@ def _hydrate_spilled_row(row: dict[str, Any]) -> dict[str, Any]:
     object_key = data.get("objectKey")
     if not isinstance(object_key, str) or not object_key.strip():
         return row
-    # Lazy import — lake env is only required when a spilled row is present.
-    from nexustrade.tigris import read_fetch_bytes
+    read_fetch_bytes = _runtime_fetch_reader("read_fetch_bytes")
 
     bucket = data.get("bucket")
     bucket_str = bucket if isinstance(bucket, str) and bucket.strip() else None
@@ -97,7 +115,7 @@ def _hydrate_spilled_row(row: dict[str, Any]) -> dict[str, Any]:
 def read_results() -> dict[str, dict[str, Any]]:
     """Parse host_results.jsonl keyed by request id.
 
-    Fat payloads may be Tigris refs (`data.spilled=True`); those are hydrated
+    Fat payloads may be stored refs (`data.spilled=True`); those are hydrated
     so callers still see logical `data.rows` / candidates / etc.
     """
     if not os.path.exists(HOST_RESULTS_PATH):
@@ -297,8 +315,8 @@ def queue_read_indicator(request_id: str, indicator_id: str) -> None:
     Queue an owner-scoped read of one of YOUR OWN CustomIndicators.
 
     The host resolves the id, verifies you own it, and returns its accepted points.
-    Indicator parquets are tenant-private, so this is brokered by the host rather
-    than read from the lake bucket directly. Prefer `signal.read_rows(...)`.
+    Indicator data is private to its owner, so the host brokers this read.
+    Prefer `signal.read_rows(...)`.
     """
     _pending_requests.append(
         {"id": request_id, "kind": "read_indicator", "indicatorId": indicator_id}
@@ -1614,7 +1632,7 @@ def search(
 def gateway_fetch_json(url: str, timeout_sec: int = 120) -> dict[str, Any]:
     """
     Small JSON GET via the sandbox LLM gateway /fetch (SSRF-guarded).
-    Use host.fetch for document bodies stored in Tigris.
+    Use host.fetch for stored document bodies.
     """
     base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/")
     api_key = os.environ.get("OPENAI_API_KEY", "")

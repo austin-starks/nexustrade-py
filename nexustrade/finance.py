@@ -1082,8 +1082,8 @@ def _naive_utc(value: datetime) -> datetime:
     Discarding ``tzinfo`` would put ``2026-09-05T01:00:00+05:00`` on calendar
     date 09-05 when the instant it names is 09-04 20:00 UTC — reintroducing the
     day-boundary error this module exists to prevent. Naive values are left
-    alone: the lake stores naive session-close stamps and reinterpreting them
-    would shift every one of them.
+    alone: session-close stamps are naive, and reinterpreting them would shift
+    every one of them.
     """
     if value.tzinfo is None:
         return value

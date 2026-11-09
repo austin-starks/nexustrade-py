@@ -33,10 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from nexustrade.portfolio_handle import Portfolio, PortfolioList
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_ERROR_BYTES = 64 * 1024
-# Cap on a single binary read (lake result parts).
-_MAX_PART_BYTES = 64 * 1024 * 1024
-# Keep in lockstep with MAX_REDIRECTS in sdk/typescript/src/client.ts —
-# checkSdkClientParity.ts asserts the two numbers match.
+# Keep in lockstep with MAX_REDIRECTS in the TypeScript SDK's client.
 _MAX_REDIRECTS = 5
 # `status` for errors no HTTP status describes: the request never reached the
 # API, or it returned 2xx with an envelope the client could not use. Reporting
@@ -52,7 +49,7 @@ _UPLOAD_PUT_JITTER_SECONDS = 0.25
 # Polling defaults. Every NexusTrade job — backtest, optimization,
 # walk-forward, and any future operation kind — reports through the same
 # envelope, so one poller serves all of them. Kept in lockstep with the
-# TypeScript SDK by checkSdkClientParity.ts; the backoff is deterministic (no
+# TypeScript SDK; the backoff is deterministic (no
 # jitter) so both languages issue the identical request sequence.
 _DEFAULT_POLL_TIMEOUT_SECONDS = 900
 _DEFAULT_POLL_INTERVAL_SECONDS = 2
@@ -199,26 +196,6 @@ class Transport(Protocol):
         body: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]: ...
-
-
-@runtime_checkable
-class BinaryTransport(Transport, Protocol):
-    """A transport that can also return raw bytes.
-
-    Lake result parts are Parquet, so they do not fit ``Transport``, which is a
-    JSON contract. Declaring the capability lets custom and test transports
-    implement downloads against a typed interface instead of being probed with
-    ``hasattr``.
-    """
-
-    def request_bytes(
-        self,
-        method: str,
-        path: str,
-        *,
-        byte_range: tuple[int, int] | None = None,
-        max_bytes: int = _MAX_PART_BYTES,
-    ) -> bytes: ...
 
 
 @runtime_checkable
@@ -524,57 +501,6 @@ class HttpTransport:
                 "transport_error",
                 str(error),
             ) from error
-
-    def request_bytes(
-        self,
-        method: str,
-        path: str,
-        *,
-        byte_range: tuple[int, int] | None = None,
-        max_bytes: int = _MAX_PART_BYTES,
-    ) -> bytes:
-        """Bounded binary GET/POST for non-JSON SDK payloads (lake Parquet parts)."""
-        if max_bytes <= 0:
-            raise ValueError("max_bytes must be positive.")
-        url = f"{self.base_url.rstrip('/')}/nexustrade/{path.lstrip('/')}"
-        headers = {
-            **self._credential_headers(),
-            "Accept": "application/vnd.apache.parquet,application/octet-stream",
-        }
-        if byte_range is not None:
-            start, end = byte_range
-            headers["Range"] = f"bytes={start}-{end}"
-            max_bytes = min(max_bytes, end - start + 1)
-        request = urllib.request.Request(url, headers=headers, method=method)
-        try:
-            with _urlopen(request, timeout=self.timeout_seconds) as response:
-                # A server that ignores Range answers 200 with the WHOLE object.
-                # Appending that at a non-zero resume offset silently corrupts
-                # the file, so refuse it rather than trusting the status line.
-                if byte_range is not None and byte_range[0] > 0:
-                    if response.status != 206:
-                        raise NexusTradeApiError(
-                            response.status,
-                            "range_not_honored",
-                            "NexusTrade returned a full response to a ranged "
-                            "request; refusing to resume against it.",
-                        )
-                return response.read(max_bytes)
-        except urllib.error.HTTPError as error:
-            raise self._api_error_from_http_error(error) from error
-        except urllib.error.URLError as error:
-            raise NexusTradeApiError(
-                _NO_HTTP_STATUS,
-                "transport_error",
-                str(error.reason),
-            ) from error
-        except (TimeoutError, OSError) as error:
-            raise NexusTradeApiError(
-                _NO_HTTP_STATUS,
-                "transport_error",
-                str(error),
-            ) from error
-
 
 def _stdout_is_interactive() -> bool:
     """Whether a human is plausibly watching. Never raises on odd streams."""
@@ -2060,51 +1986,12 @@ class NexusTradeClient:
         )
         return self._operation(response)
 
-    def create_lake_query(
-        self,
-        request: Mapping[str, Any],
-        *,
-        idempotency_key: str,
-    ) -> dict[str, Any]:
-        response = self._transport.request(
-            "POST",
-            "lake/queries",
-            body=request,
-            idempotency_key=idempotency_key,
-        )
-        return self._operation(response)
-
-    def get_lake_query(self, query_id: str) -> dict[str, Any]:
-        response = self._transport.request(
-            "GET",
-            f"lake/queries/{urllib.parse.quote(query_id, safe='')}",
-        )
-        return self._operation(response)
-
-    def cancel_lake_query(self, query_id: str) -> dict[str, Any]:
-        response = self._transport.request(
-            "POST",
-            f"lake/queries/{urllib.parse.quote(query_id, safe='')}/cancel",
-        )
-        return self._operation(response)
-
-    def create_nl_screen(
-        self,
-        question: str,
-        *,
-        return_query: bool = True,
-    ) -> dict[str, Any]:
-        """Submit a natural-language stock screen. Returns immediately; poll it.
-
-        ``return_query`` keeps the generated SQL, engine and catalog version on
-        the result. It defaults on: the SQL is the audit trail, and without it
-        the rows are a number nobody can re-derive. It is returned on failure
-        regardless, because a rejected query is the most useful thing to read.
-        """
+    def create_nl_screen(self, question: str) -> dict[str, Any]:
+        """Submit a natural-language stock screen. Returns immediately; poll it."""
         response = self._transport.request(
             "POST",
             "nl/screens",
-            body={"question": question, "returnQuery": return_query},
+            body={"question": question},
         )
         return self._operation(response)
 
@@ -2125,103 +2012,6 @@ class NexusTradeClient:
     def wait_for_nl_screen(self, screen_id: str, **options: Any) -> dict[str, Any]:
         """Block until a screen is terminal. See ``wait_for_operation``."""
         return wait_for_operation(self.get_nl_screen, screen_id, **options)
-
-    def create_lake_ask(self, question: str) -> dict[str, Any]:
-        """Submit a natural-language lake ask. Returns immediately; poll it."""
-        response = self._transport.request(
-            "POST",
-            "lake/ask",
-            body={"question": question},
-        )
-        return self._operation(response)
-
-    def get_lake_ask(self, ask_id: str) -> dict[str, Any]:
-        response = self._transport.request(
-            "GET",
-            f"lake/ask/{urllib.parse.quote(ask_id, safe='')}",
-        )
-        return self._operation(response)
-
-    def cancel_lake_ask(self, ask_id: str) -> dict[str, Any]:
-        response = self._transport.request(
-            "POST",
-            f"lake/ask/{urllib.parse.quote(ask_id, safe='')}/cancel",
-        )
-        return self._operation(response)
-
-    def wait_for_lake_ask(self, ask_id: str, **options: Any) -> dict[str, Any]:
-        """Block until a lake ask is terminal. See ``wait_for_operation``."""
-        return wait_for_operation(self.get_lake_ask, ask_id, **options)
-
-    def get_lake_catalog(self) -> list[dict[str, Any]]:
-        response = self._transport.request("GET", "lake/catalog")
-        tables = response.get("tables")
-        if not isinstance(tables, list) or not all(
-            isinstance(item, dict) for item in tables
-        ):
-            raise NexusTradeApiError(
-                200,
-                "invalid_response",
-                "Lake catalog response is missing tables.",
-            )
-        return tables
-
-    def describe_lake_table(self, table: str) -> dict[str, Any]:
-        name = table[5:] if table.startswith("lake.") else table
-        response = self._transport.request(
-            "GET",
-            f"lake/catalog/lake/{urllib.parse.quote(name, safe='')}",
-        )
-        result = response.get("table")
-        if not isinstance(result, dict):
-            raise NexusTradeApiError(
-                200,
-                "invalid_response",
-                "Lake describe response is missing table.",
-            )
-        return result
-
-    def get_lake_query_manifest(self, query_id: str) -> dict[str, Any]:
-        response = self._transport.request(
-            "GET",
-            f"lake/queries/{urllib.parse.quote(query_id, safe='')}/manifest",
-        )
-        return self._operation(response)
-
-    def download_lake_query_part(
-        self,
-        query_id: str,
-        part: int,
-        *,
-        byte_range: tuple[int, int] | None = None,
-        max_bytes: int = _MAX_PART_BYTES,
-    ) -> bytes:
-        """Download one Parquet part (optionally via HTTP Range). Bound every read."""
-        transport = self._transport
-        if not isinstance(transport, BinaryTransport):
-            raise NexusTradeApiError(
-                _NO_HTTP_STATUS,
-                "unsupported_transport",
-                "Lake part download requires HttpTransport.request_bytes.",
-            )
-        path = (
-            f"lake/queries/{urllib.parse.quote(query_id, safe='')}"
-            f"/parts/{int(part)}"
-        )
-        return transport.request_bytes(
-            "GET",
-            path,
-            byte_range=byte_range,
-            max_bytes=max_bytes,
-        )
-
-    def wait_for_lake_query(
-        self,
-        query_id: str,
-        **options: Any,
-    ) -> dict[str, Any]:
-        """Block until a lake query is terminal. See ``wait_for_operation``."""
-        return wait_for_operation(self.get_lake_query, query_id, **options)
 
     def wait_for_backtest(self, backtest_id: str, **options: Any) -> dict[str, Any]:
         """Block until a backtest is terminal. See ``wait_for_operation``."""

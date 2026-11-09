@@ -1,17 +1,14 @@
 """NexusTrade SDK.
 
 The authoring/API surface has no third-party runtime dependencies. Analytics,
-lake, document, and compute-host helpers live in public submodules and are
-resolved lazily, so ``pip install nexustrade`` remains useful without extras.
-``nexustrade.lake`` and ``nexustrade.tigris`` need ``[lake]`` for local
-materialization; PDF inspection/OCR needs ``[documents]``.
+document, and compute-host helpers live in public submodules and are resolved
+lazily, so ``pip install nexustrade`` remains useful without extras. PDF
+inspection/OCR needs ``[documents]``; statistics need ``[stats]``.
 
-``# sandbox-prune:begin/end <region>`` comments mark code the compute image
-strips from its copy of this package — agent runs are refused for compute
-principals server-side, so the sandbox never sees that surface. They have no
-effect on an ordinary install: everything between them is live code here. Keep
-the pair balanced when editing, and put new agent entry points inside it. See
-infra/sandbox-compute/prune_agent_surface.py.
+``# sandbox-prune:begin/end <region>`` comments mark code that a restricted
+runtime strips from its copy of this package. They have no effect on an
+ordinary install: everything between them is live code here. Keep each pair
+balanced when editing, and put new agent entry points inside it.
 """
 
 from importlib import import_module
@@ -83,28 +80,20 @@ __all__ = [
     "wait_for_operation",
 ]
 
-# Preserve top-level compute imports without making optional analytics/lake
+# Preserve top-level helper imports without making optional analytics
 # dependencies a requirement for ordinary SDK clients. Resolved on attribute
-# access only — see the note above ``__dir__``.
-# Which extra installs each optional module. `nt.lake` needs duckdb/pyarrow,
-# `nt.stats` needs numpy/pandas — naming the wrong one in the error sends people
-# to install the wrong thing.
+# access only.
+# Which extra installs each optional module, so the error names the right one.
 _OPTIONAL_EXTRA_BY_MODULE = {
     "nexustrade.inspect_document": "documents",
-    "nexustrade.lake": "lake",
     "nexustrade.scanned_table": "documents",
     "nexustrade.stats": "stats",
-    "nexustrade.tigris": "lake",
 }
 
-_LAZY_EXPORTS = {
-    # `(module, None)` exposes the SUBMODULE itself, so `nt.lake.sql(...)`
-    # resolves lazily without making duckdb a base-install dependency.
-    "lake": ("nexustrade.lake", None),
+_LAZY_EXPORTS: dict[str, tuple[str, str | None]] = {
+    # `(module, None)` exposes the SUBMODULE itself.
     # Pure accounting and valuation arithmetic with no optional dependencies.
     "finance": ("nexustrade.finance", None),
-    # No optional dependency of its own — lazy purely so `nt.nl` matches the
-    # `nt.lake` shape rather than importing at package load.
     "nl": ("nexustrade.nl", None),
     "sec": ("nexustrade.sec", None),
     "research": ("nexustrade.research", None),
@@ -165,29 +154,11 @@ _LAZY_EXPORTS = {
     "newey_west_slope": ("nexustrade.stats", "newey_west_slope"),
     "next_session_frame": ("nexustrade.stats", "next_session_frame"),
     "spec_curve": ("nexustrade.stats", "spec_curve"),
-    "LAKE_CATALOG": ("nexustrade.tigris", "LAKE_CATALOG"),
-    "connect": ("nexustrade.tigris", "connect"),
-    "host_options_lake_enabled": (
-        "nexustrade.tigris",
-        "host_options_lake_enabled",
-    ),
-    "read_crypto_daily": ("nexustrade.tigris", "read_crypto_daily"),
-    "read_day_shards": ("nexustrade.tigris", "read_day_shards"),
-    "read_fetch_bytes": ("nexustrade.tigris", "read_fetch_bytes"),
-    "read_fetch_result": ("nexustrade.tigris", "read_fetch_result"),
-    "read_ohlc": ("nexustrade.tigris", "read_ohlc"),
-    "read_options_daily": ("nexustrade.tigris", "read_options_daily"),
-    "read_options_event_windows": (
-        "nexustrade.tigris",
-        "read_options_event_windows",
-    ),
-    "read_snapshot": ("nexustrade.tigris", "read_snapshot"),
-    "read_year_shards": ("nexustrade.tigris", "read_year_shards"),
 }
 
 # Base-install-safe lazy modules are part of the explicit public surface.
-# Tigris/stats names remain attribute-accessible but stay out of ``__all__``
-# because ``import *`` resolves every name eagerly and would require extras.
+# Stats names remain attribute-accessible but stay out of ``__all__`` because
+# ``import *`` resolves every name eagerly and would require extras.
 _PUBLIC_BASE_LAZY_MODULES = {
     "nexustrade.finance",
     "nexustrade.host",
@@ -207,24 +178,64 @@ __all__.extend(
 )
 
 
+# A runtime that ships extra modules inside this package may add top-level
+# names by providing ``nexustrade._extensions`` with an ``EXPORTS`` mapping of
+# the same shape as ``_LAZY_EXPORTS``. An ordinary install has none.
+_EXTENSIONS_MODULE = "nexustrade._extensions"
+_extension_exports_cache: dict[str, tuple[str, str | None]] | None = None
+
+
+def _extension_exports() -> dict[str, tuple[str, str | None]]:
+    global _extension_exports_cache
+    if _extension_exports_cache is None:
+        try:
+            module = import_module(_EXTENSIONS_MODULE)
+        except ModuleNotFoundError as error:
+            if error.name != _EXTENSIONS_MODULE:
+                raise
+            _extension_exports_cache = {}
+        else:
+            _extension_exports_cache = {
+                name: target
+                for name, target in dict(getattr(module, "EXPORTS", {})).items()
+                if name not in _LAZY_EXPORTS
+            }
+    return _extension_exports_cache
+
+
 def __dir__() -> list[str]:
-    return sorted({*__all__, *_LAZY_EXPORTS})
+    return sorted({*__all__, *_LAZY_EXPORTS, *_extension_exports()})
 
 
-def __getattr__(name: str) -> Any:
+def _resolve_export(name: str) -> Any:
+    """Resolve a lazy top-level name from its module, without caching it."""
+    if name.startswith("__"):
+        raise AttributeError(f"module 'nexustrade' has no attribute {name!r}")
     target = _LAZY_EXPORTS.get(name)
+    extension = target is None
+    if extension:
+        target = _extension_exports().get(name)
     if target is None:
         raise AttributeError(f"module 'nexustrade' has no attribute {name!r}")
     module_name, attribute = target
     try:
         module = import_module(module_name)
     except ImportError as error:
+        if extension:
+            raise AttributeError(
+                f"'{name}' comes from {module_name}, which could not be "
+                f"imported ({error})."
+            ) from error
         extra = _OPTIONAL_EXTRA_BY_MODULE.get(module_name, "stats")
         raise AttributeError(
             f"'{name}' comes from {module_name}, whose optional dependencies "
             f"are not installed ({error}). Install them with: "
             f"pip install 'nexustrade[{extra}]'"
         ) from error
-    value = module if attribute is None else getattr(module, attribute)
+    return module if attribute is None else getattr(module, attribute)
+
+
+def __getattr__(name: str) -> Any:
+    value = _resolve_export(name)
     globals()[name] = value
     return value

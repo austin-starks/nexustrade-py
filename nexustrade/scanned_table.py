@@ -1962,9 +1962,10 @@ def _prepare_pdf_document(
     if isinstance(value, Mapping):
         if value.get("ok") is not True:
             return None, f"fetch result for {source_id!r} is not successful"
-        from nexustrade.tigris import read_fetch_result
+        from nexustrade.host import _runtime_fetch_reader
 
         try:
+            read_fetch_result = _runtime_fetch_reader("read_fetch_result")
             pdf_bytes = read_fetch_result(dict(value))
         except Exception as exc:  # one bad receipt must not hide the other sources
             return None, f"fetch result for {source_id!r} could not be read: {exc}"
@@ -3428,9 +3429,9 @@ def _prepare_web_page(
                     break
             if not _supported_web_content_type(content_type):
                 return None, f"fetch result is not HTML or Markdown ({content_type})", None
-            from nexustrade.tigris import read_fetch_result
+            from nexustrade.host import _runtime_fetch_reader
 
-            raw = read_fetch_result(dict(value))
+            raw = _runtime_fetch_reader("read_fetch_result")(dict(value))
             if raw is None:
                 return None, "fetch result body is unavailable", None
     else:
@@ -3717,7 +3718,7 @@ def extract_web_pages(
 
     ``pages`` may contain HTML strings/bytes, ``{"html": ..., "url": ...}``
     objects, or complete result rows returned by ``host.read_results()`` after
-    ``host.fetch``. Fetch bodies remain in Tigris and enter this bounded helper,
+    ``host.fetch``. Fetch bodies remain in storage and enter this bounded helper,
     not the OpenCode transcript. ``schema`` describes ONE per-page object;
     ``source_id`` is added and checked by the host.
     Markdown receipts retain their exact text and content type, including any

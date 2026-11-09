@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 import nexustrade as nt
@@ -230,7 +231,7 @@ class PackageExportTests(unittest.TestCase):
         self.assertIn("write_rows", namespace)
 
     def test_lazy_helpers_resolve_by_attribute(self) -> None:
-        # How compute code reaches them: nt.read_ohlc / nt.lake, not import *.
+        # Lazy names resolve on attribute access, not through import *.
         lazy_names = sorted(nt._LAZY_EXPORTS)
         fake_module = SimpleNamespace(
             **{
@@ -269,11 +270,34 @@ class PackageExportTests(unittest.TestCase):
             nt.definitely_not_a_real_export
         self.assertIn("has no attribute", str(unknown.exception))
 
-    def test_lake_resolves_without_its_extra_installed(self) -> None:
-        # nexustrade.lake imports only stdlib + client at module level; duckdb
-        # and pyarrow are imported inside the methods that need them. So the
-        # module resolves on a base install and only heavy CALLS need [lake].
-        self.assertTrue(hasattr(nt.lake, "sql"))
+    def test_market_data_is_only_reachable_through_the_screener(self) -> None:
+        for name in ("lake", "connect", "read_ohlc", "read_fetch_result"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, nt._LAZY_EXPORTS)
+                self.assertNotIn(name, nt.__all__)
+                self.assertIsNone(importlib.util.find_spec(f"nexustrade.{name}"))
+        self.assertTrue(callable(nt.nl.screen_stocks))
+
+    def test_runtime_extension_exports_resolve_lazily(self) -> None:
+        extension = ModuleType("nexustrade._extensions")
+        extension.EXPORTS = {  # type: ignore[attr-defined]
+            "extra_reader": ("nexustrade.finance", "fcff"),
+            "finance": ("nexustrade.stats", None),
+        }
+        nt.__dict__.pop("extra_reader", None)
+        self.addCleanup(lambda: nt.__dict__.pop("extra_reader", None))
+        self.addCleanup(setattr, nt, "_extension_exports_cache", None)
+        nt._extension_exports_cache = None
+        with mock.patch.dict(sys.modules, {"nexustrade._extensions": extension}):
+            self.assertIs(nt.extra_reader, nt.finance.fcff)
+            self.assertIn("extra_reader", dir(nt))
+            # A runtime extension cannot shadow a public name.
+            self.assertNotIn("finance", nt._extension_exports())
+
+    def test_runtime_fetch_reader_fails_clearly_outside_compute(self) -> None:
+        with self.assertRaises(RuntimeError) as raised:
+            nt.host._runtime_fetch_reader("read_fetch_result")
+        self.assertIn("only inside a NexusTrade compute run", str(raised.exception))
 
     def test_missing_extra_names_the_extra_to_install(self) -> None:
         # Each optional module names ITS extra, not a hardcoded one.
@@ -284,7 +308,6 @@ class PackageExportTests(unittest.TestCase):
         # and failed the one release gate that does.
         for name, extra in [
             ("spec_curve", "stats"),
-            ("lake", "lake"),
             ("extract_pdfs", "documents"),
         ]:
             # __getattr__ caches into globals(), so a name another test already
@@ -301,8 +324,8 @@ class PackageExportTests(unittest.TestCase):
             self.assertIn(f"nexustrade[{extra}]", str(raised.exception))
 
     def test_stats_submodule_is_reachable_as_an_attribute(self) -> None:
-        # nt.lake resolved but nt.stats raised a bare "no attribute" because
-        # only its individual FUNCTIONS were mapped. Both are submodules.
+        # nt.stats raised a bare "no attribute" when only its individual
+        # FUNCTIONS were mapped. It is a submodule export.
         self.assertEqual(nt._LAZY_EXPORTS["stats"], ("nexustrade.stats", None))
 
     def test_public_distribution_owns_agent_facing_compute_modules(self) -> None:
@@ -314,7 +337,6 @@ class PackageExportTests(unittest.TestCase):
             "sec",
             "semantic",
             "signal",
-            "tigris",
         ):
             with self.subTest(module=name):
                 self.assertIsNotNone(importlib.util.find_spec(f"nexustrade.{name}"))

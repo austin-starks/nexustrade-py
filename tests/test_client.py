@@ -828,11 +828,11 @@ class NexusTradeClientTests(unittest.TestCase):
     def test_wait_recovers_a_transient_poll_without_resubmitting(self) -> None:
         transport = FakeTransport([
             client_module.NexusTradeApiError(0, "transport_error", "tls"),
-            {"operation": {"id": "lq-1", "status": "completed"}},
+            {"operation": {"id": "ns-1", "status": "completed"}},
         ])
         client = client_module.NexusTradeClient(transport=transport)
         with mock.patch.object(client_module.time, "sleep"):
-            result = client.wait_for_lake_query("lq-1", poll_interval_seconds=0)
+            result = client.wait_for_nl_screen("ns-1", poll_interval_seconds=0)
         self.assertEqual(result["status"], "completed")
         self.assertEqual(len(transport.calls), 2)
         self.assertTrue(all(call["method"] == "GET" for call in transport.calls))
@@ -842,7 +842,7 @@ class NexusTradeClientTests(unittest.TestCase):
         transport = FakeTransport([client_module.NexusTradeApiError(401, "invalid_token", "expired")])
         client = client_module.NexusTradeClient(transport=transport)
         with self.assertRaises(client_module.NexusTradeApiError) as raised:
-            client.wait_for_lake_query("lq-1")
+            client.wait_for_nl_screen("ns-1")
         self.assertEqual(raised.exception.code, "invalid_token")
         self.assertEqual(len(transport.calls), 1)
 
