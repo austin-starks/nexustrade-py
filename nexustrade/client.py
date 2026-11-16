@@ -957,8 +957,14 @@ class NexusTradeClient:
         base_url: str | None = None,
         workspace_session: str | None = None,
         transport: Transport | None = None,
+        request_timeout_seconds: float | None = None,
     ) -> None:
         if transport is not None:
+            if request_timeout_seconds is not None:
+                raise ValueError(
+                    "request_timeout_seconds applies only to the built-in "
+                    "HTTP transport; configure a custom transport directly."
+                )
             self._transport = transport
             return
         # Lazy and memoized: the tree is walked at most once, and not at all
@@ -979,11 +985,18 @@ class NexusTradeClient:
             resolved_key,
             resolved_url or DEFAULT_API_BASE_URL,
             workspace_session=workspace_session,
+            **(
+                {"timeout_seconds": request_timeout_seconds}
+                if request_timeout_seconds is not None
+                else {}
+            ),
         )
 
     @classmethod
-    def from_environment(cls) -> "NexusTradeClient":
-        return cls()
+    def from_environment(
+        cls, *, request_timeout_seconds: float | None = None
+    ) -> "NexusTradeClient":
+        return cls(request_timeout_seconds=request_timeout_seconds)
 
     def export_workspace_session(self) -> str | None:
         """Return the anonymous workspace token after the first API call."""
@@ -2100,6 +2113,7 @@ class NexusTradeClient:
             "start_date": "startDate",
             "end_date": "endDate",
             "baseline_symbol": "baseline",
+            "baseline_asset": "baselineAsset",
             "interval": "interval",
             "initial_value": "initialValue",
             "generate_events": "generateEvents",

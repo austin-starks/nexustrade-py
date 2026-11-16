@@ -1109,7 +1109,10 @@ def _normalize_backtest_spec(item: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(args, dict):
             raise ValueError("backtest() handle args must be an object")
         portfolio = item.get("portfolio")
+        baseline_asset = _backtest_arg(args, "baseline_asset", "baselineAsset")
         return {
+            # Present only when set, so specs without one hash as before.
+            **({"baseline_asset": baseline_asset} if baseline_asset is not None else {}),
             "portfolio": portfolio,
             "start_date": _backtest_arg(args, "start_date", "startDate"),
             "end_date": _backtest_arg(args, "end_date", "endDate"),
@@ -1138,6 +1141,9 @@ def _stable_backtest_id(spec: dict[str, Any]) -> str:
         "fee_config": spec.get("fee_config"),
         "generate_events": bool(spec.get("generate_events")),
     }
+    # Added only when set, so specs without one keep their existing ids.
+    if spec.get("baseline_asset") is not None:
+        key["baseline_asset"] = spec["baseline_asset"]
     digest = hashlib.sha256(
         json.dumps(key, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:16]
@@ -1172,6 +1178,8 @@ def queue_backtest(request_id: str, spec: dict[str, Any]) -> None:
         req["name"] = spec["name"]
     if spec.get("baseline"):
         req["baseline"] = spec["baseline"]
+    if spec.get("baseline_asset") is not None:
+        req["baselineAsset"] = spec["baseline_asset"]
     if spec.get("interval"):
         req["interval"] = spec["interval"]
     if spec.get("initial_value") is not None:
@@ -1245,7 +1253,8 @@ def submit_backtests(
     That exit is normal here — do not treat it as a failure. Duplicate identical specs collapse to one paid run. Each
     result is the host ``data``::
 
-        {backtestId, status, wasCreated, statistics?, error?}
+        {backtestId, status, wasCreated, statistics?, baselineStatistics?,
+         baselineSymbol?, error?}
 
     A non-COMPLETE ``status`` is a live handle: refresh it later with
     ``poll_backtest(backtestId, refresh_key="phase-2")``. Completed ids are also
@@ -1268,6 +1277,11 @@ def submit_backtests(
                 "startDate": spec.get("start_date"),
                 "endDate": spec.get("end_date"),
                 **({"baseline": spec["baseline"]} if spec.get("baseline") else {}),
+                **(
+                    {"baselineAsset": spec["baseline_asset"]}
+                    if spec.get("baseline_asset") is not None
+                    else {}
+                ),
                 **({"interval": spec["interval"]} if spec.get("interval") else {}),
                 **(
                     {"initialValue": spec["initial_value"]}

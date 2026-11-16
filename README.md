@@ -216,6 +216,27 @@ Backtest operations may include `warnings: list[str]` immediately after
 submission and again in the terminal `result`. Treat them as material caveats;
 they do not change a successful operation into a failure.
 
+### Benchmark
+
+A terminal `result` also carries the benchmark the run was compared against:
+`result["baselineSymbol"]` and `result["baselineStatistics"]`, the buy-and-hold
+benchmark's statistics over the same window (for example
+`baselineStatistics["percentChange"]`). Choose the benchmark with
+`backtest(..., baseline_asset={"type": "Stock", "symbol": "QQQ"})`, or
+`{"type": "Cryptocurrency", "symbol": "BTC-USD"}`. `baseline_symbol` is the
+older Stock-only shorthand; pass one or the other, never both. When both are
+omitted, the single traded stock or option underlying is the benchmark,
+otherwise SPY.
+
+Changed in 5.2.0: an omitted baseline used to be SPY for every API backtest.
+It is now inferred exactly as the MCP `backtest_portfolio` tool infers it, and
+an explicit baseline symbol is uppercased. Earlier results were not rerun. A
+new run of the same book can therefore report a different benchmark, so pass
+the baseline explicitly where an earlier comparison must hold.
+A cached single-name spec that omitted the baseline therefore runs once more
+after upgrading, because its benchmark is now part of the run's identity. The
+portfolio handle accepts the same typed benchmark: `Portfolio.backtest(..., baseline_asset=...)`.
+
 ### Collateral at risk
 
 A terminal operation's `result["statistics"]` answers how much capital the run
@@ -1150,6 +1171,7 @@ is missing here, so this list cannot drift from the code.
 | `NexusTradeClient(api_key=…, base_url=…)` | Explicit credentials                     |
 | `NexusTradeClient()`                      | Lazy anonymous workspace with strict limits |
 | `NexusTradeClient.from_environment()`     | Read them from the environment or `.env` |
+| `NexusTradeClient(request_timeout_seconds=…)` | Per-request HTTP timeout (default 30); also accepted by `from_environment` |
 | `export_workspace_session()`              | Export an anonymous workspace for later use |
 | `import_workspace_session(token)`         | Resume an existing anonymous workspace      |
 
@@ -1267,9 +1289,19 @@ check on an otherwise-successful reply.
 
 ## Timeouts
 
-`HttpTransport(timeout_seconds=...)` (default 30) is urllib's per-socket-operation
-timeout, so a slow-but-progressing response is not cut off mid-stream. Neither it
-nor the poll timeout bounds how long a _job_ takes.
+`NexusTradeClient(request_timeout_seconds=...)` (default 30) sets the HTTP
+transport's timeout, which is urllib's per-socket-operation timeout, so a
+slow-but-progressing response is not cut off mid-stream. Raise it for large
+`create_backtests` batches:
+
+```python
+client = NexusTradeClient.from_environment(request_timeout_seconds=120)
+```
+
+It is separate from the `timeout_seconds` argument of the `wait_for_*`
+methods, which bounds how long a poll waits. Neither bounds how long a _job_
+takes. A custom `transport=` configures its own timeout, so passing both raises
+`ValueError`.
 
 ## Scope
 

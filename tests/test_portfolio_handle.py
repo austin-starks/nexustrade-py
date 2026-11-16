@@ -210,6 +210,36 @@ class PortfolioHandleTests(unittest.TestCase):
         self.assertEqual(body["portfolioId"], "chat-1")
         self.assertNotIn("portfolio", body)
 
+    def test_backtest_forwards_baseline_asset(self) -> None:
+        transport = FakeTransport(
+            [
+                {
+                    "operations": [
+                        {"id": "bt-2", "kind": "backtest", "status": "running"}
+                    ]
+                }
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+        book = Portfolio(
+            {"name": "Momentum", "strategies": [{"name": "s"}]},
+            id="chat-1",
+            client=client,
+        )
+
+        book.backtest(
+            start_date="2024-01-01",
+            end_date="2024-12-31",
+            idempotency_key="bt-asset-v1",
+            baseline_asset={"type": "Cryptocurrency", "symbol": "BTC-USD"},
+        )
+
+        body = transport.calls[0]["body"]["backtests"][0]
+        self.assertEqual(
+            body["baselineAsset"], {"type": "Cryptocurrency", "symbol": "BTC-USD"}
+        )
+        self.assertNotIn("baseline", body)
+
     def test_deploy_returns_distinct_id(self) -> None:
         transport = FakeTransport(
             [
