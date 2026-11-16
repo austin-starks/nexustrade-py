@@ -3481,7 +3481,7 @@ __all__.append("Stochastic")
 def StockReport(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """StockReport indicator.
+    """AI stock report rating: a fundamental-strength score from 1 to 5, higher is stronger, synthesizing revenue growth, profitability, balance sheet health, valuation and competitive positioning. Point-in-time: a backtest reads the rating in effect on each date. Works on a named ticker and on CANDIDATE inside a rebalance filter, rank or weight, e.g. gte(StockReport(CANDIDATE), Value(3.5)) for fundamentally strong stocks.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "StockReport"}
