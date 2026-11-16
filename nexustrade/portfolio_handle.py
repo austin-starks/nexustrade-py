@@ -259,6 +259,7 @@ class Portfolio(dict):
         end_date: str,
         idempotency_key: str,
         baseline_symbol: Optional[str] = None,
+        baseline_asset: Optional[Mapping[str, Any]] = None,
         interval: Optional[str] = None,
         initial_value: Optional[float] = None,
         generate_events: Optional[bool] = None,
@@ -267,6 +268,9 @@ class Portfolio(dict):
         client: Any = None,
     ) -> dict[str, Any]:
         """Submit a backtest. Uses ``portfolioId`` once saved; otherwise sends the body.
+
+        ``baseline_asset`` (``{"type", "symbol", "name"?}``) is the typed
+        benchmark; never pass it with ``baseline_symbol``.
 
         ``dividend_policy`` ("cash" or "reinvest") overrides the portfolio's own
         setting for this run only.
@@ -286,6 +290,8 @@ class Portfolio(dict):
             }
         if baseline_symbol is not None:
             body["baseline"] = baseline_symbol
+        if baseline_asset is not None:
+            body["baselineAsset"] = dict(baseline_asset)
         if interval is not None:
             body["interval"] = interval
         if initial_value is not None:

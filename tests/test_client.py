@@ -458,6 +458,38 @@ class NexusTradeClientTests(unittest.TestCase):
             },
         )
 
+    def test_backtest_client_maps_baseline_asset(self) -> None:
+        transport = FakeTransport(
+            [
+                {
+                    "operations": [
+                        {"id": "bt-2", "kind": "backtest", "status": "running"}
+                    ]
+                }
+            ]
+        )
+        client = client_module.NexusTradeClient(transport=transport)
+
+        client.create_backtest(
+            nt.backtest(
+                {"name": "Book", "strategies": [{"name": "s"}]},
+                start_date="2024-01-01",
+                end_date="2024-12-31",
+                baseline_asset={
+                    "type": "Cryptocurrency",
+                    "symbol": "BTC-USD",
+                    "name": "BTC-USD",
+                },
+            ),
+            idempotency_key="bt-baseline-asset-v1",
+        )
+
+        self.assertEqual(
+            transport.calls[0]["body"]["backtests"][0]["baselineAsset"],
+            {"type": "Cryptocurrency", "symbol": "BTC-USD", "name": "BTC-USD"},
+        )
+        self.assertNotIn("baseline", transport.calls[0]["body"]["backtests"][0])
+
     def test_backtest_client_rejects_non_backtest_generated_handles(self) -> None:
         client = client_module.NexusTradeClient(
             transport=FakeTransport([]),
@@ -863,6 +895,44 @@ class NexusTradeClientTests(unittest.TestCase):
             "http://127.0.0.1:3000/api/v1",
         )
         self.assertEqual(loopback.base_url, "http://127.0.0.1:3000/api/v1")
+
+    def test_client_passes_request_timeout_to_http_transport(self) -> None:
+        client = client_module.NexusTradeClient(
+            api_key="sk-temp",
+            base_url="https://api.example/v1",
+            request_timeout_seconds=180,
+        )
+        self.assertEqual(client._transport.timeout_seconds, 180)
+
+        default = client_module.NexusTradeClient(
+            api_key="sk-temp",
+            base_url="https://api.example/v1",
+        )
+        self.assertEqual(default._transport.timeout_seconds, 30.0)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "NEXUSTRADE_API_KEY": "sk-env",
+                "NEXUSTRADE_API_BASE_URL": "https://api.example/v1",
+            },
+        ):
+            from_env = client_module.NexusTradeClient.from_environment(
+                request_timeout_seconds=90
+            )
+        self.assertEqual(from_env._transport.timeout_seconds, 90)
+
+        with self.assertRaises(ValueError):
+            client_module.NexusTradeClient(
+                api_key="sk-temp",
+                base_url="https://api.example/v1",
+                request_timeout_seconds=0,
+            )
+        with self.assertRaises(ValueError):
+            client_module.NexusTradeClient(
+                transport=FakeTransport([]),
+                request_timeout_seconds=60,
+            )
 
 
 class CustomIndicatorTests(unittest.TestCase):
