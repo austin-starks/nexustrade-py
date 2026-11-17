@@ -20,8 +20,30 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, TypedDict, Union, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, TypedDict, Union, cast, runtime_checkable
 
+# sandbox-prune:begin congress-surface
+from nexustrade.congress import (
+    CongressActionFilter,
+    CongressChamber,
+    CongressChamberFilter,
+    CongressInstrumentFilter,
+    CongressSort,
+    CongressionalCoverageResponse,
+    CongressionalFilerResponse,
+    CongressionalFilersResponse,
+    CongressionalFilingLatencyResponse,
+    CongressionalFilingResponse,
+    CongressionalLeaderboard,
+    CongressionalTradeResponse,
+    CongressionalTradeSummaryResponse,
+    CongressionalTradeVolumeResponse,
+    CongressionalTradesResponse,
+    PoliticianBot,
+    PoliticianResponse,
+    congressional_query_params,
+)
+# sandbox-prune:end congress-surface
 from nexustrade.env import LazyDotenv, environment_value
 from nexustrade._activity import touch_activity
 
@@ -214,6 +236,19 @@ class UploadTransport(Protocol):
     ) -> None: ...
 
 
+@runtime_checkable
+class PublicApiTransport(Protocol):
+    """A transport that can read NexusTrade's public REST API.
+
+    Those routes are served at ``/api/<path>`` on the API origin, beside the
+    versioned SDK routes rather than under them. ``path`` is relative to
+    ``/api/``. An API key is sent when the transport holds one; an anonymous
+    workspace session is never sent, because these routes do not read it.
+    """
+
+    def get_public_api(self, path: str) -> dict[str, Any]: ...
+
+
 @dataclass
 class HttpTransport:
     api_key: str | None = field(repr=False)
@@ -358,7 +393,9 @@ class HttpTransport:
             message = str(error_body.get("message") or fallback)
         else:
             code = "api_error"
-            message = fallback
+            # Public REST routes answer `{ message }` with no error envelope.
+            plain = decoded.get("message") if isinstance(decoded, dict) else None
+            message = plain if isinstance(plain, str) and plain else fallback
         if code.lower() == "workspace_session_expired":
             return NexusTradeWorkspaceSessionExpiredError(error.code, message)
         return NexusTradeApiError(error.code, code, message)
@@ -388,6 +425,19 @@ class HttpTransport:
             headers=headers,
             method=method,
         )
+        return self._send(request)
+
+    def get_public_api(self, path: str) -> dict[str, Any]:
+        parsed = urllib.parse.urlsplit(self.base_url)
+        url = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, f"/api/{path.lstrip('/')}", "", "")
+        )
+        headers = {"Accept": "application/json"}
+        if self.api_key is not None:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return self._send(urllib.request.Request(url, headers=headers, method="GET"))
+
+    def _send(self, request: urllib.request.Request) -> dict[str, Any]:
         try:
             with _urlopen(
                 request,
@@ -2026,6 +2076,278 @@ class NexusTradeClient:
         """Block until a screen is terminal. See ``wait_for_operation``."""
         return wait_for_operation(self.get_nl_screen, screen_id, **options)
 
+    # sandbox-prune:begin congress-surface
+    def _read_public_api(self, path: str, query: Mapping[str, str] | None = None) -> Any:
+        if not isinstance(self._transport, PublicApiTransport):
+            raise NexusTradeApiError(
+                _NO_HTTP_STATUS,
+                "unsupported_transport",
+                "Congressional trade reads require HttpTransport.get_public_api.",
+            )
+        suffix = f"?{urllib.parse.urlencode(query)}" if query else ""
+        return self._transport.get_public_api(f"{path}{suffix}")
+
+    def list_congressional_trades(
+        self,
+        *,
+        q: str | None = None,
+        filer_key: str | None = None,
+        ticker: str | None = None,
+        chamber: CongressChamberFilter | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        sort: CongressSort | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> CongressionalTradesResponse:
+        """Congressional trade disclosures, newest first. No API key required.
+
+        Defaults to equities first made public in the 30 days ending on the
+        dataset's last update day. ``from_date`` and ``to_date`` filter on
+        ``firstAvailableAt``. Trade from ``availableAt``, when the disclosure
+        became public, never ``transactionDate``.
+        """
+        return cast(
+            CongressionalTradesResponse,
+            self._read_public_api(
+                "political-disclosures/trades",
+                congressional_query_params(
+                    q=q, filer_key=filer_key, ticker=ticker, chamber=chamber,
+                    action=action, instrument=instrument, sort=sort,
+                    from_date=from_date, to_date=to_date, as_of=as_of,
+                    cursor=cursor, limit=limit,
+                ),
+            ),
+        )
+
+    def get_congressional_trade_summary(
+        self,
+        *,
+        q: str | None = None,
+        filer_key: str | None = None,
+        ticker: str | None = None,
+        chamber: CongressChamberFilter | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+    ) -> CongressionalTradeSummaryResponse:
+        """Purchase and sale totals over the same filters as the feed. No API key required."""
+        return cast(
+            CongressionalTradeSummaryResponse,
+            self._read_public_api(
+                "political-disclosures/summary",
+                congressional_query_params(
+                    q=q, filer_key=filer_key, ticker=ticker, chamber=chamber,
+                    action=action, instrument=instrument,
+                    from_date=from_date, to_date=to_date, as_of=as_of,
+                ),
+            ),
+        )
+
+    def get_congressional_leaderboard(
+        self, *, limit: int | None = None
+    ) -> CongressionalLeaderboard:
+        """Members ranked by their copy bot's cached backtest against SPY. No API key required."""
+        return cast(
+            CongressionalLeaderboard,
+            self._read_public_api(
+                "political-disclosures/leaderboard",
+                congressional_query_params(limit=limit),
+            ),
+        )
+
+    def list_congressional_filing_latency(
+        self,
+        *,
+        q: str | None = None,
+        filer_key: str | None = None,
+        ticker: str | None = None,
+        chamber: CongressChamberFilter | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+        limit: int | None = None,
+    ) -> CongressionalFilingLatencyResponse:
+        """Days from trade to public disclosure per member, slowest first. No API key required."""
+        return cast(
+            CongressionalFilingLatencyResponse,
+            self._read_public_api(
+                "political-disclosures/filer-latency",
+                congressional_query_params(
+                    q=q, filer_key=filer_key, ticker=ticker, chamber=chamber,
+                    action=action, instrument=instrument,
+                    from_date=from_date, to_date=to_date, as_of=as_of, limit=limit,
+                ),
+            ),
+        )
+
+    def list_congressional_trade_volume(
+        self,
+        *,
+        q: str | None = None,
+        filer_key: str | None = None,
+        ticker: str | None = None,
+        chamber: CongressChamberFilter | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+        limit: int | None = None,
+    ) -> CongressionalTradeVolumeResponse:
+        """Disclosed dollar volume per member, largest first. No API key required."""
+        return cast(
+            CongressionalTradeVolumeResponse,
+            self._read_public_api(
+                "political-disclosures/filer-volume",
+                congressional_query_params(
+                    q=q, filer_key=filer_key, ticker=ticker, chamber=chamber,
+                    action=action, instrument=instrument,
+                    from_date=from_date, to_date=to_date, as_of=as_of, limit=limit,
+                ),
+            ),
+        )
+
+    def get_politician(
+        self,
+        politician_id: str,
+        *,
+        ticker: str | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        sort: CongressSort | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> PoliticianResponse:
+        """One member's profile and whole trading record. No API key required.
+
+        ``politician_id`` is a Bioguide ID ("P000197") or a page slug
+        ("nancy-pelosi"). With neither date the record runs from 2012-01-01
+        to today, and ``instrument`` defaults to ``"all"``.
+        """
+        return cast(
+            PoliticianResponse,
+            self._read_public_api(
+                "political-disclosures/politicians/"
+                f"{urllib.parse.quote(politician_id, safe='')}",
+                congressional_query_params(
+                    ticker=ticker, action=action, instrument=instrument, sort=sort,
+                    from_date=from_date, to_date=to_date, as_of=as_of,
+                    cursor=cursor, limit=limit,
+                ),
+            ),
+        )
+
+    def get_politician_bot(self, politician_id: str) -> PoliticianBot:
+        """A member's copy bot and its cached backtest. No API key required."""
+        return cast(
+            PoliticianBot,
+            self._read_public_api(
+                "political-disclosures/politicians/"
+                f"{urllib.parse.quote(politician_id, safe='')}/bot"
+            ),
+        )
+
+    def list_congressional_filers(
+        self,
+        *,
+        q: str | None = None,
+        filer_key: str | None = None,
+        ticker: str | None = None,
+        chamber: CongressChamberFilter | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+        limit: int | None = None,
+    ) -> CongressionalFilersResponse:
+        """Members with disclosures matching the filters. Requires an API key."""
+        return cast(
+            CongressionalFilersResponse,
+            self._read_public_api(
+                "political-disclosures/filers",
+                congressional_query_params(
+                    q=q, filer_key=filer_key, ticker=ticker, chamber=chamber,
+                    action=action, instrument=instrument,
+                    from_date=from_date, to_date=to_date, as_of=as_of, limit=limit,
+                ),
+            ),
+        )
+
+    def get_congressional_filer(
+        self,
+        filer_key: str,
+        *,
+        ticker: str | None = None,
+        action: CongressActionFilter | None = None,
+        instrument: CongressInstrumentFilter | None = None,
+        sort: CongressSort | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        as_of: str | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> CongressionalFilerResponse:
+        """One member's summary, activity and trades by Bioguide ID. Requires an API key.
+
+        With neither date the record runs from 2012-01-01 to today, and
+        ``instrument`` defaults to ``"all"``.
+        """
+        return cast(
+            CongressionalFilerResponse,
+            self._read_public_api(
+                f"political-disclosures/filers/{urllib.parse.quote(filer_key, safe='')}",
+                congressional_query_params(
+                    ticker=ticker, action=action, instrument=instrument, sort=sort,
+                    from_date=from_date, to_date=to_date, as_of=as_of,
+                    cursor=cursor, limit=limit,
+                ),
+            ),
+        )
+
+    def get_congressional_trade(
+        self, event_id: str, *, as_of: str | None = None
+    ) -> CongressionalTradeResponse:
+        """One disclosure with its amendment history. Requires an API key."""
+        return cast(
+            CongressionalTradeResponse,
+            self._read_public_api(
+                f"political-disclosures/trades/{urllib.parse.quote(event_id, safe='')}",
+                congressional_query_params(as_of=as_of),
+            ),
+        )
+
+    def get_congressional_filing(
+        self, chamber: CongressChamber, doc_id: str
+    ) -> CongressionalFilingResponse:
+        """One source filing and every trade it disclosed. Requires an API key."""
+        return cast(
+            CongressionalFilingResponse,
+            self._read_public_api(
+                f"political-disclosures/filings/{urllib.parse.quote(chamber, safe='')}"
+                f"/{urllib.parse.quote(doc_id, safe='')}"
+            ),
+        )
+
+    def get_congressional_coverage(self) -> CongressionalCoverageResponse:
+        """How much of the public record the dataset holds. Requires an API key."""
+        return cast(
+            CongressionalCoverageResponse,
+            self._read_public_api("political-disclosures/coverage"),
+        )
+    # sandbox-prune:end congress-surface
+
     def wait_for_backtest(self, backtest_id: str, **options: Any) -> dict[str, Any]:
         """Block until a backtest is terminal. See ``wait_for_operation``."""
         return wait_for_operation(self.get_backtest, backtest_id, **options)
@@ -2169,6 +2491,7 @@ __all__ = [
     "HttpTransport",
     "NexusTradeApiError",
     "NexusTradeClient",
+    "PublicApiTransport",
     "Transport",
     "UploadTransport",
     "create_custom_indicator",

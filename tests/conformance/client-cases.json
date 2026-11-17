@@ -1582,6 +1582,548 @@
       "options": {
         "portfolio_id": "507f1f77bcf86cd799439011"
       }
+    },
+    {
+      "name": "list_congressional_trades reads the public feed with every filter in wire order",
+      "method": "list_congressional_trades",
+      "input": {
+        "limit": 2,
+        "cursor": "c-1",
+        "asOf": "2026-11-01T00:00:00.000Z",
+        "toDate": "2026-10-31",
+        "fromDate": "2026-01-01",
+        "sort": "oldest",
+        "instrument": "all",
+        "action": "purchase",
+        "chamber": "house",
+        "ticker": "NVDA",
+        "filerKey": "P000197",
+        "q": "nancy pelosi"
+      },
+      "responses": [
+        {
+          "data": {
+            "trades": [],
+            "nextCursor": null
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/trades?q=nancy+pelosi&filerKey=P000197&ticker=NVDA&chamber=house&action=purchase&instrument=all&sort=oldest&from=2026-01-01&to=2026-10-31&asOf=2026-11-01T00%3A00%3A00.000Z&cursor=c-1&limit=2",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "trades": [],
+          "nextCursor": null
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "list_congressional_trades sends no query when no filter is given",
+      "method": "list_congressional_trades",
+      "input": {},
+      "responses": [
+        {
+          "data": {
+            "trades": [],
+            "nextCursor": null
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/trades",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "trades": [],
+          "nextCursor": null
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_congressional_trade_summary shares the feed filters",
+      "method": "get_congressional_trade_summary",
+      "input": {
+        "ticker": "AAPL",
+        "fromDate": "2026-01-01"
+      },
+      "responses": [
+        {
+          "data": {
+            "purchaseEvents": 1
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/summary?ticker=AAPL&from=2026-01-01",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "purchaseEvents": 1
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_congressional_leaderboard returns the bare leaderboard",
+      "method": "get_congressional_leaderboard",
+      "input": {
+        "limit": 5
+      },
+      "responses": [
+        {
+          "best": [],
+          "featured": null,
+          "worst": [],
+          "byParty": [],
+          "basis": {
+            "rankedMembers": 0
+          }
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/leaderboard?limit=5",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "best": [],
+        "featured": null,
+        "worst": [],
+        "byParty": [],
+        "basis": {
+          "rankedMembers": 0
+        }
+      }
+    },
+    {
+      "name": "list_congressional_filing_latency reads filer-latency",
+      "method": "list_congressional_filing_latency",
+      "input": {
+        "chamber": "senate",
+        "limit": 10
+      },
+      "responses": [
+        {
+          "data": [],
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/filer-latency?chamber=senate&limit=10",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": [],
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "list_congressional_trade_volume reads filer-volume",
+      "method": "list_congressional_trade_volume",
+      "input": {
+        "action": "sale"
+      },
+      "responses": [
+        {
+          "data": [],
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/filer-volume?action=sale",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": [],
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_politician accepts a slug and escapes it",
+      "method": "get_politician",
+      "input": {
+        "limit": 1
+      },
+      "args": [
+        "nancy pelosi/x"
+      ],
+      "responses": [
+        {
+          "data": {
+            "politician": {
+              "memberId": "P000197"
+            }
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/politicians/nancy%20pelosi%2Fx?limit=1",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "politician": {
+            "memberId": "P000197"
+          }
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_politician_bot returns the bare bot",
+      "method": "get_politician_bot",
+      "input": null,
+      "args": [
+        "P000197"
+      ],
+      "responses": [
+        {
+          "status": "ready",
+          "memberId": "P000197"
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/politicians/P000197/bot",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "status": "ready",
+        "memberId": "P000197"
+      }
+    },
+    {
+      "name": "list_congressional_filers reads filers",
+      "method": "list_congressional_filers",
+      "input": {
+        "q": "smith"
+      },
+      "responses": [
+        {
+          "data": [],
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/filers?q=smith",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": [],
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_congressional_filer reads one filer",
+      "method": "get_congressional_filer",
+      "input": {
+        "instrument": "equity"
+      },
+      "args": [
+        "P000197"
+      ],
+      "responses": [
+        {
+          "data": {
+            "filer": {
+              "filerKey": "P000197"
+            }
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/filers/P000197?instrument=equity",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "filer": {
+            "filerKey": "P000197"
+          }
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_congressional_trade escapes the event id",
+      "method": "get_congressional_trade",
+      "input": {
+        "asOf": "2026-11-01T00:00:00.000Z"
+      },
+      "args": [
+        "house:20035831:0"
+      ],
+      "responses": [
+        {
+          "data": {
+            "current": {
+              "eventId": "house:20035831:0"
+            },
+            "history": []
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/trades/house%3A20035831%3A0?asOf=2026-11-01T00%3A00%3A00.000Z",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "current": {
+            "eventId": "house:20035831:0"
+          },
+          "history": []
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_congressional_filing reads one filing",
+      "method": "get_congressional_filing",
+      "input": null,
+      "args": [
+        "house",
+        "20035831"
+      ],
+      "responses": [
+        {
+          "data": {
+            "docId": "20035831",
+            "trades": []
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/filings/house/20035831",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "docId": "20035831",
+          "trades": []
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
+    },
+    {
+      "name": "get_congressional_coverage takes no arguments",
+      "method": "get_congressional_coverage",
+      "input": null,
+      "responses": [
+        {
+          "data": {
+            "filings": 1,
+            "events": 2
+          },
+          "snapshotId": "snap-1",
+          "asOf": "2026-11-16T00:00:00.000Z",
+          "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+          "stale": false,
+          "cache": "hit",
+          "coverage": null,
+          "filters": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "/api/political-disclosures/coverage",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "data": {
+          "filings": 1,
+          "events": 2
+        },
+        "snapshotId": "snap-1",
+        "asOf": "2026-11-16T00:00:00.000Z",
+        "dataUpdatedAt": "2026-11-15T12:00:00.000Z",
+        "stale": false,
+        "cache": "hit",
+        "coverage": null,
+        "filters": null
+      }
     }
   ]
 }

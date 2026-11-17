@@ -862,6 +862,118 @@ Branch on `outcome`, not on status alone:
 sources first, which makes a wrong-table answer more likely. Screening spends
 LLM credits.
 
+## Congressional trades
+
+House and Senate stock disclosures (STOCK Act periodic transaction reports) are
+readable as data, separately from the `PoliticalTrades` strategy indicators.
+The client calls NexusTrade's REST API at `/api/political-disclosures`, on the
+same host as the SDK routes.
+
+Seven reads work with no API key and no workspace, so a bare client is enough:
+
+```python
+from nexustrade import NexusTradeClient
+
+client = NexusTradeClient()  # no API key needed for these reads
+
+page = client.list_congressional_trades(
+    ticker="NVDA", from_date="2026-01-01", limit=5
+)
+for trade in page["data"]["trades"]:
+    print(
+        trade["availableAt"],  # public from here: the date to trade from
+        trade["filerName"],
+        trade["action"],
+        trade["ticker"],
+        trade["amountBracket"],
+    )
+
+# Next page: the same filters plus the cursor.
+if page["data"]["nextCursor"]:
+    client.list_congressional_trades(
+        ticker="NVDA",
+        from_date="2026-01-01",
+        limit=5,
+        cursor=page["data"]["nextCursor"],
+    )
+
+pelosi = client.get_politician("nancy-pelosi")
+print(pelosi["data"]["politician"]["displayName"], pelosi["data"]["profile"]["summary"])
+
+board = client.get_congressional_leaderboard(limit=5)
+print([(row["displayName"], row["excessReturn"]) for row in board["best"]])
+
+slowest = client.list_congressional_filing_latency(limit=5)
+print([(row["displayName"], row["medianDaysToPublic"]) for row in slowest["data"]])
+```
+
+**Trade from `availableAt`.** Each trade carries `transactionDate` (when the
+member traded) and `availableAt` (when the disclosure became public). The gap is
+usually weeks. A backtest or signal that acts on `transactionDate` uses
+information nobody outside Congress had, so every date filter here
+(`from_date`, `to_date`, `as_of`) is compared against a public date, never the trade
+date. `from_date`, `to_date` and `sort` use `firstAvailableAt`, the day the first
+version of a disclosure became public. It equals `availableAt` unless the
+disclosure was later amended.
+
+Filters, all optional: `q` (free text; a phrase naming exactly one member
+resolves to that member), `filer_key` (Bioguide ID such as `P000197`), `ticker`,
+`chamber` (`house`, `senate`, `all`), `action` (`purchase`, `sale`, `exchange`,
+`unmarked`, `all`), `instrument` (`equity`, `option`, `fund`, `bond`, `other`,
+`all`), `sort` (`newest`, `oldest`), `from_date` / `to_date` (`YYYY-MM-DD`), `as_of` (ISO
+timestamp; reads the record as it was publicly known then), `cursor` and
+`limit` (1 to 100, default 25). `to_date` defaults to the day of `as_of`, which
+defaults to the dataset's last update (`dataUpdatedAt`), and `from_date` defaults
+to 29 days before `to_date`, so with no dates the feed covers the 30 days ending
+on the last update day. `instrument` defaults to `equity`. Amounts are the disclosed brackets (`amountLow`,
+`amountHigh`), never exact figures.
+
+Each method takes the filters its route reads. The summary takes no `sort`,
+`cursor` or `limit`. The filer, filing latency and volume lists take `limit`
+but no `sort` or `cursor`. The member records (`get_politician`,
+`get_congressional_filer`) take `ticker`, `action`, `instrument`, `sort`, the
+dates, `cursor` and `limit`; with neither date they cover the whole record,
+2012-01-01 to today, and `instrument` defaults to `all`.
+
+Every read except the leaderboard and the copy bot returns an envelope:
+`data`, plus `snapshotId`, `asOf`, `dataUpdatedAt`, `stale`, `cache`,
+`coverage` and the applied `filters`.
+
+The detail and coverage reads need an API key with the `read` scope. Without
+one they raise `NexusTradeApiError` with status 401. The client sends its key
+on every read when it holds one, so a key that is supplied must be valid and
+have the `read` scope even on the calls that need no key.
+
+```python
+import os
+
+authed = NexusTradeClient(api_key=os.environ["NEXUSTRADE_API_KEY"])
+
+detail = authed.get_congressional_trade("house:20035831:0")
+print(detail["data"]["current"], len(detail["data"]["history"]))
+
+coverage = authed.get_congressional_coverage()
+print(coverage["data"]["events"], coverage["data"]["latestAvailableAt"])
+```
+
+| Method | Endpoint | API key |
+| --- | --- | --- |
+| `list_congressional_trades` | `GET /trades` | No |
+| `get_congressional_trade_summary` | `GET /summary` | No |
+| `get_congressional_leaderboard` | `GET /leaderboard` | No |
+| `list_congressional_filing_latency` | `GET /filer-latency` | No |
+| `list_congressional_trade_volume` | `GET /filer-volume` | No |
+| `get_politician` | `GET /politicians/:id` | No |
+| `get_politician_bot` | `GET /politicians/:id/bot` | No |
+| `list_congressional_filers` | `GET /filers` | Yes |
+| `get_congressional_filer` | `GET /filers/:filerKey` | Yes |
+| `get_congressional_trade` | `GET /trades/:eventId` | Yes |
+| `get_congressional_filing` | `GET /filings/:chamber/:docId` | Yes |
+| `get_congressional_coverage` | `GET /coverage` | Yes |
+
+`get_politician_bot` returns a `sharedPortfolioId` you can pass to
+`fork_public_portfolio` to copy that member's bot into your workspace.
+
 ## SEC statements and filing facts
 
 Run Compute can read point-in-time SEC fundamentals without reconstructing
@@ -1175,6 +1287,23 @@ is missing here, so this list cannot drift from the code.
 | `export_workspace_session()`              | Export an anonymous workspace for later use |
 | `import_workspace_session(token)`         | Resume an existing anonymous workspace      |
 
+**Congressional trades**
+
+| Method | Purpose |
+| --- | --- |
+| `list_congressional_trades(ticker=…, from_date=…, cursor=…, …)` | Disclosed trades, newest first (no API key) |
+| `get_congressional_trade_summary(…)` | Purchase and sale totals over the same filters (no API key) |
+| `get_congressional_leaderboard(limit=…)` | Members ranked by their copy bot against SPY (no API key) |
+| `list_congressional_filing_latency(…)` | Days from trade to public disclosure per member (no API key) |
+| `list_congressional_trade_volume(…)` | Disclosed dollar volume per member (no API key) |
+| `get_politician(politician_id, …)` | One member's profile and trading record (no API key) |
+| `get_politician_bot(politician_id)` | A member's copy bot and cached backtest (no API key) |
+| `list_congressional_filers(…)` | Members with matching disclosures (API key) |
+| `get_congressional_filer(filer_key, …)` | One member's record by Bioguide ID (API key) |
+| `get_congressional_trade(event_id, as_of=…)` | One disclosure with its amendment history (API key) |
+| `get_congressional_filing(chamber, doc_id)` | One source filing and its trades (API key) |
+| `get_congressional_coverage()` | How much of the public record the dataset holds (API key) |
+
 **Portfolio handle** — returned by the `portfolio(...)` builder and by
 `get_portfolio` / `list_portfolios`.
 
@@ -1307,7 +1436,9 @@ takes. A custom `transport=` configures its own timeout, so passing both raises
 
 Portfolio drafting, backtesting, optimization, walk-forward studies, and the
 natural-language stock screener, versioned under `/api/v1/nexustrade`. Market
-data is available only through the screener. The full surface requires a
+data is available only through the screener. Congressional trade disclosures
+are the exception: they are read from `/api/political-disclosures` (see
+[Congressional trades](#congressional-trades)). The full surface requires a
 registered API key; anonymous workspaces are limited to portfolio
 authoring/forking, backtests, and programmatic agent/chat calls. Creating a live
 deployment remains outside this surface.

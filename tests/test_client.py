@@ -15,6 +15,7 @@ from unittest import mock
 
 import nexustrade as nt
 from nexustrade import client as client_module
+from nexustrade import congress as congress_module
 
 
 @contextlib.contextmanager
@@ -626,6 +627,82 @@ class NexusTradeClientTests(unittest.TestCase):
         self.assertEqual(request.get_header("Authorization"), "Bearer sk-temp")
         self.assertEqual(request.get_header("Idempotency-key"), "book-v1")
         self.assertNotIn("sk-temp", repr(transport))
+
+    def test_public_rest_reads_sit_beside_the_versioned_path_without_a_workspace(
+        self,
+    ) -> None:
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = json.dumps({"data": {"trades": []}}).encode(
+            "utf-8"
+        )
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+
+        with mock.patch.object(
+            client_module, "_urlopen", return_value=response
+        ) as urlopen:
+            page = nt.NexusTradeClient(
+                transport=client_module.HttpTransport(
+                    None, "https://gateway.example/api/v1"
+                )
+            ).list_congressional_trades(ticker="NVDA", limit=2)
+
+        self.assertEqual(page["data"]["trades"], [])
+        self.assertEqual(urlopen.call_count, 1)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://gateway.example/api/political-disclosures/trades?ticker=NVDA&limit=2",
+        )
+        self.assertIsNone(request.get_header("Authorization"))
+        self.assertIsNone(request.get_header("X-nexustrade-session"))
+
+    def test_public_rest_routes_get_the_api_key_and_surface_their_plain_message(
+        self,
+    ) -> None:
+        error = urllib.error.HTTPError(
+            "https://gateway.example",
+            401,
+            "Unauthorized",
+            {},
+            BytesIO(json.dumps({"message": "Not authenticated."}).encode("utf-8")),
+        )
+        with mock.patch.object(
+            client_module, "_urlopen", side_effect=error
+        ) as urlopen:
+            with self.assertRaises(client_module.NexusTradeApiError) as raised:
+                client_module.HttpTransport(
+                    "sk-temp", "https://gateway.example/api/v1"
+                ).get_public_api("political-disclosures/coverage")
+
+        self.assertEqual(raised.exception.status, 401)
+        self.assertEqual(raised.exception.code, "api_error")
+        self.assertIn("Not authenticated.", str(raised.exception))
+        self.assertEqual(
+            urlopen.call_args.args[0].get_header("Authorization"), "Bearer sk-temp"
+        )
+
+    def test_congressional_reads_need_a_transport_with_public_rest_support(
+        self,
+    ) -> None:
+        with self.assertRaises(client_module.NexusTradeApiError) as raised:
+            nt.NexusTradeClient(
+                transport=FakeTransport([])
+            ).get_congressional_coverage()
+
+        self.assertEqual(raised.exception.code, "unsupported_transport")
+
+    def test_congressional_types_are_exported_and_declare_the_from_filter(
+        self,
+    ) -> None:
+        for name in congress_module.__all__:
+            self.assertIs(getattr(nt, name), getattr(congress_module, name), name)
+            self.assertIn(name, nt.__all__)
+        self.assertIn("from", nt.CongressionalAppliedFilters.__annotations__)
+        self.assertIn(
+            "initialValue", nt.CongressionalLeaderboardBasis.__annotations__
+        )
 
     def test_http_transport_rejects_malformed_credentials_and_base_urls(self) -> None:
         for key in ("", "sk-token\nInjected: value", "sk token"):
