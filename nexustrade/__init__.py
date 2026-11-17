@@ -8,16 +8,23 @@ inspection/OCR needs ``[documents]``; statistics need ``[stats]``.
 ``# sandbox-prune:begin/end <region>`` comments mark code that a restricted
 runtime strips from its copy of this package. They have no effect on an
 ordinary install: everything between them is live code here. Keep each pair
-balanced when editing, and put new agent entry points inside it.
+balanced when editing, and put new entry points for a marked surface inside
+its region.
 """
 
 from importlib import import_module
 from typing import Any
 
+# sandbox-prune:begin congress-surface
+from nexustrade import congress as _congress
+# sandbox-prune:end congress-surface
 from nexustrade import portfolio as _portfolio
 # sandbox-prune:begin agent-surface
 from nexustrade.agent import AgentEvent, AgentRun
 # sandbox-prune:end agent-surface
+# sandbox-prune:begin congress-surface
+from nexustrade.congress import *
+# sandbox-prune:end congress-surface
 from nexustrade.client import (
     AddStrategiesOperation,
     BacktestCollateralStatistics,
@@ -50,6 +57,9 @@ from nexustrade.portfolio_handle import (
 
 __all__ = [
     *_portfolio.__all__,
+    # sandbox-prune:begin congress-surface
+    *_congress.__all__,
+    # sandbox-prune:end congress-surface
     # sandbox-prune:begin agent-surface
     "AgentEvent",
     "AgentRun",

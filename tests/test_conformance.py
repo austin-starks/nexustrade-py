@@ -9,6 +9,7 @@ they put on the wire.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,27 @@ WAIT_METHODS = {
     "wait_for_optimization",
     "wait_for_walk_forward",
 }
+# Public REST reads go through `get_public_api`, recorded with an absolute
+# `/api/...` path so they cannot be mistaken for a versioned SDK route. Their
+# filters are keyword arguments; `input` is null when a method takes none.
+PUBLIC_API_METHODS = {
+    "list_congressional_trades",
+    "get_congressional_trade_summary",
+    "get_congressional_leaderboard",
+    "list_congressional_filing_latency",
+    "list_congressional_trade_volume",
+    "get_politician",
+    "get_politician_bot",
+    "list_congressional_filers",
+    "get_congressional_filer",
+    "get_congressional_trade",
+    "get_congressional_filing",
+    "get_congressional_coverage",
+}
+
+
+def _camel_to_snake(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 class RecordingTransport:
@@ -65,6 +87,9 @@ class RecordingTransport:
             raise AssertionError(f"no scripted response for {method} {path}")
         return self.responses.pop(0)
 
+    def get_public_api(self, path: str) -> dict[str, Any]:
+        return self.request("GET", f"/api/{path}")
+
 
 def _invoke(client: NexusTradeClient, case: dict[str, Any]) -> Any:
     method = getattr(client, case["method"])
@@ -86,6 +111,14 @@ def _invoke(client: NexusTradeClient, case: dict[str, Any]) -> Any:
         )
     if case["method"] in NO_ARG_METHODS:
         return method()
+    if case["method"] in PUBLIC_API_METHODS:
+        return method(
+            *leading,
+            **{
+                _camel_to_snake(key): value
+                for key, value in (case["input"] or {}).items()
+            },
+        )
     if case["method"] in WAIT_METHODS:
         return method(*leading, case["input"], poll_interval_seconds=0)
     if case["method"] in NO_BODY_METHODS:
