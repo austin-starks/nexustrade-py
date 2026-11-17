@@ -1273,7 +1273,7 @@ def portfolio(
 def AbsoluteValue(
     operand: Indicator,
 ) -> Indicator:
-    """AbsoluteValue indicator.
+    """The absolute value of an indicator.
     """
     d: Dict[str, Any] = {"type": "AbsoluteValue"}
     d["indicators"] = [operand.d]
@@ -1285,7 +1285,7 @@ def AccumulationDistribution(
     asset: Union[str, Dict[str, Any], _Candidate],
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """AccumulationDistribution indicator.
+    """Running total of close-location value times volume. Unlike OBV it weights where in the range the bar closed, so weak closes on high volume distribute. Range: Unbounded (cumulative).
     asset: Ticker name (ex. SPY, BTC)
     interval: Bar interval the line is accumulated on
     """
@@ -1302,7 +1302,7 @@ def AverageDirectionalIndex(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     line: Literal["adx", "plusDi", "minusDi"] = "adx",
 ) -> Indicator:
-    """AverageDirectionalIndex indicator.
+    """Wilder's ADX: trend strength on 0-100, with optional +DI and -DI trend-direction lines. ADX above ~25 is conventionally a strong trend. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1321,7 +1321,7 @@ def AverageTrueRange(
     length: float = 14,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """AverageTrueRange indicator.
+    """The average of True Range over a window. A smoothed measure of volatility used for position sizing and stop-losses. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1336,7 +1336,7 @@ __all__.append("AverageTrueRange")
 def BearishFairValueGap(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """BearishFairValueGap indicator.
+    """Detects a bearish fair value gap (3-candle gap down) on minute bars. Returns the gap's resistance price (candle1 low) while the pattern is active; otherwise no value (condition fails). Not a 0/1 flag — never compare to 1. Range: price when present.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "BearishFairValueGap"}
@@ -1351,7 +1351,7 @@ def BollingerBand(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     num_standard_deviations: float = 1,
 ) -> Indicator:
-    """BollingerBand indicator.
+    """One Bollinger band, returned as a single number: the simple moving average of price plus the given number of standard deviations of price over the same window. A positive number gives the upper band, a negative number the lower band, and 0 the moving average itself. Range: Same scale as price.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1370,7 +1370,7 @@ __all__.append("BBand")
 def BullishFairValueGap(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """BullishFairValueGap indicator.
+    """Detects a bullish fair value gap (3-candle gap up) on minute bars. Returns the gap's support price (candle1 high) while the pattern is active; otherwise no value (condition fails). Not a 0/1 flag — never compare to 1 (that is for CrossAbove/CrossBelow). Range: price when present.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "BullishFairValueGap"}
@@ -1380,7 +1380,7 @@ def BullishFairValueGap(
 __all__.append("BullishFairValueGap")
 
 def BuyingPower() -> Indicator:
-    """BuyingPower indicator.
+    """The amount of cash available to make new purchases. Range: >= 0.
     """
     d: Dict[str, Any] = {"type": "BuyingPower"}
     return Indicator(d)
@@ -1392,7 +1392,7 @@ def ChaikinMoneyFlow(
     length: float = 20,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """ChaikinMoneyFlow indicator.
+    """Money flow volume over money volume across N bars, bounded in -1 to +1. Sustained readings above +0.2 show institutional accumulation. Range: -1 to +1.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1412,7 +1412,7 @@ def ChartBar(
     offset_bars: float = 0,
     minute_policy: Literal["strict", "observed"] = "strict",
 ) -> Indicator:
-    """ChartBar indicator.
+    """Prices, the average close, or the end time of completed chart candles, built from contiguous minute data. Stock candles align to the regular trading session. Range: Same scale as price for open, high, low, close and sma; the endTime line returns the end time of the newest selected candle in Unix seconds.
     asset: Ticker name (ex. SPY, BTC)
     bar_minutes: Completed candles: stocks divide the 390-minute regular session from 9:30 ET. Crypto divides the 1440-minute UTC day or uses 10080 for a Monday UTC week; legacy intraday sizes remain valid. Observation cadence must be Minute even for daily/weekly candles.
     line: open: oldest selected candle; close: newest; high/low: range; sma: mean candle closes.
@@ -1437,7 +1437,7 @@ def CommodityChannelIndex(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     constant: float = 0.015,
 ) -> Indicator:
-    """CommodityChannelIndex indicator.
+    """Deviation of the typical price from its moving average, scaled by mean deviation. Readings above +100 are overbought, below -100 oversold. Range: Unbounded (typically -300 to +300).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1456,7 +1456,7 @@ def CompoundAnnualGrowthRate(
     metric: Literal["totalRevenue", "grossProfit", "operatingIncome", "ebitda", "epsActual", "epsEstimate", "netIncome", "freeCashFlow", "totalAssets", "totalLiab", "shortTermDebt", "longTermDebt", "commonStockSharesOutstanding", "dividendYield", "openingPrice", "highestPrice", "lowestPrice", "closingPrice", "volume", "marketCap", "peRatioTTM", "psRatioTTM", "pbRatioTTM", "enterpriseValue"],
     years: float,
 ) -> Indicator:
-    """CompoundAnnualGrowthRate indicator.
+    """The annualized growth rate of a fundamental metric over a specified number of years. Smooths out quarterly volatility to show the long-term trend. Range: Unbounded (percentage).
     asset: Ticker name (ex. SPY, BTC)
     metric: The fundamental metric to use
     years: Floating point years value
@@ -1527,8 +1527,8 @@ def Correlation(
     length: float = 60,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """Correlation indicator.
-    operands: Sub-indicators this compound operates on.
+    """Rolling Pearson correlation (-1 to 1) of two indicators' period-over-period returns over N paired observations. Flat or degenerate windows read no-signal instead of a fabricated number.
+    operands: One list of exactly 2 sub-indicators.
     length: Length of time
     interval: Unit of time
     """
@@ -1585,7 +1585,7 @@ def CrossBelow(
 __all__.append("CrossBelow")
 
 def CurrentTimeHours() -> Indicator:
-    """CurrentTimeHours indicator.
+    """Hours since midnight in America/New_York time, including fractional hours. For example, 9:30 AM returns 9.5. Daylight saving time is handled automatically.
     """
     d: Dict[str, Any] = {"type": "CurrentTimeHours"}
     return Indicator(d)
@@ -1593,7 +1593,7 @@ def CurrentTimeHours() -> Indicator:
 __all__.append("CurrentTimeHours")
 
 def CurrentTimeMinutes() -> Indicator:
-    """CurrentTimeMinutes indicator.
+    """Minutes since midnight in America/New_York time, including fractional minutes. For example, 9:30 AM returns 570. Daylight saving time is handled automatically.
     """
     d: Dict[str, Any] = {"type": "CurrentTimeMinutes"}
     return Indicator(d)
@@ -1601,7 +1601,7 @@ def CurrentTimeMinutes() -> Indicator:
 __all__.append("CurrentTimeMinutes")
 
 def CurrentTimeSeconds() -> Indicator:
-    """CurrentTimeSeconds indicator.
+    """Seconds since midnight in America/New_York time, including fractions of a second. For example, 9:30 AM returns 34200. Daylight saving time is handled automatically.
     """
     d: Dict[str, Any] = {"type": "CurrentTimeSeconds"}
     return Indicator(d)
@@ -1631,7 +1631,7 @@ def CustomIndicator(
     asset: Union[str, Dict[str, Any], _Candidate],
     custom_indicator_id: str,
 ) -> Indicator:
-    """CustomIndicator indicator.
+    """Account-owned timestamp/value data uploaded through CSV or JSON ingestion. Range: User-defined numeric value.
     asset: Pass CANDIDATE inside a rebalance pipeline to bind per candidate.
     custom_indicator_id: 24-char hex ObjectId of the owned series (list_custom_indicators).
     """
@@ -1643,7 +1643,7 @@ def CustomIndicator(
 __all__.append("CustomIndicator")
 
 def Date() -> Indicator:
-    """Date indicator.
+    """The day of the month in America/New_York, from 1 through 31. Combine with Month and Year for a specific calendar date.
     """
     d: Dict[str, Any] = {"type": "Date"}
     return Indicator(d)
@@ -1651,7 +1651,7 @@ def Date() -> Indicator:
 __all__.append("Date")
 
 def Day() -> Indicator:
-    """Day indicator.
+    """The weekday in America/New_York: Monday = 1 through Sunday = 7. Use Date for the day of the month.
     """
     d: Dict[str, Any] = {"type": "Day"}
     return Indicator(d)
@@ -1659,7 +1659,7 @@ def Day() -> Indicator:
 __all__.append("Day")
 
 def DaysSinceAgent() -> Indicator:
-    """DaysSinceAgent indicator.
+    """The number of days since an AI agent was launched by this strategy. Useful for rate-limiting agent launches. Range: >= 0.
     """
     d: Dict[str, Any] = {"type": "DaysSinceAgent"}
     return Indicator(d)
@@ -1669,7 +1669,7 @@ __all__.append("DaysSinceAgent")
 def DaysSinceAlert(
     message: str,
 ) -> Indicator:
-    """DaysSinceAlert indicator.
+    """The number of days since an alert was triggered. Useful for rate-limiting alerts. Range: >= 0.
     message: (Optional) Message to display when the indicator is triggered
     """
     d: Dict[str, Any] = {"type": "DaysSinceAlert"}
@@ -1681,7 +1681,7 @@ __all__.append("DaysSinceAlert")
 def DaysSinceEarnings(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """DaysSinceEarnings indicator.
+    """Calendar days since the asset's most recent earnings report. In backtests and live, this is the last actually-reported quarter at-or-before the decision time (no look-ahead). Use to time post-earnings entries (e.g. fade the gap after N days, or wait for the IV crush to settle). Range: >= 0 (0 on the report day; grows as time passes).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "DaysSinceEarnings"}
@@ -1691,7 +1691,7 @@ def DaysSinceEarnings(
 __all__.append("DaysSinceEarnings")
 
 def DaysSinceLastRebalanceOptionOrder() -> Indicator:
-    """DaysSinceLastRebalanceOptionOrder indicator.
+    """Elapsed days since the latest Filled-matching portfolio order stamped RebalanceOption, RebalanceOptionRenewal or RebalanceOptionFunding. It uses fill time and ignores strategy ID, so these strategies share a cooldown. Unfilled or canceled orders do not reset it. Range: >= 0 (days), or a large number if no RebalanceOption-generated order exists.
     """
     d: Dict[str, Any] = {"type": "DaysSinceLastRebalanceOptionOrder"}
     return Indicator(d)
@@ -1708,7 +1708,7 @@ def DaysSinceOptionOrder(
     max_dte: float,
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
 ) -> Indicator:
-    """DaysSinceOptionOrder indicator.
+    """The number of days since the most recent option order matching the specified filters. Supports filtering by underlying, option type (call/put), spread type, direction (long/short), position effect (open/close), and days to expiration at order time. Range: >= 0 (days), or a large number if no matching order exists.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -1736,7 +1736,7 @@ def DaysSinceOrder(
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
 ) -> Indicator:
-    """DaysSinceOrder indicator.
+    """The number of days since the most recent order matching the specified filters. Range: >= 0 (days), or a large number if no matching order exists.
     assets: Ticker(s) whose orders are counted. One string or an array.
     side: Buy or Sell
     """
@@ -1749,7 +1749,7 @@ def DaysSinceOrder(
 __all__.append("DaysSinceOrder")
 
 def DaysSinceStrategyFired() -> Indicator:
-    """DaysSinceStrategyFired indicator.
+    """The number of days since the current strategy last produced an execution artifact. Counts same-strategy order rows, rebalance orders, and launched agents. Range: >= 0 (days), or a large number if the strategy has never fired.
     """
     d: Dict[str, Any] = {"type": "DaysSinceStrategyFired"}
     return Indicator(d)
@@ -1759,7 +1759,7 @@ __all__.append("DaysSinceStrategyFired")
 def DaysUntilEarnings(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """DaysUntilEarnings indicator.
+    """Calendar days until the asset's next expected earnings report. In backtests the next date is a point-in-time cadence estimate from the last report (no look-ahead); live trading uses the real next scheduled date. Use to time entries and exits around earnings. Range: >= 0 (0 on/after the expected report day; counts down as it nears).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "DaysUntilEarnings"}
@@ -1772,7 +1772,7 @@ def Divide(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """Divide indicator.
+    """Quotient of indicators.
     """
     d: Dict[str, Any] = {"type": "Divide"}
     d["indicators"] = [left.d, right.d]
@@ -1786,7 +1786,7 @@ def DonchianChannel(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     line: Literal["upper", "lower", "middle"] = "upper",
 ) -> Indicator:
-    """DonchianChannel indicator.
+    """Highest high and lowest low over N bars with a midline. Breaks of either edge are breakout entries; the midline is the first pullback level. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1803,7 +1803,7 @@ __all__.append("DonchianChannel")
 def Economic(
     metric: Literal["NonfarmPayrolls", "UnemploymentRate", "MoneySupply", "TreasuryYield3Month", "CPI"],
 ) -> Indicator:
-    """Economic indicator.
+    """Macroeconomic data not tied to a specific asset.
     metric: The economic indicator to use
     """
     d: Dict[str, Any] = {"type": "Economic"}
@@ -1835,7 +1835,7 @@ def Exponentiation(
     operand: Indicator,
     exponent: float = 2,
 ) -> Indicator:
-    """Exponentiation indicator.
+    """Raises an indicator to a specified power.
     exponent: The exponent to raise the value to
     """
     d: Dict[str, Any] = {"type": "Exponentiation"}
@@ -1849,7 +1849,7 @@ def Fundamental(
     asset: Union[str, Dict[str, Any], _Candidate],
     metric: Literal["totalRevenue", "grossProfit", "operatingIncome", "ebitda", "epsActual", "epsEstimate", "netIncome", "freeCashFlow", "totalAssets", "totalLiab", "shortTermDebt", "longTermDebt", "commonStockSharesOutstanding", "dividendYield", "openingPrice", "highestPrice", "lowestPrice", "closingPrice", "volume", "marketCap", "peRatioTTM", "psRatioTTM", "pbRatioTTM", "enterpriseValue"],
 ) -> Indicator:
-    """Fundamental indicator.
+    """A financial metric from a company's statements or derived valuation ratios.
     asset: Ticker name (ex. SPY, BTC)
     metric: The fundamental metric to use
     """
@@ -1863,7 +1863,7 @@ __all__.append("Fundamental")
 def GapPercentage(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """GapPercentage indicator.
+    """The gap size expressed as a percentage of the previous close. Range: Unbounded (percentage).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "GapPercentage"}
@@ -1875,7 +1875,7 @@ __all__.append("GapPercentage")
 def GapSize(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """GapSize indicator.
+    """The dollar difference between today's opening price and yesterday's closing price. Range: Unbounded.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "GapSize"}
@@ -1888,7 +1888,7 @@ def HeikinAshi(
     asset: Union[str, Dict[str, Any], _Candidate],
     line: Literal["open", "high", "low", "close", "streak"] = "close",
 ) -> Indicator:
-    """HeikinAshi indicator.
+    """Heikin-Ashi candles built from COMPLETED one-minute bars in the regular session (9:30-15:59 bar opens; pre-market and after-hours bars are skipped), identically in backtests and live trading. The first bar seeds HA open = (O+C)/2 with its own high, low and close; after that HA close = (O+H+L+C)/4, HA open = (prior HA open + prior HA close)/2, HA high = max(H, HA open, HA close), HA low = min(L, HA open, HA close). The recursion carries across sessions and advances once per new bar. The streak line is the signed length of the current same-color run, counted from the color change (+3 on the third green candle, -3 on the third red); it reads 0 on a doji and for the rest of any run in which a candle shows an opposite-direction wick (a lower wick on green, an upper wick on red). Range: Price scale; streak is a signed integer.
     asset: Ticker name (ex. SPY, BTC)
     line: Which one-minute Heikin-Ashi value to evaluate. streak is the signed length of the current same-color run (0 once it shows an opposite-direction wick, and on a doji)
     """
@@ -1902,7 +1902,7 @@ __all__.append("HeikinAshi")
 def HighOfDay(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """HighOfDay indicator.
+    """The highest price reached during the current trading session. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "HighOfDay"}
@@ -1918,7 +1918,7 @@ def IchimokuCloud(
     span_length: float = 52,
     line: Literal["tenkan", "kijun", "senkouA", "senkouB", "chikou"] = "tenkan",
 ) -> Indicator:
-    """IchimokuCloud indicator.
+    """Five-line trend system: Tenkan and Kijun midpoints, Senkou A/B cloud bands, and the Chikou lagging line. Lines are evaluated unshifted. Price above the cloud with Tenkan above Kijun is the full bullish alignment. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -1938,7 +1938,7 @@ def ImpliedVolatility(
     asset: Union[str, Dict[str, Any], _Candidate],
     dte: float = 30,
 ) -> Indicator:
-    """ImpliedVolatility indicator.
+    """Constant-maturity at-the-money implied volatility for the underlying, built from the options chain (near-target-DTE expirations, |delta|≈0.50 call/put average, linearly interpolated). Units are annualized decimals (0.25 = 25%). Used on each candidate of a dynamic rebalance over a broad universe (all US stocks, an index or a watchlist), it reads options chains with Greeks for every stock in that universe instead of one underlying, so the run is heavier than with a named ticker or a specific asset list. Range: > 0 (annualized decimal).
     asset: Ticker name (ex. SPY, BTC)
     dte: Target constant-maturity tenor in calendar days (e.g. 30)
     """
@@ -1952,7 +1952,7 @@ __all__.append("ImpliedVolatility")
 def Index(
     metric: Literal["VIX", "SPX", "NDX", "DJI", "RUT", "SKEW", "VVIX", "USDBROAD", "TNX"] = "VIX",
 ) -> Indicator:
-    """Index indicator.
+    """Daily level for a market index or benchmark (e.g. VIX, SPX) from hydrated index price data — not a tradable equity price. Range: Unbounded (index points).
     metric: Ticker key matching hydrated index price data (add more in BigQuery + rehydrate as needed)
     """
     d: Dict[str, Any] = {"type": "Index"}
@@ -1993,7 +1993,7 @@ def IndicatorAtEntry(
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
     anchor: Literal["LatestFill", "HoldingEntry"] = "LatestFill",
 ) -> Indicator:
-    """IndicatorAtEntry indicator.
+    """The value an indicator held at a matching fill of the asset. The entry anchor chooses the fill: LatestFill (the default) follows the most recent matching fill; HoldingEntry preserves the original holding entry when shares are added. The captured level stays fixed instead of rolling forward. In the form, a candidate-bound condition may leave the asset empty and the surrounding action supplies it; SDK code always passes the asset, using CANDIDATE inside a rebalance pipeline.
     asset: Ticker name (ex. SPY, BTC)
     side: The side of the fill the value is anchored to
     order_status: Matches order events with this status
@@ -2012,7 +2012,7 @@ def IndicatorAtMinutesAfterOpen(
     operand: Indicator,
     minutes_after_open: float = 30,
 ) -> Indicator:
-    """IndicatorAtMinutesAfterOpen indicator.
+    """Captures the first non-null evaluated indicator value at or after the configured number of minutes after market open. The captured value is then frozen until its next daily reset. A delayed evaluation can capture after the target minute.
     minutes_after_open: The number of minutes after market open to capture the indicator value
     """
     d: Dict[str, Any] = {"type": "IndicatorAtMinutesAfterOpen"}
@@ -2027,7 +2027,7 @@ def IndicatorExponentialMovingAverage(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IndicatorExponentialMovingAverage indicator.
+    """Computes the Exponential Moving Average of any other indicator. TradingDay follows the input markets: crypto-only inputs use elapsed 24-hour days, including weekends, just like Day. Stock, option, mixed-market and asset-free expressions use confirmed exchange sessions. The window does not change intraday prices into daily closing prices. TradingMinute counts regular-session minutes the same way, so a 70 TradingMinute window at 9:45 reaches back to 3:06 PM on the prior session (the overnight gap is one step); crypto-only inputs use elapsed minutes. It allows at most 1439 minutes; use TradingDay for longer lookbacks. Indicators read every tick have no TradingMinute value outside regular hours, and windows over a ChartBar keep the value of its latest completed candle.
     length: Length of time
     interval: Unit of time
     """
@@ -2059,7 +2059,7 @@ def IndicatorMeanAbsoluteDeviation(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IndicatorMeanAbsoluteDeviation indicator.
+    """Computes the MAD of any indicator over a window. Less sensitive to outliers than standard deviation.
     length: Length of time
     interval: Unit of time
     """
@@ -2091,7 +2091,7 @@ def IndicatorRateOfChange(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IndicatorRateOfChange indicator.
+    """The percentage change of any indicator over a window.
     length: Length of time
     interval: Unit of time
     """
@@ -2107,7 +2107,7 @@ def IndicatorSimpleMovingAverage(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IndicatorSimpleMovingAverage indicator.
+    """Computes the Simple Moving Average of any other indicator over a window. TradingDay follows the input markets: crypto-only inputs use elapsed 24-hour days, including weekends, just like Day. Stock, option, mixed-market and asset-free expressions use confirmed exchange sessions. The window does not change intraday prices into daily closing prices. TradingMinute counts regular-session minutes the same way, so a 70 TradingMinute window at 9:45 reaches back to 3:06 PM on the prior session (the overnight gap is one step); crypto-only inputs use elapsed minutes. It allows at most 1439 minutes; use TradingDay for longer lookbacks. Indicators read every tick have no TradingMinute value outside regular hours, and windows over a ChartBar keep the value of its latest completed candle.
     length: Length of time
     interval: Unit of time
     """
@@ -2123,7 +2123,7 @@ def IndicatorStandardDeviation(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IndicatorStandardDeviation indicator.
+    """Computes the standard deviation of any indicator over a window.
     length: Length of time
     interval: Unit of time
     """
@@ -2175,7 +2175,7 @@ def IndustryNewsSentiment(
 __all__.append("IndustryNewsSentiment")
 
 def InitialValue() -> Indicator:
-    """InitialValue indicator.
+    """The starting value of the portfolio when it was created or when the backtest began. Range: > 0.
     """
     d: Dict[str, Any] = {"type": "InitialValue"}
     return Indicator(d)
@@ -2191,7 +2191,7 @@ def InsiderTrades(
     issuer_cik: Optional[str] = None,
     instrument: Optional[Literal["Equity", "Call", "Put"]] = None,
 ) -> Indicator:
-    """InsiderTrades indicator.
+    """Disclosed purchases (code P, including open-market or private transactions), sales (code S), and a separate exact-owner AwardCount for code A issuer grants or other acquisitions over a trailing publication window. AcquisitionCount combines code P and code A as distinct acquisition signals for modeled follower strategies; awards are not reclassified as purchases or sales and do not prove vested common-share ownership. Exact-owner strategies use versioned common-share, call/put, and issuer-award evidence; exercises and warrants are excluded from tradable purchase signals. A signal becomes eligible when its filing is public, never on an earlier transaction date. Range: Dollars, shares, counts or budget percent; unknown owner/amendment coverage has no value.
     asset: Pass CANDIDATE in a dynamic rebalance pipeline.
     owner_cik: Exact nonzero SEC reporting owner CIK, up to 10 digits. Omit for a whole company (with issuerCik) or aggregate activity.
     issuer_cik: Company CIK. With ownerCik, restricts that owner to this company. Alone, every reporting owner's events at this company, a joint filing counted once.
@@ -2219,7 +2219,7 @@ def InstitutionalHoldings(
     window_days: float = 180,
     instrument: Literal["Equity", "Call", "Put"] = "Equity",
 ) -> Indicator:
-    """InstitutionalHoldings indicator.
+    """Institutional positions in the asset disclosed on SEC Form 13F. Naming a manager follows one institution; an empty manager reads every manager holding the asset (SDK code passes an empty string). Level metrics read the latest quarter whose filing became public on or before the evaluation date; change metrics compare it with the quarter before. Positions are never summed across quarters, and an amended filing replaces the original only from the moment the amendment became public. Range: Counts, shares, dollars or a top-5 share of holdings; 0 when no 13F naming the asset was public within the window.
     asset: Ticker name (ex. SPY, BTC)
     manager: Optional: a CIK such as 1067983, or part of a manager's name such as Renaissance Technologies. Leave empty for every manager. A CIK is exact; a name can match several firms
     metric: Managers holding, shares or value held, concentration, or the change since the previous quarter
@@ -2240,7 +2240,7 @@ def IsAsset(
     match_asset: Union[str, Dict[str, Any], _Candidate],
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """IsAsset indicator.
+    """Returns 1 if the asset matches a specific symbol. Useful for including specific assets in multi-asset strategies.
     match_asset: The specific asset to compare against (ex. UPRO, GLD)
     asset: Ticker name (ex. SPY, BTC)
     """
@@ -2255,7 +2255,7 @@ def IsAssetType(
     asset: Union[str, Dict[str, Any], _Candidate],
     asset_type: Literal["Stock", "Cryptocurrency", "Option", "Other"] = "Stock",
 ) -> Indicator:
-    """IsAssetType indicator.
+    """Returns 1 if the asset matches Stock, Cryptocurrency, Option or Other, and 0 otherwise. ETFs are Stock assets; use separate stock metadata or a universe filter to select ETFs.
     asset: Ticker name (ex. SPY, BTC)
     asset_type: The asset type to check against
     """
@@ -2270,7 +2270,7 @@ def IsIndexMember(
     asset: Union[str, Dict[str, Any], _Candidate],
     index: Literal["SP500", "NASDAQ100", "DJIA"] = "SP500",
 ) -> Indicator:
-    """IsIndexMember indicator.
+    """Returns 1 if the asset is a member of a specified index, 0 otherwise.
     asset: Ticker name (ex. SPY, BTC)
     index: The index to check membership against
     """
@@ -2285,7 +2285,7 @@ def IsIndustry(
     asset: Union[str, Dict[str, Any], _Candidate],
     industry: Literal["technology", "financialServices", "healthcare", "energy", "consumerGoods", "entertainmentAndMedia", "manufacturing", "transportation", "realEstate", "utilities", "agriculture", "education", "retail", "artificialIntelligence", "aiInfrastructure", "analytics", "cloudComputing", "dataCenter", "database", "cybersecurity", "developerTools", "software", "saas", "enterpriseSoftware", "customerExperienceSoftware", "productivityTools", "collaborationSoftware", "digitalSignatureAndAuthentication", "hardware", "consumerElectronics", "networking", "semiconductor", "chipDesign", "chipManufacturing", "semiconductorEquipment", "gpuAndAccelerators", "memoryAndStorage", "quantumComputing", "robotics", "industrialAutomation", "iot", "smartDevices", "wearable", "3dPrinting", "augmentedReality", "virtualReality", "space", "satellites", "aerospace", "defense", "drones", "financialInfrastructure", "capitalMarketsTechnology", "banking", "assetManagement", "brokerage", "payments", "fintech", "insurance", "autoInsurance", "homeInsurance", "lifeInsurance", "healthInsurance", "blockchain", "cryptocurrency", "biotechnology", "pharmaceuticals", "medicalDevices", "digitalHealth", "lifeSciencesSoftware", "bioinformatics", "computationalBiology", "computationalDrugDiscovery", "oncology", "immunotherapy", "vaccines", "veterinary", "oil", "gas", "oilfieldServices", "cleanEnergy", "renewableEnergy", "solarEnergy", "windEnergy", "nuclearEnergy", "hydrogen", "batteryTechnology", "miningAndNaturalResources", "gold", "silver", "chemicals", "advancedMaterials", "waterInfrastructure", "wasteManagementAndRecycling", "forestry", "construction", "buildingMaterials", "electricalAndGridInfrastructure", "logisticsAndSupplyChain", "airline", "maritime", "railroads", "automotive", "electricVehicle", "autonomousTransportation", "recreationalVehicle", "cruise", "rideShare", "printing", "packaging", "householdProducts", "ecommerce", "digitalMarketplace", "fashionAndApparel", "luxuryGoods", "jewelry", "foodAndBeverage", "foodDelivery", "nutrition", "petCare", "outdoorAndRecreationalEquipment", "sportsAndFitness", "cannabis", "hospitalityAndTravel", "homeSecurity", "advertising", "gaming", "gambling", "sportsBetting", "socialMedia", "streaming", "movies", "musicAndAudio", "publishing", "telecommunications", "edtech", "proptech", "informationTechnology", "personalAndHouseholdGoods", "investing", "spaceExploration", "alternativeEnergy", "clothesAndApparal", "computationalChemistry", "customerEngagement", "dataVisualization", "graphicsCard", "materialScience", "medicine", "messaging", "phones", "security", "socialNetwork", "television", "videoConferencing", "videos", "waterPurifaction", "waterTreatment"],
 ) -> Indicator:
-    """IsIndustry indicator.
+    """Returns 1 if the asset belongs to a specified industry, 0 otherwise. Over 100 categories supported including Artificial Intelligence, Semiconductor, Electric Vehicles, Space Exploration, Healthcare, Biotechnology, Cloud Computing, Cybersecurity, Renewable Energy, and many more.
     asset: Ticker name (ex. SPY, BTC)
     industry: The industry to check membership against
     """
@@ -2300,7 +2300,7 @@ def IsNotAsset(
     match_asset: Union[str, Dict[str, Any], _Candidate],
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """IsNotAsset indicator.
+    """Returns 1 if the asset does NOT match a specific symbol. Useful for excluding specific assets.
     match_asset: The specific asset to compare against (ex. UPRO, GLD)
     asset: Ticker name (ex. SPY, BTC)
     """
@@ -2315,7 +2315,7 @@ def IVHVRatio(
     asset: Union[str, Dict[str, Any], _Candidate],
     hv_window: float = 20,
 ) -> Indicator:
-    """IVHVRatio indicator.
+    """Constant-maturity ATM implied volatility divided by annualized close-to-close realized volatility (HV) over hvWindow trading days. Values > 1 mean options are pricing more vol than recently realized. Used on each candidate of a dynamic rebalance over a broad universe (all US stocks, an index or a watchlist), it reads options chains with Greeks for every stock in that universe instead of one underlying, so the run is heavier than with a named ticker or a specific asset list. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     hv_window: Trading days of log-return history for realized volatility
     """
@@ -2331,7 +2331,7 @@ def IVPercentile(
     length: float = 252,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IVPercentile indicator.
+    """Percent of sessions in the lookback window whose constant-maturity ATM IV was strictly below today's (0–100). Distinct from IV Rank. Used on each candidate of a dynamic rebalance over a broad universe (all US stocks, an index or a watchlist), it reads options chains with Greeks for every stock in that universe instead of one underlying, so the run is heavier than with a named ticker or a specific asset list. Range: 0–100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2348,7 +2348,7 @@ def IVRank(
     length: float = 252,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """IVRank indicator.
+    """Where today's constant-maturity ATM IV sits between the lookback window's high and low: (IV − IV_low) / (IV_high − IV_low) × 100. Distinct from IV Percentile. Used on each candidate of a dynamic rebalance over a broad universe (all US stocks, an index or a watchlist), it reads options chains with Greeks for every stock in that universe instead of one underlying, so the run is heavier than with a named ticker or a specific asset list. Range: 0–100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2367,7 +2367,7 @@ def KeltnerChannel(
     multiplier: float = 2,
     line: Literal["upper", "middle", "lower"] = "middle",
 ) -> Indicator:
-    """KeltnerChannel indicator.
+    """EMA midline with ATR bands above and below. Tighter than Bollinger in calm tape, so closes outside the bands mean stronger conviction moves. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2400,7 +2400,7 @@ def LastOrderPrice(
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
 ) -> Indicator:
-    """LastOrderPrice indicator.
+    """The execution price of the most recent order matching the specified filters. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     side: Matches order events with this side (buy or sell)
     order_status: Matches order events with this status
@@ -2417,7 +2417,7 @@ def Log(
     operand: Indicator,
     base: float = 10,
 ) -> Indicator:
-    """Log indicator.
+    """Logarithm of an indicator with a specified base.
     base: The base for the logarithm
     """
     d: Dict[str, Any] = {"type": "Log"}
@@ -2430,7 +2430,7 @@ __all__.append("Log")
 def LowOfDay(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """LowOfDay indicator.
+    """The lowest price reached during the current trading session. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "LowOfDay"}
@@ -2443,7 +2443,7 @@ def Max(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """Max indicator.
+    """The maximum value of two or more indicators. The SDK builder takes exactly two operands; nest it to compare more.
     """
     d: Dict[str, Any] = {"type": "Max"}
     d["indicators"] = [left.d, right.d]
@@ -2456,7 +2456,7 @@ def MaxDrawdown(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """MaxDrawdown indicator.
+    """The largest peak-to-trough percentage decline of the asset's price inside the window, reported as a positive number: 10 means a 10% fall from a high to a later low, and 0 means the price never fell below an earlier price in the window. Measures worst-case downside risk. Range: 0 to 100 (percent, never negative).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2473,7 +2473,7 @@ def MaxDrawup(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """MaxDrawup indicator.
+    """The maximum trough-to-peak percentage increase over a window. Range: >= 0 (percentage).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2490,7 +2490,7 @@ def MaximumPrice(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """MaximumPrice indicator.
+    """The highest of the asset's observed prices over a window, including the current one. Each observation is the price at that time (a completed day contributes its close, a completed minute its closing price), not an intrabar high. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2506,7 +2506,7 @@ def Min(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """Min indicator.
+    """The minimum value of two or more indicators. The SDK builder takes exactly two operands; nest it to compare more.
     """
     d: Dict[str, Any] = {"type": "Min"}
     d["indicators"] = [left.d, right.d]
@@ -2519,7 +2519,7 @@ def MinimumPrice(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """MinimumPrice indicator.
+    """The lowest of the asset's observed prices over a window, including the current one. Each observation is the price at that time (a completed day contributes its close, a completed minute its closing price), not an intrabar low. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2535,7 +2535,7 @@ def Minus(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """Minus indicator.
+    """Difference between indicators.
     """
     d: Dict[str, Any] = {"type": "Minus"}
     d["indicators"] = [left.d, right.d]
@@ -2546,7 +2546,7 @@ __all__.append("Minus")
 def MinuteBarHigh(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """MinuteBarHigh indicator.
+    """The high of the most recently COMPLETED one-minute bar. The bar that opens at 9:30 is readable from 9:31, identically in backtests and live trading; the forming bar is never used. Not the day's high (use High of Day). Pre-market and after-hours bars count. Strategies using it run on one-minute data. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "MinuteBarHigh"}
@@ -2558,7 +2558,7 @@ __all__.append("MinuteBarHigh")
 def MinuteBarLow(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """MinuteBarLow indicator.
+    """The low of the most recently COMPLETED one-minute bar. The bar that opens at 9:30 is readable from 9:31, identically in backtests and live trading; the forming bar is never used. Not the day's low (use Low of Day). Pre-market and after-hours bars count. Strategies using it run on one-minute data. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "MinuteBarLow"}
@@ -2568,7 +2568,7 @@ def MinuteBarLow(
 __all__.append("MinuteBarLow")
 
 def MinutesAfterOpen() -> Indicator:
-    """MinutesAfterOpen indicator.
+    """Whole minutes since the regular US market open (9:30 AM ET), read from the Eastern clock. The value is not clamped to the session: it is negative before the open and keeps rising above 390 after the 4:00 PM close. Range: 0 to 390 during a regular session; negative before 9:30 AM ET and above 390 after the close.
     """
     d: Dict[str, Any] = {"type": "MinutesAfterOpen"}
     return Indicator(d)
@@ -2576,7 +2576,7 @@ def MinutesAfterOpen() -> Indicator:
 __all__.append("MinutesAfterOpen")
 
 def MinutesSinceAgent() -> Indicator:
-    """MinutesSinceAgent indicator.
+    """The number of minutes since an AI agent was launched by this strategy. Useful for fine-grained rate-limiting of agent launches within a single day. Range: >= 0.
     """
     d: Dict[str, Any] = {"type": "MinutesSinceAgent"}
     return Indicator(d)
@@ -2586,7 +2586,7 @@ __all__.append("MinutesSinceAgent")
 def MinutesSinceAlert(
     message: str,
 ) -> Indicator:
-    """MinutesSinceAlert indicator.
+    """The number of minutes since an alert was triggered. Useful for fine-grained rate-limiting of alerts within a single day. Range: >= 0.
     message: (Optional) Message to display when the indicator is triggered
     """
     d: Dict[str, Any] = {"type": "MinutesSinceAlert"}
@@ -2605,7 +2605,7 @@ def MinutesSinceOptionOrder(
     max_dte: float,
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
 ) -> Indicator:
-    """MinutesSinceOptionOrder indicator.
+    """The number of minutes since the most recent option order matching the specified filters. Same filters as Days Since Option Order but measured in minutes for intraday strategies. Range: >= 0 (minutes), or a large number if no matching order exists.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2634,7 +2634,7 @@ def MinutesSinceOrder(
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
     clock: Optional[Literal["Calendar", "Trading"]] = None,
 ) -> Indicator:
-    """MinutesSinceOrder indicator.
+    """Same as Days Since Order but measured in minutes. Useful for intraday strategies. Range: >= 0 (minutes).
     assets: Ticker(s) whose orders are counted. One string or an array.
     side: Buy or Sell
     clock: Optional elapsed-time clock; omitted retains calendar minutes.
@@ -2650,7 +2650,7 @@ def MinutesSinceOrder(
 __all__.append("MinutesSinceOrder")
 
 def MinutesUntilClose() -> Indicator:
-    """MinutesUntilClose indicator.
+    """Whole minutes until the US equity session close, read from the Eastern clock. The close is that day's real session close, so an early-close day counts down to 1:00 PM ET instead of 4:00 PM. The value is not clamped to the session: it is negative after the close and above 390 before the 9:30 AM open. Range: 0 to 390 during a regular session (0 to 210 on a 1:00 PM early close); negative after the close and above 390 before the open.
     """
     d: Dict[str, Any] = {"type": "MinutesUntilClose"}
     return Indicator(d)
@@ -2662,7 +2662,7 @@ def MoneyFlowIndex(
     length: float = 14,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """MoneyFlowIndex indicator.
+    """Volume-weighted RSI: money flow direction over N bars on a 0-100 scale. Above 80 is overbought, below 20 oversold. Requires volume data. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -2675,7 +2675,7 @@ def MoneyFlowIndex(
 __all__.append("MoneyFlowIndex")
 
 def Month() -> Indicator:
-    """Month indicator.
+    """The current month (1–12).
     """
     d: Dict[str, Any] = {"type": "Month"}
     return Indicator(d)
@@ -2690,7 +2690,7 @@ def MovingAverageConvergenceDivergence(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     line: Literal["macd", "signal", "histogram"] = "macd",
 ) -> Indicator:
-    """MovingAverageConvergenceDivergence indicator.
+    """MACD line (fast EMA minus slow EMA), its signal EMA, or the histogram (MACD minus signal). Classic trend/momentum indicator. Range: Positive or negative for all three lines, in price units: each is a difference of moving averages, not a price level.
     asset: Ticker name (ex. SPY, BTC)
     fast_length: Period of the fast EMA
     slow_length: Period of the slow EMA (must exceed the fast length)
@@ -2713,7 +2713,7 @@ def Multiply(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """Multiply indicator.
+    """Product of indicators.
     """
     d: Dict[str, Any] = {"type": "Multiply"}
     d["indicators"] = [left.d, right.d]
@@ -2724,7 +2724,7 @@ __all__.append("Multiply")
 def Negative(
     operand: Indicator,
 ) -> Indicator:
-    """Negative indicator.
+    """Negates an indicator's value.
     """
     d: Dict[str, Any] = {"type": "Negative"}
     d["indicators"] = [operand.d]
@@ -2739,7 +2739,7 @@ def NewInsiderDisclosure(
     instrument: Literal["Equity", "Call", "Put"] = "Equity",
     disclosure_action: Literal["Any", "Purchase", "Sale", "Award"] = "Any",
 ) -> Indicator:
-    """NewInsiderDisclosure indicator.
+    """True when a newly public Form 4 version matches the selected owner, issuer, role, instrument and action and awaits a strategy decision. Exact-owner corrections count as new versions. A company CIK without an owner watches every reporting owner at that company, and a joint filing fires once. A handled event does not fire again on later price ticks; unverified owner coverage has no value, and a company is only as covered as its least-covered matching owner. Range: 1 while a public Form 4 version awaits a decision; otherwise 0.
     owner_cik: Exact SEC reporting owner CIK. Omit for a whole company (with issuerCik) or aggregate Form 4 activity.
     issuer_cik: Company CIK. With ownerCik, restricts that owner; alone, every reporting owner at this company, a joint filing once.
     role: The reporting owner's role.
@@ -2761,7 +2761,7 @@ __all__.append("NewInsiderDisclosure")
 def NewInstitutionalFiling(
     manager: str,
 ) -> Indicator:
-    """NewInstitutionalFiling indicator.
+    """True when an exact manager CIK has a newly public 13F filing or amendment this strategy has not handled. Each accession creates one decision; later price ticks do not repeat it. The current InstitutionalHoldings book still sets target positions. Range: 1 while a public filing awaits a decision; otherwise 0.
     manager: Exact numeric SEC manager CIK. A new 13F accession, including an amendment, triggers one decision.
     """
     d: Dict[str, Any] = {"type": "NewInstitutionalFiling"}
@@ -2775,7 +2775,7 @@ def NewPoliticalDisclosure(
     instrument: Literal["Equity", "Option"],
     disclosure_action: Literal["Any", "Purchase", "Sale"],
 ) -> Indicator:
-    """NewPoliticalDisclosure indicator.
+    """True when a selected member has a newly public equity or option trade disclosure that this strategy has not handled. Corrections count when they become public. A handled disclosure does not fire again on later price ticks. Range: 1 while a new disclosure awaits a decision; otherwise 0.
     member_id: Exact Bioguide member ID, such as P000197.
     instrument: Equity or option disclosures, never both for a public bot arm.
     disclosure_action: Which newly public trade sides trigger a decision.
@@ -2807,7 +2807,7 @@ def NewsSentiment(
 __all__.append("NewsSentiment")
 
 def NewTradingWeek() -> Indicator:
-    """NewTradingWeek indicator.
+    """True on the first evaluated trading tick of an ISO week until the strategy makes a decision. A no-order decision still consumes that week, and live portfolios persist the decision through a restart. Use with an option disclosure trigger for modeled maintenance. Range: 1 while this week's first decision is pending; otherwise 0.
     """
     d: Dict[str, Any] = {"type": "NewTradingWeek"}
     return Indicator(d)
@@ -2818,7 +2818,7 @@ def OnBalanceVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """OnBalanceVolume indicator.
+    """Running total of signed volume: adds the bar's volume on up closes, subtracts on down closes. Rising OBV with flat price is accumulation. Range: Unbounded (cumulative).
     asset: Ticker name (ex. SPY, BTC)
     interval: Bar interval the volume is accumulated on
     """
@@ -2832,7 +2832,7 @@ __all__.append("OnBalanceVolume")
 def OpeningPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """OpeningPrice indicator.
+    """The price of an asset at market open. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "OpeningPrice"}
@@ -2847,7 +2847,7 @@ def OptionCollateral(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionCollateral indicator.
+    """Returns the total collateral locked across option spreads matching the filter. Range: 0 to ∞ (dollars).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2869,7 +2869,7 @@ def OptionDaysHeld(
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
     min_or_max: Literal["min", "max"] = "min",
 ) -> Indicator:
-    """OptionDaysHeld indicator.
+    """Returns the minimum or maximum days since entry across option spreads matching the filter. Range: 0 to ∞.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2893,7 +2893,7 @@ def OptionDaysToExpiration(
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
     min_or_max: Literal["min", "max"] = "min",
 ) -> Indicator:
-    """OptionDaysToExpiration indicator.
+    """Returns the minimum or maximum days to expiration across option spreads matching the filter. Range: 0 to 365+.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2911,7 +2911,7 @@ def OptionDaysToExpiration(
 __all__.append("OptionDaysToExpiration")
 
 def OptionGrossExposurePercent() -> Indicator:
-    """OptionGrossExposurePercent indicator.
+    """Sum of absolute option leg marks divided by portfolio value (percent). Matches gross deployment audits. Unfiltered portfolio-wide only. Range: 0% to ∞.
     """
     d: Dict[str, Any] = {"type": "OptionGrossExposurePercent"}
     return Indicator(d)
@@ -2924,7 +2924,7 @@ def OptionPositionCount(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionPositionCount indicator.
+    """Returns the number of open option contract positions/legs matching the filter criteria. Portfolio-wide (no underlying, option type, direction, or spread filters): open legs plus legs reserved by earlier true OpenOption signals in the same tick's strategy loop. Filtered counts (e.g. per ticker) use open legs only. Use Option Spread Count for multi-leg spread groups. Range: 0 to ∞.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2945,7 +2945,7 @@ def OptionPositionMaxDrawdown(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionPositionMaxDrawdown indicator.
+    """Peak-to-current drawdown of the aggregated P&L percentage across option spreads matching the filter. Stateful counterpart of the Option Position P&L% indicator (OptionPositionPercentChange): while that indicator returns the current P&L percentage, this one tracks the highest value observed and returns how far the position has fallen from that peak. Resets when no matching spreads remain so a fresh entry starts from a clean peak. Range: >= 0 (percentage points of P&L).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2966,7 +2966,7 @@ def OptionPositionPercentChange(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionPositionPercentChange indicator.
+    """Returns the weighted average P&L percentage across option spreads matching the filter. Range: -100% to ∞.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -2987,7 +2987,7 @@ def OptionPositionValue(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionPositionValue indicator.
+    """Returns the total market value of option spreads matching the filter criteria. Range: 0 to ∞ (dollars).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -3009,7 +3009,7 @@ def OptionRealizedPnL(
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
     lookback_days: Optional[float] = None,
 ) -> Indicator:
-    """OptionRealizedPnL indicator.
+    """Returns the net realized P&L in dollars from CLOSED option positions matching the filter, long and short alike. Losing closes count as negative. Measures closes only and subtracts nothing for premium already spent. Lookback Days limits it to closes within that many days of the evaluation date; omit it for the whole life of the book. Range: -∞ to ∞ (dollars).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -3031,7 +3031,7 @@ def OptionRealizedPremium(
     underlying: str,
     lookback_days: Optional[float] = None,
 ) -> Indicator:
-    """OptionRealizedPremium indicator.
+    """Returns realized option premium still available to spend: net realized P&L from closed short option positions, minus premium already spent by opens sized with Percent of Realized Premium. Proceeds from closing long options are not added back. This is the balance that allocation sizes against. It goes negative when closed shorts lost money, and a negative balance funds nothing. Lookback Days limits it to activity within that many days of the evaluation date; omit it for the whole life of the book. Range: -∞ to ∞ (dollars).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     lookback_days: Only count activity within this many days of the evaluation date. Leave empty for the whole life of the book.
     """
@@ -3049,7 +3049,7 @@ def OptionSpreadCount(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionSpreadCount indicator.
+    """Returns the number of distinct economic open multi-leg option spreads matching the filter criteria, deduplicating equal economic spread keys. Does not count standalone single-leg option positions. Range: 0 to ∞.
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -3070,7 +3070,7 @@ def OptionSpreadEntryPrice(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionSpreadEntryPrice indicator.
+    """Returns the net price per share paid or collected to open the option spreads matching the filter: positive for a net debit, negative for a net credit. Several matching spreads average by contracts. Has no value when no matching spread is open. Use it as an option limit amount to price one spread off another spread's fill; wrap a credit spread's price in Absolute Value first, because a limit must be positive. Range: -∞ to ∞ (dollars per share).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -3091,7 +3091,7 @@ def OptionUnrealizedPnL(
     direction: Literal["long", "short"],
     spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
 ) -> Indicator:
-    """OptionUnrealizedPnL indicator.
+    """Returns the total unrealized P&L in dollars across option spreads matching the filter. Range: -∞ to ∞ (dollars).
     underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
     option_type: Filter by Call or Put. Leave empty for all.
     direction: Filter by Long or Short. Leave empty for all.
@@ -3112,7 +3112,7 @@ def ParabolicSar(
     step: float = 0.02,
     maximum: float = 0.2,
 ) -> Indicator:
-    """ParabolicSar indicator.
+    """Trailing stop-and-reverse level that accelerates toward price as the trend extends. Price crossing the SAR flips the trend. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     interval: Bar interval the SAR trails on
     step: AF increment per new extreme
@@ -3131,7 +3131,7 @@ def Plus(
     left: Indicator,
     right: Indicator,
 ) -> Indicator:
-    """Plus indicator.
+    """Sum of two or more indicators. The SDK builder takes exactly two operands; nest it to add more.
     """
     d: Dict[str, Any] = {"type": "Plus"}
     d["indicators"] = [left.d, right.d]
@@ -3145,7 +3145,7 @@ def PoliticalPurchaseShare(
     amount_basis: Literal["LowerBound", "Midpoint", "UpperBound"] = "Midpoint",
     purchase_scope: Literal["AllPurchases", "RemainingLots"] = "AllPurchases",
 ) -> Indicator:
-    """PoliticalPurchaseShare indicator.
+    """A member's publicly known equity or option purchase dollars divided by the sum of both, across all disclosed tickers. Event versions enter only when public. Unclassified instruments are excluded. purchaseScope defaults to AllPurchases for historical flow. RemainingLots sums surviving original purchase costs after reported full sales and exercises, excluding unresolved ticker buckets. Unknown partial quantities retain their estimate. Neither setting is current market value or verified holdings. Range: 0 to 100 percent; zero before a qualifying purchase.
     member_id: Bioguide member id, for example P000197. The share uses the member's whole public purchase record.
     instrument: Which side of the equity/option purchase mix to return, as a percent from 0 to 100.
     amount_basis: Estimate for disclosed purchase ranges. Midpoint is the default.
@@ -3170,7 +3170,7 @@ def PoliticalTrades(
     chamber: Literal["All", "House", "Senate"] = "All",
     member_id: str = "",
 ) -> Indicator:
-    """PoliticalTrades indicator.
+    """Trades by members of Congress in the asset, from the unified House and Senate disclosure lake, over a trailing window. A trade counts from the moment its report became public, never its trade date, and an amended report changes a value only from the moment the amendment became public. Amount metrics can use the lower, midpoint, or upper end of every disclosed range. Equity disclosures are the default; confirmed option disclosures can be selected separately for numeric activity. Held requires Equity and reads the member's whole public record instead: 1 while their latest equity disclosure for the asset is a purchase or partial sale, 0 after a full sale. Held is a disclosure signal, not verified holdings or share quantity. RemainingBuyAmount reads the full public history and sums original purchase ranges of remaining lots after full sales and exercises. Unknown partial quantities retain their purchase amount estimate; sale proceeds are never subtracted. This is estimated remaining cost, not current market value. Printed expirations identify lots but do not implicitly end modeled renewal exposure. Range: Disclosed amount-range values or counts over the window, or 1/0 for Held; 0 when no matching trade was disclosed.
     asset: Pass CANDIDATE inside a rebalance pipeline to bind each stock.
     filer: Member full or last name. Pass an empty string for all members.
     metric: Amount-range aggregate, event count, distinct purchasing members, RemainingBuyAmount (surviving original purchase amounts; ignores window; unknown partial quantities retained), or Held: 1 while the member still holds the asset (latest public disclosure is a purchase or partial sale), ignoring the window.
@@ -3194,7 +3194,7 @@ def PoliticalTrades(
 __all__.append("PoliticalTrades")
 
 def PortfolioValue() -> Indicator:
-    """PortfolioValue indicator.
+    """The total current value of your portfolio (cash + all positions). Range: >= 0.
     """
     d: Dict[str, Any] = {"type": "PortfolioValue"}
     return Indicator(d)
@@ -3216,7 +3216,7 @@ __all__.append("PositionEntryPrice")
 def PositionMaxDrawdown(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PositionMaxDrawdown indicator.
+    """The maximum percentage decline in the position's unrealized P&L from its peak. Aggregates the stock or crypto holding plus all option spreads on that underlying. Returns 0 at a new high water mark; rises as P&L falls below the peak, so it is never negative. Range: >= 0 (percentage points of P&L).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionMaxDrawdown"}
@@ -3228,7 +3228,7 @@ __all__.append("PositionMaxDrawdown")
 def PositionMaxDrawup(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PositionMaxDrawup indicator.
+    """The percentage increase of the asset's current market price from the lowest price observed by this indicator. Share purchases and sales do not change the calculation; it does not use position cost basis. Range: >= 0 (percentage).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionMaxDrawup"}
@@ -3264,7 +3264,7 @@ __all__.append("PositionPeakPrice")
 def PositionPercentChange(
     assets: Union[str, Sequence[Any]],
 ) -> Indicator:
-    """PositionPercentChange indicator.
+    """How much your position has gained or lost as a percentage since you opened it. Range: Unbounded (percentage).
     assets: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionPercentChange"}
@@ -3276,7 +3276,7 @@ __all__.append("PositionPercentChange")
 def PositionValue(
     assets: Union[str, Sequence[Any]],
 ) -> Indicator:
-    """PositionValue indicator.
+    """The current dollar value of your position in one or more assets. Range: >= 0.
     assets: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PositionValue"}
@@ -3288,7 +3288,7 @@ __all__.append("PositionValue")
 def PreviousClosingPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PreviousClosingPrice indicator.
+    """The closing price from the previous trading session. It already has a one-session offset; wrapping it in Indicator Window Ago adds another lag rather than selecting that same previous close. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PreviousClosingPrice"}
@@ -3300,7 +3300,7 @@ __all__.append("PreviousClosingPrice")
 def Price(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """Price indicator.
+    """The current market price of any asset. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "Price"}
@@ -3312,7 +3312,7 @@ __all__.append("Price")
 def PriceChangeSinceOpen(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """PriceChangeSinceOpen indicator.
+    """The dollar change in price since market open. Range: Unbounded.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "PriceChangeSinceOpen"}
@@ -3326,7 +3326,7 @@ def PriceMeanAbsoluteDeviation(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """PriceMeanAbsoluteDeviation indicator.
+    """The mean absolute deviation of an asset's price over a window. Similar to standard deviation but less sensitive to outliers. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3343,7 +3343,7 @@ def PriceRateOfChange(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """PriceRateOfChange indicator.
+    """Measures the percentage change in price between the current price and the price N periods ago. Range: Unbounded (percentage).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3360,7 +3360,7 @@ def PriceStandardDeviation(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """PriceStandardDeviation indicator.
+    """The standard deviation of an asset's closing price over a window. Measures price volatility. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3377,7 +3377,7 @@ __all__.append("PriceStdDev")
 def RebalanceDecisionMetric(
     metric: Literal["allocationDrift", "plannedTurnover", "estimatedCost", "expectedBenefit", "netBenefit"] = "netBenefit",
 ) -> Indicator:
-    """RebalanceDecisionMetric indicator.
+    """Exposes the allocation plan that a DynamicRebalance or RebalanceOption action is about to execute, so the strategy condition can decide whether that plan is worthwhile. Range: Drift and turnover are portfolio fractions; cost and benefit metrics are dollar amounts.
     metric: Reads the prospective plan calculated by DynamicRebalance or RebalanceOption before the strategy condition runs.
     """
     d: Dict[str, Any] = {"type": "RebalanceDecisionMetric"}
@@ -3391,7 +3391,7 @@ def RelativeStrengthIndex(
     length: float = 30,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """RelativeStrengthIndex indicator.
+    """Measures the speed and magnitude of recent price changes. Oscillates between 0 and 100. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3410,7 +3410,7 @@ def RelativeVolume(
     length: float = 14,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """RelativeVolume indicator.
+    """Current bar volume divided by the average volume of the trailing N completed bars. 1.0 means the bar is trading exactly its recent pace. Range: >= 0 (ratio around 1.0).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3444,7 +3444,7 @@ __all__.append("SMA")
 def SquareRoot(
     operand: Indicator,
 ) -> Indicator:
-    """SquareRoot indicator.
+    """Square root of an indicator.
     """
     d: Dict[str, Any] = {"type": "SquareRoot"}
     d["indicators"] = [operand.d]
@@ -3460,7 +3460,7 @@ def Stochastic(
     smooth_d: float = 3,
     line: Literal["k", "d"] = "k",
 ) -> Indicator:
-    """Stochastic indicator.
+    """Momentum oscillator comparing the close to the high-low range over N bars, with %K smoothing and a %D signal average. Readings above 80 are overbought, below 20 oversold. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3481,7 +3481,7 @@ __all__.append("Stochastic")
 def StockReport(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """StockReport indicator.
+    """AI stock report rating: a fundamental-strength score from 1 to 5, higher is stronger, synthesizing revenue growth, profitability, balance sheet health, valuation and competitive positioning. Point-in-time: a backtest reads the rating in effect on each date. Works on a named ticker and on CANDIDATE inside a rebalance filter, rank or weight, e.g. gte(StockReport(CANDIDATE), Value(3.5)) for fundamentally strong stocks.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "StockReport"}
@@ -3497,7 +3497,7 @@ def SumOrderAmount(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     assets: Optional[Union[str, Sequence[Any]]] = None,
 ) -> Indicator:
-    """SumOrderAmount indicator.
+    """The total dollar amount across all matching orders within a window. Range: >= 0.
     side: Matches order events with this side (buy or sell)
     order_status: Matches order events with this status
     length: Length of time
@@ -3520,7 +3520,7 @@ def SumOrderQuantity(
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
     assets: Optional[Union[str, Sequence[Any]]] = None,
 ) -> Indicator:
-    """SumOrderQuantity indicator.
+    """The total number of shares across all matching orders within a window. Range: >= 0.
     side: Matches order events with this side (buy or sell)
     order_status: Matches order events with this status
     length: Length of time
@@ -3543,7 +3543,7 @@ def Supertrend(
     multiplier: float = 3,
     line: Literal["value", "direction"] = "value",
 ) -> Indicator:
-    """Supertrend indicator.
+    """ATR trailing band that ratchets with the trend and flips sides on a close through it. The direction line reads +1 in an uptrend, -1 in a downtrend. Range: Price scale (value); +1 / -1 (direction).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3563,7 +3563,7 @@ def TrailingSum(
     operand: Indicator,
     length: float = 4,
 ) -> Indicator:
-    """TrailingSum indicator.
+    """The sum of the last N accepted observations of the inner indicator. Generic inputs append when the value changes; source-backed inputs use their own observation identities. Length counts retained observations rather than every evaluation tick.
     length: Length of the rolling window
     """
     d: Dict[str, Any] = {"type": "TrailingSum"}
@@ -3576,7 +3576,7 @@ __all__.append("TrailingSum")
 def TrueRange(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """TrueRange indicator.
+    """The greatest of: current high minus low, |high − previous close|, or |low − previous close|. Measures single-period volatility. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "TrueRange"}
@@ -3588,7 +3588,7 @@ __all__.append("TrueRange")
 def UnderlyingMaxDrawdown(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """UnderlyingMaxDrawdown indicator.
+    """The current percentage decline of the asset's market price from the highest price observed by this indicator. Tracks the underlying price independently of position state. Range: 0 to 100 (percentage).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "UnderlyingMaxDrawdown"}
@@ -3600,7 +3600,7 @@ __all__.append("UnderlyingMaxDrawdown")
 def Value(
     value: float = 0,
 ) -> Indicator:
-    """Value indicator.
+    """A fixed numeric value. Useful as one side of a comparison.
     value: Constant value
     """
     d: Dict[str, Any] = {"type": "Value"}
@@ -3613,7 +3613,7 @@ def Volume(
     asset: Union[str, Dict[str, Any], _Candidate],
     metric: Literal["totalRevenue", "grossProfit", "operatingIncome", "ebitda", "epsActual", "epsEstimate", "netIncome", "freeCashFlow", "totalAssets", "totalLiab", "shortTermDebt", "longTermDebt", "commonStockSharesOutstanding", "dividendYield", "openingPrice", "highestPrice", "lowestPrice", "closingPrice", "volume", "marketCap", "peRatioTTM", "psRatioTTM", "pbRatioTTM", "enterpriseValue"] = "volume",
 ) -> Indicator:
-    """Volume indicator.
+    """Trading volume for the asset. It is the Fundamental indicator with its metric preset to Volume, on the same pipeline and data sources. Keep the metric at Volume: any other metric returns that fundamental metric instead of volume. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     metric: The fundamental metric to use
     """
@@ -3627,7 +3627,7 @@ __all__.append("Volume")
 def VWAP(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """VWAP indicator.
+    """The average price weighted by volume throughout the trading session. A key intraday benchmark. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "VWAP"}
@@ -3641,7 +3641,7 @@ def WilliamsR(
     length: float = 14,
     interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
 ) -> Indicator:
-    """WilliamsR indicator.
+    """Momentum oscillator placing the close within the high-low range over N bars, on a -100 to 0 scale. Above -20 is overbought, below -80 oversold. Range: -100 to 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
     interval: Unit of time
@@ -3654,7 +3654,7 @@ def WilliamsR(
 __all__.append("WilliamsR")
 
 def Year() -> Indicator:
-    """Year indicator.
+    """The current year.
     """
     d: Dict[str, Any] = {"type": "Year"}
     return Indicator(d)
