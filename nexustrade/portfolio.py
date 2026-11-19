@@ -3984,12 +3984,16 @@ def gene_condition_window_length(
     path: Sequence[int],
     slot: str,
     values: Sequence[Any],
+    indicator_path: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Sweep ConditionWindowLength (Strategy scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Strategy", "field": "ConditionWindowLength", "strategyIndex": strategy_index, "path": path, "slot": slot}
+    if indicator_path is not None:
+        target["indicatorPath"] = indicator_path
     return {
         "field": "ConditionWindowLength",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ConditionWindowLength", "strategyIndex": strategy_index, "path": path, "slot": slot},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -4001,12 +4005,19 @@ def gene_condition_threshold(
     path: Sequence[int],
     slot: str,
     values: Sequence[Any],
+    indicator_path: Optional[Sequence[int]] = None,
+    parameter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sweep ConditionThreshold (Strategy scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Strategy", "field": "ConditionThreshold", "strategyIndex": strategy_index, "path": path, "slot": slot}
+    if indicator_path is not None:
+        target["indicatorPath"] = indicator_path
+    if parameter is not None:
+        target["parameter"] = parameter
     return {
         "field": "ConditionThreshold",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ConditionThreshold", "strategyIndex": strategy_index, "path": path, "slot": slot},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
