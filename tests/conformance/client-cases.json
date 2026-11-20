@@ -339,6 +339,134 @@
       }
     },
     {
+      "name": "get_backtest_history with no filters reads the first page",
+      "method": "get_backtest_history",
+      "args": [
+        "bt-1"
+      ],
+      "input": {},
+      "responses": [
+        {
+          "backtestId": "bt-1",
+          "points": [],
+          "page": 1,
+          "pageSize": 500,
+          "totalPoints": 0,
+          "nextPage": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-1/history",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "backtestId": "bt-1",
+        "points": [],
+        "page": 1,
+        "pageSize": 500,
+        "totalPoints": 0,
+        "nextPage": null
+      }
+    },
+    {
+      "name": "get_backtest_history encodes paging and the date window",
+      "method": "get_backtest_history",
+      "args": [
+        "bt-1"
+      ],
+      "input": {
+        "page": 2,
+        "pageSize": 5000,
+        "startDate": "2024-01-01",
+        "endDate": "2024-12-31"
+      },
+      "responses": [
+        {
+          "backtestId": "bt-1",
+          "points": [
+            {
+              "time": "2024-01-02T14:30:00.000Z",
+              "value": 2000
+            }
+          ],
+          "page": 2,
+          "pageSize": 5000,
+          "totalPoints": 5001,
+          "nextPage": null
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-1/history?page=2&page_size=5000&start_date=2024-01-01&end_date=2024-12-31",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "backtestId": "bt-1",
+        "points": [
+          {
+            "time": "2024-01-02T14:30:00.000Z",
+            "value": 2000
+          }
+        ],
+        "page": 2,
+        "pageSize": 5000,
+        "totalPoints": 5001,
+        "nextPage": null
+      }
+    },
+    {
+      "name": "list_backtest_events joins type and status filters",
+      "method": "list_backtest_events",
+      "args": [
+        "bt-1"
+      ],
+      "input": {
+        "eventTypes": [
+          "Order"
+        ],
+        "orderStatuses": [
+          "Filled",
+          "Canceled"
+        ],
+        "ticker": "SPY",
+        "page": 1,
+        "pageSize": 200
+      },
+      "responses": [
+        {
+          "backtestId": "bt-1",
+          "events": [],
+          "page": 1,
+          "pageSize": 200,
+          "totalCount": 0,
+          "hasMore": false
+        }
+      ],
+      "expected_calls": [
+        {
+          "method": "GET",
+          "path": "backtests/bt-1/events?event_types=Order&order_statuses=Filled%2CCanceled&ticker=SPY&page=1&page_size=200",
+          "body": null,
+          "idempotency_key": null
+        }
+      ],
+      "expected_result": {
+        "backtestId": "bt-1",
+        "events": [],
+        "page": 1,
+        "pageSize": 200,
+        "totalCount": 0,
+        "hasMore": false
+      }
+    },
+    {
       "name": "get_optimization reads an owner-scoped path",
       "method": "get_optimization",
       "input": "opt-1",

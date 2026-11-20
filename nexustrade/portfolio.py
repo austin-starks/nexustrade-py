@@ -625,13 +625,15 @@ def update_insider_watchlist(
     *, watchlist_key: str, window_days: int,
     role: Optional[Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"]] = None,
     owner_cik: Optional[str] = None, issuer_cik: Optional[str] = None,
+    include_awards: Optional[bool] = None,
     output: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Select qualifying equity purchases within a public-availability window."""
+    """Select qualifying equity purchases (and, with include_awards, issuer awards) within a public-availability window."""
     return {"type": "UpdateWatchlist", "watchlistKey": watchlist_key,
             **({"output": output} if output is not None else {}),
             "source": _compact({"type": "InsiderPurchases", "windowDays": window_days,
-                                "role": role, "ownerCik": owner_cik, "issuerCik": issuer_cik})}
+                                "role": role, "ownerCik": owner_cik, "issuerCik": issuer_cik,
+                                "includeAwards": include_awards})}
 
 
 def mean_variance_allocation(
@@ -2184,7 +2186,7 @@ __all__.append("InitialValue")
 
 def InsiderTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
-    metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "AwardCount", "AcquisitionCount", "DistinctBuyers", "PurchaseSharePercent", "AcquisitionSharePercent"],
+    metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "AwardCount", "AcquisitionValue", "AcquisitionCount", "DistinctBuyers", "PurchaseSharePercent", "AcquisitionSharePercent"],
     role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"],
     window_days: float,
     owner_cik: Optional[str] = None,
@@ -2195,11 +2197,11 @@ def InsiderTrades(
     asset: Pass CANDIDATE in a dynamic rebalance pipeline.
     owner_cik: Exact nonzero SEC reporting owner CIK, up to 10 digits. Omit for a whole company (with issuerCik) or aggregate activity.
     issuer_cik: Company CIK. With ownerCik, restricts that owner to this company. Alone, every reporting owner's events at this company, a joint filing counted once.
-    instrument: Disclosed instrument; defaults to Equity. Call/Put, award and acquisition metrics, and budget shares require ownerCik or issuerCik. AwardCount is SEC code A issuer acquisitions, not cash purchases or vested-share proof. Its default Equity bucket includes unresolved restricted units. AcquisitionCount and AcquisitionSharePercent combine public code P purchases with code A issuer acquisitions. Shares use qualifying signal counts across all the owner's tickers, or all the company's tickers under issuerCik alone.
+    instrument: Disclosed instrument; defaults to Equity. Call/Put, award and acquisition metrics, and budget shares require ownerCik or issuerCik. AwardCount is SEC code A issuer acquisitions, not cash purchases or vested-share proof. AcquisitionValue is disclosed purchase dollars plus award shares at the target's current price. Its default Equity bucket includes unresolved restricted units. AcquisitionCount and AcquisitionSharePercent combine public code P purchases with code A issuer acquisitions. Shares use qualifying signal counts across all the owner's tickers, or all the company's tickers under issuerCik alone.
     """
     d: Dict[str, Any] = {"type": "InsiderTrades"}
     _set_asset(d, "targetAsset", asset)
-    d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","AwardCount","AcquisitionCount","DistinctBuyers","PurchaseSharePercent","AcquisitionSharePercent"], "metric")
+    d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","AwardCount","AcquisitionValue","AcquisitionCount","DistinctBuyers","PurchaseSharePercent","AcquisitionSharePercent"], "metric")
     d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector"], "role")
     d["windowDays"] = window_days
     if owner_cik is not None:
@@ -3984,12 +3986,16 @@ def gene_condition_window_length(
     path: Sequence[int],
     slot: str,
     values: Sequence[Any],
+    indicator_path: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Sweep ConditionWindowLength (Strategy scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Strategy", "field": "ConditionWindowLength", "strategyIndex": strategy_index, "path": path, "slot": slot}
+    if indicator_path is not None:
+        target["indicatorPath"] = indicator_path
     return {
         "field": "ConditionWindowLength",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ConditionWindowLength", "strategyIndex": strategy_index, "path": path, "slot": slot},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 
@@ -4001,12 +4007,19 @@ def gene_condition_threshold(
     path: Sequence[int],
     slot: str,
     values: Sequence[Any],
+    indicator_path: Optional[Sequence[int]] = None,
+    parameter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sweep ConditionThreshold (Strategy scope) over a value set."""
+    target: Dict[str, Any] = {"scope": "Strategy", "field": "ConditionThreshold", "strategyIndex": strategy_index, "path": path, "slot": slot}
+    if indicator_path is not None:
+        target["indicatorPath"] = indicator_path
+    if parameter is not None:
+        target["parameter"] = parameter
     return {
         "field": "ConditionThreshold",
         "scope": "Strategy",
-        "target": {"scope": "Strategy", "field": "ConditionThreshold", "strategyIndex": strategy_index, "path": path, "slot": slot},
+        "target": target,
         "values": [_gene_wire_value(value) for value in values],
     }
 

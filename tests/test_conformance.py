@@ -29,6 +29,8 @@ NO_BODY_METHODS = {
     "get_nl_screen",
     "cancel_nl_screen",
 }
+# Reads that take the id in `args` and keyword filters in `input` (camelCase keys).
+KEYWORD_FILTER_METHODS = {"get_backtest_history", "list_backtest_events"}
 # Methods that take no positional argument at all; the fixture's `input` is null.
 NO_ARG_METHODS = {"list_brokerages"}
 # Pollers take wait options, not an idempotency key. Zero interval so the
@@ -111,6 +113,11 @@ def _invoke(client: NexusTradeClient, case: dict[str, Any]) -> Any:
         )
     if case["method"] in NO_ARG_METHODS:
         return method()
+    if case["method"] in KEYWORD_FILTER_METHODS:
+        return method(
+            *leading,
+            **{_camel_to_snake(key): value for key, value in (case["input"] or {}).items()},
+        )
     if case["method"] in PUBLIC_API_METHODS:
         return method(
             *leading,

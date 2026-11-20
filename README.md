@@ -237,6 +237,33 @@ A cached single-name spec that omitted the baseline therefore runs once more
 after upgrading, because its benchmark is now part of the run's identity. The
 portfolio handle accepts the same typed benchmark: `Portfolio.backtest(..., baseline_asset=...)`.
 
+### Equity curve and fills
+
+The terminal `result["statistics"]` carries the aggregates (`percentChange`,
+`sharpeRatio`, `sortinoRatio`, `maxDrawdown`, `winRate`, `profitFactor`,
+`closedTradeCount`, `totalFees`). The curve and the individual fills are
+separate reads:
+
+```python
+curve, page = [], 1
+while page is not None:
+    batch = client.get_backtest_history(backtest_id, page=page, page_size=5000)
+    curve += batch["points"]          # time, value, cash, positionValue, comparisonValue, reservedCollateral
+    page = batch["nextPage"]
+
+fills = client.list_backtest_events(
+    backtest_id, event_types=["Order"], order_statuses=["Filled"], page_size=50,
+)
+for row in fills["events"]:
+    print(row["timestamp"], row["event"])
+```
+
+Per-tick history is retained for 30 days. Events exist only for a run
+submitted with `backtest(..., generate_events=True)` (5x research tokens) and
+are retained for 3 days; otherwise `list_backtest_events` raises
+`events_unavailable`. Both raise `backtest_not_ready` while the run is in
+flight.
+
 ### Collateral at risk
 
 A terminal operation's `result["statistics"]` answers how much capital the run
@@ -1228,6 +1255,8 @@ is missing here, so this list cannot drift from the code.
 | `get_backtest(backtest_id)`                    | Read the operation         |
 | `wait_for_backtest(backtest_id, …)`            | Block until terminal       |
 | `wait_for_backtests(operations, …)`            | Block on a whole batch     |
+| `get_backtest_history(backtest_id, …)`         | Equity curve, one page     |
+| `list_backtest_events(backtest_id, …)`         | Orders, fills and signals  |
 
 **Optimization and walk-forward**
 
