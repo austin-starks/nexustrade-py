@@ -1987,6 +1987,78 @@ class NexusTradeClient:
         )
         return self._operation(response)
 
+    def get_backtest_history(
+        self,
+        backtest_id: str,
+        *,
+        page: int | None = None,
+        page_size: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """One page of a completed backtest's equity curve.
+
+        Each point has time, value, cash, positionValue, comparisonValue and
+        reservedCollateral. Follow ``nextPage`` until it is None; page_size
+        is at most 5000. Per-tick history is retained for 30 days.
+        """
+        query: dict[str, str] = {}
+        if page is not None:
+            query["page"] = str(page)
+        if page_size is not None:
+            query["page_size"] = str(page_size)
+        if start_date is not None:
+            query["start_date"] = start_date
+        if end_date is not None:
+            query["end_date"] = end_date
+        suffix = f"?{urllib.parse.urlencode(query)}" if query else ""
+        return self._transport.request(
+            "GET",
+            f"backtests/{urllib.parse.quote(backtest_id, safe='')}/history{suffix}",
+        )
+
+    def list_backtest_events(
+        self,
+        backtest_id: str,
+        *,
+        event_types: Sequence[str] | None = None,
+        order_statuses: Sequence[str] | None = None,
+        ticker: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, Any]:
+        """One page of a backtest's event tape: orders with fills, signals, audits.
+
+        The run must be submitted with ``generate_events=True``; traces are
+        retained for 3 days. ``event_types=["Order"], order_statuses=["Filled"]``
+        returns the executed fills. Follow ``hasMore`` with ``page``.
+        """
+        for name, values in (("event_types", event_types), ("order_statuses", order_statuses)):
+            if values is not None and (isinstance(values, str) or not values):
+                raise ValueError(f"{name} must be a non-empty sequence of strings.")
+        query: dict[str, str] = {}
+        if event_types is not None:
+            query["event_types"] = ",".join(event_types)
+        if order_statuses is not None:
+            query["order_statuses"] = ",".join(order_statuses)
+        if ticker is not None:
+            query["ticker"] = ticker
+        if start_date is not None:
+            query["start_date"] = start_date
+        if end_date is not None:
+            query["end_date"] = end_date
+        if page is not None:
+            query["page"] = str(page)
+        if page_size is not None:
+            query["page_size"] = str(page_size)
+        suffix = f"?{urllib.parse.urlencode(query)}" if query else ""
+        return self._transport.request(
+            "GET",
+            f"backtests/{urllib.parse.quote(backtest_id, safe='')}/events{suffix}",
+        )
+
     def create_optimization(
         self,
         handle: Mapping[str, Any],
