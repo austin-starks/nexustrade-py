@@ -623,7 +623,7 @@ def update_institutional_watchlist(
 
 def update_insider_watchlist(
     *, watchlist_key: str, window_days: int,
-    role: Optional[Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"]] = None,
+    role: Optional[Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector", "Ceo"]] = None,
     owner_cik: Optional[str] = None, issuer_cik: Optional[str] = None,
     include_awards: Optional[bool] = None,
     output: Optional[Dict[str, Any]] = None,
@@ -2187,7 +2187,7 @@ __all__.append("InitialValue")
 def InsiderTrades(
     asset: Union[str, Dict[str, Any], _Candidate],
     metric: Literal["NetValue", "BuyValue", "SellValue", "NetShares", "BuyCount", "SellCount", "AwardCount", "AcquisitionValue", "AcquisitionCount", "DistinctBuyers", "PurchaseSharePercent", "AcquisitionSharePercent"],
-    role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"],
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector", "Ceo"],
     window_days: float,
     owner_cik: Optional[str] = None,
     issuer_cik: Optional[str] = None,
@@ -2202,7 +2202,7 @@ def InsiderTrades(
     d: Dict[str, Any] = {"type": "InsiderTrades"}
     _set_asset(d, "targetAsset", asset)
     d["metric"] = _enum(metric, ["NetValue","BuyValue","SellValue","NetShares","BuyCount","SellCount","AwardCount","AcquisitionValue","AcquisitionCount","DistinctBuyers","PurchaseSharePercent","AcquisitionSharePercent"], "metric")
-    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector"], "role")
+    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector","Ceo"], "role")
     d["windowDays"] = window_days
     if owner_cik is not None:
         d["ownerCik"] = owner_cik
@@ -2737,7 +2737,7 @@ __all__.append("Negative")
 def NewInsiderDisclosure(
     owner_cik: Optional[str] = None,
     issuer_cik: Optional[str] = None,
-    role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector"] = "Any",
+    role: Literal["Any", "Officer", "Director", "TenPercentOwner", "OfficerOrDirector", "Ceo"] = "Any",
     instrument: Literal["Equity", "Call", "Put"] = "Equity",
     disclosure_action: Literal["Any", "Purchase", "Sale", "Award"] = "Any",
 ) -> Indicator:
@@ -2753,7 +2753,7 @@ def NewInsiderDisclosure(
         d["ownerCik"] = owner_cik
     if issuer_cik is not None:
         d["issuerCik"] = issuer_cik
-    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector"], "role")
+    d["role"] = _enum(role, ["Any","Officer","Director","TenPercentOwner","OfficerOrDirector","Ceo"], "role")
     d["instrument"] = _enum(instrument, ["Equity","Call","Put"], "instrument")
     d["disclosureAction"] = _enum(disclosure_action, ["Any","Purchase","Sale","Award"], "disclosure_action")
     return Indicator(d)
