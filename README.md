@@ -1190,7 +1190,10 @@ performance saving. Omitted amount basis uses `LowerBound`.
 `update_institutional_watchlist` follows an exact manager's latest publicly
 available complete equity book. `update_insider_watchlist` selects qualifying
 positive purchases by first public availability, with optional owner, issuer,
-and role scope. Both use the same publication and consumer contract:
+and role scope. `role="Ceo"` keeps an owner only when the officer title on that
+same filing names the company's chief executive; a later title never
+reclassifies an earlier purchase. Both use the same publication and consumer
+contract:
 
 ```python
 manager = nt.update_institutional_watchlist(
