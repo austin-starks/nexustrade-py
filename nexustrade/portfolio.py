@@ -1761,7 +1761,7 @@ __all__.append("DaysSinceStrategyFired")
 def DaysUntilEarnings(
     asset: Union[str, Dict[str, Any], _Candidate],
 ) -> Indicator:
-    """Calendar days until the asset's next expected earnings report. In backtests the next date is a point-in-time cadence estimate from the last report (no look-ahead); live trading uses the real next scheduled date. Use to time entries and exits around earnings. Range: >= 0 (0 on/after the expected report day; counts down as it nears).
+    """Calendar days until the asset's next expected earnings report. The next date is the last filed SEC earnings report plus the quarterly cadence. Backtests switch to the actual filing date once it is within 14 days; live trading has no announced-date source and keeps the estimate. Use to time entries and exits around earnings. Range: >= 0 (0 on/after the expected report day; counts down as it nears).
     asset: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "DaysUntilEarnings"}
