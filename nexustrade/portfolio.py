@@ -1301,13 +1301,13 @@ __all__.append("AccumulationDistribution")
 def AverageDirectionalIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     line: Literal["adx", "plusDi", "minusDi"] = "adx",
 ) -> Indicator:
     """Wilder's ADX: trend strength on 0-100, with optional +DI and -DI trend-direction lines. ADX above ~25 is conventionally a strong trend. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     line: Which ADX-system line to evaluate
     """
     d: Dict[str, Any] = {"type": "AverageDirectionalIndex"}
@@ -1321,12 +1321,12 @@ __all__.append("AverageDirectionalIndex")
 def AverageTrueRange(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The average of True Range over a window. A smoothed measure of volatility used for position sizing and stop-losses. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "AverageTrueRange"}
     _set_asset(d, "targetAsset", asset)
@@ -1350,13 +1350,13 @@ __all__.append("BearishFairValueGap")
 def BollingerBand(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     num_standard_deviations: float = 1,
 ) -> Indicator:
     """One Bollinger band, returned as a single number: the simple moving average of price plus the given number of standard deviations of price over the same window. A positive number gives the upper band, a negative number the lower band, and 0 the moving average itself. Range: Same scale as price.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     num_standard_deviations: How many standard deviations from the mean
     """
     d: Dict[str, Any] = {"type": "BollingerBand"}
@@ -1392,12 +1392,12 @@ __all__.append("BuyingPower")
 def ChaikinMoneyFlow(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Money flow volume over money volume across N bars, bounded in -1 to +1. Sustained readings above +0.2 show institutional accumulation. Range: -1 to +1.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "ChaikinMoneyFlow"}
     _set_asset(d, "targetAsset", asset)
@@ -1436,13 +1436,13 @@ __all__.append("ChartBar")
 def CommodityChannelIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     constant: float = 0.015,
 ) -> Indicator:
     """Deviation of the typical price from its moving average, scaled by mean deviation. Readings above +100 are overbought, below -100 oversold. Range: Unbounded (typically -300 to +300).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     constant: Divisor scaling the mean deviation
     """
     d: Dict[str, Any] = {"type": "CommodityChannelIndex"}
@@ -1510,12 +1510,12 @@ __all__.append("ConsecutiveIncrease")
 def ConsecutiveTrue(
     condition: Condition,
     length: float = 1,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Report whether the ordinary condition has stayed true for the elapsed window. This is elapsed time, not a count of checks.
     condition: Condition evaluated over the window.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "ConsecutiveTrue"}
     d["condition"] = condition.d
@@ -1527,12 +1527,12 @@ __all__.append("ConsecutiveTrue")
 def Correlation(
     operands: Sequence[Indicator],
     length: float = 60,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Rolling Pearson correlation (-1 to 1) of two indicators' period-over-period returns over N paired observations. Flat or degenerate windows read no-signal instead of a fabricated number.
     operands: One list of exactly 2 sub-indicators.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "Correlation"}
     d["indicators"] = [i.d for i in operands]
@@ -1544,7 +1544,7 @@ __all__.append("Correlation")
 def CountTrue(
     condition: Condition,
     length: int = 1,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     count_interval: Optional[Dict[str, Any]] = None,
 ) -> Indicator:
     """Count matching intervals inside a time lookback. The ordinary condition owns comparisons/events. countInterval contributes at most one match per interval; omitted means one unit of the lookback interval. TradingDay skips closed exchange dates.
@@ -1785,13 +1785,13 @@ __all__.append("Divide")
 def DonchianChannel(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     line: Literal["upper", "lower", "middle"] = "upper",
 ) -> Indicator:
     """Highest high and lowest low over N bars with a midline. Breaks of either edge are breakout entries; the midline is the first pullback level. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     line: Which Donchian line to evaluate
     """
     d: Dict[str, Any] = {"type": "DonchianChannel"}
@@ -1817,12 +1817,12 @@ __all__.append("Economic")
 def ExponentialMovingAverage(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """SMA/EMA window interval Day means elapsed calendar time, including closed exchange dates. TradingDay uses the exchange-session clock for exchange-traded assets and skips closed dates while preserving within-session time. For a conventional N-day stock moving average, author interval TradingDay unless the request explicitly specifies elapsed calendar days. An outer TradingDay lag does not change an inner Day average into an N-session average. Preserve an explicit calendar-day request as Day. Continuous-market daily windows use 24-hour Day intervals. A TradingDay window can still have a forming current reading: choose completed-session references separately when the signal requires confirmed closes. ChartBar periods and offsets already identify completed candles; preserve that clock instead of substituting a time-window average.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "ExponentialMovingAverage"}
     _set_asset(d, "targetAsset", asset)
@@ -1916,14 +1916,14 @@ __all__.append("HighOfDay")
 def IchimokuCloud(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 9,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     span_length: float = 52,
     line: Literal["tenkan", "kijun", "senkouA", "senkouB", "chikou"] = "tenkan",
 ) -> Indicator:
     """Five-line trend system: Tenkan and Kijun midpoints, Senkou A/B cloud bands, and the Chikou lagging line. Lines are evaluated unshifted. Price above the cloud with Tenkan above Kijun is the full bullish alignment. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     span_length: Senkou B lookback in bars (Kijun scales from conversion)
     line: Which Ichimoku line to evaluate (unshifted)
     """
@@ -2027,11 +2027,11 @@ __all__.append("IndicatorAtMinutesAfterOpen")
 def IndicatorExponentialMovingAverage(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Computes the Exponential Moving Average of any other indicator. TradingDay follows the input markets: crypto-only inputs use elapsed 24-hour days, including weekends, just like Day. Stock, option, mixed-market and asset-free expressions use confirmed exchange sessions. The window does not change intraday prices into daily closing prices. TradingMinute counts regular-session minutes the same way, so a 70 TradingMinute window at 9:45 reaches back to 3:06 PM on the prior session (the overnight gap is one step); crypto-only inputs use elapsed minutes. It allows at most 1439 minutes; use TradingDay for longer lookbacks. Indicators read every tick have no TradingMinute value outside regular hours, and windows over a ChartBar keep the value of its latest completed candle.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorExponentialMovingAverage"}
     d["indicators"] = [operand.d]
@@ -2043,11 +2043,11 @@ __all__.append("IndicatorExponentialMovingAverage")
 def IndicatorMaximum(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Rolling maximum of one numeric operand over a time window. ChartBar observations keep their completed candle end time; repeated reads do not extend their age. Available history is used, so express full-history coverage separately.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorMaximum"}
     d["indicators"] = [operand.d]
@@ -2059,11 +2059,11 @@ __all__.append("IndicatorMaximum")
 def IndicatorMeanAbsoluteDeviation(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Computes the MAD of any indicator over a window. Less sensitive to outliers than standard deviation.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorMeanAbsoluteDeviation"}
     d["indicators"] = [operand.d]
@@ -2075,11 +2075,11 @@ __all__.append("IndicatorMeanAbsoluteDeviation")
 def IndicatorMinimum(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Rolling minimum of one numeric operand over a time window. ChartBar observations keep their completed candle end time; repeated reads do not extend their age. Available history is used, so express full-history coverage separately.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorMinimum"}
     d["indicators"] = [operand.d]
@@ -2091,11 +2091,11 @@ __all__.append("IndicatorMinimum")
 def IndicatorRateOfChange(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The percentage change of any indicator over a window.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorRateOfChange"}
     d["indicators"] = [operand.d]
@@ -2107,11 +2107,11 @@ __all__.append("IndicatorRateOfChange")
 def IndicatorSimpleMovingAverage(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Computes the Simple Moving Average of any other indicator over a window. TradingDay follows the input markets: crypto-only inputs use elapsed 24-hour days, including weekends, just like Day. Stock, option, mixed-market and asset-free expressions use confirmed exchange sessions. The window does not change intraday prices into daily closing prices. TradingMinute counts regular-session minutes the same way, so a 70 TradingMinute window at 9:45 reaches back to 3:06 PM on the prior session (the overnight gap is one step); crypto-only inputs use elapsed minutes. It allows at most 1439 minutes; use TradingDay for longer lookbacks. Indicators read every tick have no TradingMinute value outside regular hours, and windows over a ChartBar keep the value of its latest completed candle.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorSimpleMovingAverage"}
     d["indicators"] = [operand.d]
@@ -2123,11 +2123,11 @@ __all__.append("IndicatorSimpleMovingAverage")
 def IndicatorStandardDeviation(
     operand: Indicator,
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Computes the standard deviation of any indicator over a window.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorStandardDeviation"}
     d["indicators"] = [operand.d]
@@ -2144,7 +2144,7 @@ def IndicatorWindowAgo(
 ) -> Indicator:
     """Value at an elapsed time in the past. TradingDay instead reads the confirmed closing value of the reference exchange session, including early closes. Missing session evidence returns no value; initialValue applies before enough history exists.
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IndicatorWindowAgo"}
     if initial_value is not None:
@@ -2331,12 +2331,12 @@ __all__.append("IVHVRatio")
 def IVPercentile(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 252,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Percent of sessions in the lookback window whose constant-maturity ATM IV was strictly below today's (0–100). Distinct from IV Rank. Used on each candidate of a dynamic rebalance over a broad universe (all US stocks, an index or a watchlist), it reads options chains with Greeks for every stock in that universe instead of one underlying, so the run is heavier than with a named ticker or a specific asset list. Range: 0–100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IVPercentile"}
     _set_asset(d, "targetAsset", asset)
@@ -2348,12 +2348,12 @@ __all__.append("IVPercentile")
 def IVRank(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 252,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Where today's constant-maturity ATM IV sits between the lookback window's high and low: (IV − IV_low) / (IV_high − IV_low) × 100. Distinct from IV Percentile. Used on each candidate of a dynamic rebalance over a broad universe (all US stocks, an index or a watchlist), it reads options chains with Greeks for every stock in that universe instead of one underlying, so the run is heavier than with a named ticker or a specific asset list. Range: 0–100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "IVRank"}
     _set_asset(d, "targetAsset", asset)
@@ -2365,14 +2365,14 @@ __all__.append("IVRank")
 def KeltnerChannel(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 20,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     multiplier: float = 2,
     line: Literal["upper", "middle", "lower"] = "middle",
 ) -> Indicator:
     """EMA midline with ATR bands above and below. Tighter than Bollinger in calm tape, so closes outside the bands mean stronger conviction moves. Range: Price scale.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     multiplier: How many ATRs from the EMA midline
     line: Which Keltner line to evaluate
     """
@@ -2456,12 +2456,12 @@ __all__.append("Max")
 def MaxDrawdown(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The largest peak-to-trough percentage decline of the asset's price inside the window, reported as a positive number: 10 means a 10% fall from a high to a later low, and 0 means the price never fell below an earlier price in the window. Measures worst-case downside risk. Range: 0 to 100 (percent, never negative).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "MaxDrawdown"}
     _set_asset(d, "targetAsset", asset)
@@ -2473,12 +2473,12 @@ __all__.append("MaxDrawdown")
 def MaxDrawup(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The maximum trough-to-peak percentage increase over a window. Range: >= 0 (percentage).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "MaxDrawup"}
     _set_asset(d, "targetAsset", asset)
@@ -2490,12 +2490,12 @@ __all__.append("MaxDrawup")
 def MaximumPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The highest of the asset's observed prices over a window, including the current one. Each observation is the price at that time (a completed day contributes its close, a completed minute its closing price), not an intrabar high. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "MaximumPrice"}
     _set_asset(d, "targetAsset", asset)
@@ -2519,12 +2519,12 @@ __all__.append("Min")
 def MinimumPrice(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The lowest of the asset's observed prices over a window, including the current one. Each observation is the price at that time (a completed day contributes its close, a completed minute its closing price), not an intrabar low. Range: > 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "MinimumPrice"}
     _set_asset(d, "targetAsset", asset)
@@ -2662,12 +2662,12 @@ __all__.append("MinutesUntilClose")
 def MoneyFlowIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Volume-weighted RSI: money flow direction over N bars on a 0-100 scale. Above 80 is overbought, below 20 oversold. Requires volume data. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "MoneyFlowIndex"}
     _set_asset(d, "targetAsset", asset)
@@ -3326,12 +3326,12 @@ __all__.append("PriceChangeSinceOpen")
 def PriceMeanAbsoluteDeviation(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The mean absolute deviation of an asset's price over a window. Similar to standard deviation but less sensitive to outliers. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "PriceMeanAbsoluteDeviation"}
     _set_asset(d, "targetAsset", asset)
@@ -3343,12 +3343,12 @@ __all__.append("PriceMeanAbsoluteDeviation")
 def PriceRateOfChange(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Measures the percentage change in price between the current price and the price N periods ago. Range: Unbounded (percentage).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "PriceRateOfChange"}
     _set_asset(d, "targetAsset", asset)
@@ -3360,12 +3360,12 @@ __all__.append("PriceRateOfChange")
 def PriceStandardDeviation(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """The standard deviation of an asset's closing price over a window. Measures price volatility. Range: >= 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "PriceStandardDeviation"}
     _set_asset(d, "targetAsset", asset)
@@ -3391,12 +3391,12 @@ __all__.append("RebalanceDecisionMetric")
 def RelativeStrengthIndex(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Measures the speed and magnitude of recent price changes. Oscillates between 0 and 100. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "RelativeStrengthIndex"}
     _set_asset(d, "targetAsset", asset)
@@ -3410,12 +3410,12 @@ __all__.append("RSI")
 def RelativeVolume(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Current bar volume divided by the average volume of the trailing N completed bars. 1.0 means the bar is trading exactly its recent pace. Range: >= 0 (ratio around 1.0).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "RelativeVolume"}
     _set_asset(d, "targetAsset", asset)
@@ -3427,12 +3427,12 @@ __all__.append("RelativeVolume")
 def SimpleMovingAverage(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 30,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """SMA/EMA window interval Day means elapsed calendar time, including closed exchange dates. TradingDay uses the exchange-session clock for exchange-traded assets and skips closed dates while preserving within-session time. For a conventional N-day stock moving average, author interval TradingDay unless the request explicitly specifies elapsed calendar days. An outer TradingDay lag does not change an inner Day average into an N-session average. Preserve an explicit calendar-day request as Day. Continuous-market daily windows use 24-hour Day intervals. A TradingDay window can still have a forming current reading: choose completed-session references separately when the signal requires confirmed closes. ChartBar periods and offsets already identify completed candles; preserve that clock instead of substituting a time-window average.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "SimpleMovingAverage"}
     _set_asset(d, "targetAsset", asset)
@@ -3457,7 +3457,7 @@ __all__.append("SquareRoot")
 def Stochastic(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     smooth_k: float = 3,
     smooth_d: float = 3,
     line: Literal["k", "d"] = "k",
@@ -3465,7 +3465,7 @@ def Stochastic(
     """Momentum oscillator comparing the close to the high-low range over N bars, with %K smoothing and a %D signal average. Readings above 80 are overbought, below 20 oversold. Range: 0 to 100.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     smooth_k: Moving-average length applied to raw %K
     smooth_d: Moving-average length applied to smoothed %K
     line: Which stochastic line to evaluate
@@ -3500,14 +3500,14 @@ def SumOrderAmount(
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
     length: float = 1,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     assets: Optional[Union[str, Sequence[Any]]] = None,
 ) -> Indicator:
     """The total dollar amount across all matching orders within a window. Range: >= 0.
     side: Matches order events with this side (buy or sell)
     order_status: Matches order events with this status
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     assets: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "SumOrderAmount"}
@@ -3523,14 +3523,14 @@ def SumOrderQuantity(
     side: Literal["Buy", "Sell"],
     order_status: Literal["Pending", "Accepted", "Pending User Approval", "Canceled", "Filled", "Partially Filled"] = "Filled",
     length: float = 1,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     assets: Optional[Union[str, Sequence[Any]]] = None,
 ) -> Indicator:
     """The total number of shares across all matching orders within a window. Range: >= 0.
     side: Matches order events with this side (buy or sell)
     order_status: Matches order events with this status
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     assets: Ticker name (ex. SPY, BTC)
     """
     d: Dict[str, Any] = {"type": "SumOrderQuantity"}
@@ -3545,14 +3545,14 @@ __all__.append("SumOrderQuantity")
 def Supertrend(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 10,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
     multiplier: float = 3,
     line: Literal["value", "direction"] = "value",
 ) -> Indicator:
     """ATR trailing band that ratchets with the trend and flips sides on a close through it. The direction line reads +1 in an uptrend, -1 in a downtrend. Range: Price scale (value); +1 / -1 (direction).
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     multiplier: How many ATRs from HL2
     line: Band value or trend direction (+1 up, -1 down)
     """
@@ -3645,12 +3645,12 @@ __all__.append("VWAP")
 def WilliamsR(
     asset: Union[str, Dict[str, Any], _Candidate],
     length: float = 14,
-    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "Day",
+    interval: Literal["Day", "Hour", "Minute", "TradingDay", "TradingMinute"] = "TradingDay",
 ) -> Indicator:
     """Momentum oscillator placing the close within the high-low range over N bars, on a -100 to 0 scale. Above -20 is overbought, below -80 oversold. Range: -100 to 0.
     asset: Ticker name (ex. SPY, BTC)
     length: Length of time
-    interval: Unit of time
+    interval: Unit of time. TradingDay counts exchange sessions (20 is 20 sessions); Day is elapsed calendar days
     """
     d: Dict[str, Any] = {"type": "WilliamsR"}
     _set_asset(d, "targetAsset", asset)
