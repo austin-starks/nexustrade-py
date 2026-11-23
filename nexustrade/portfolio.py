@@ -3482,12 +3482,16 @@ __all__.append("Stochastic")
 
 def StockReport(
     asset: Union[str, Dict[str, Any], _Candidate],
+    cadence: Optional[Literal["Annual", "Quarterly"]] = None,
 ) -> Indicator:
-    """AI stock report rating: a fundamental-strength score from 1 to 5, higher is stronger, synthesizing revenue growth, profitability, balance sheet health, valuation and competitive positioning. Point-in-time: a backtest reads the rating in effect on each date. Works on a named ticker and on CANDIDATE inside a rebalance filter, rank or weight, e.g. gte(StockReport(CANDIDATE), Value(3.5)) for fundamentally strong stocks.
+    """AI stock report rating: a fundamental-strength score from 1 to 5, higher is stronger, synthesizing revenue growth, profitability, balance sheet health, valuation and competitive positioning. Point-in-time: a backtest reads the rating in effect on each date. Works on a named ticker and on CANDIDATE inside a rebalance filter, rank or weight, e.g. gte(StockReport(CANDIDATE), Value(3.5)) for fundamentally strong stocks. Omit cadence for the yearly rating; pass Quarterly only when the user asks for quarterly ratings.
     asset: Ticker name (ex. SPY, BTC)
+    cadence: Omitted (the default) or Annual: the yearly rating, dated December 31, or a new listing's IPO rating until its first yearly one. Quarterly: the newest rating of any kind, including the grade made when each 10-Q or 10-K is filed; on an equal date the yearly rating wins.
     """
     d: Dict[str, Any] = {"type": "StockReport"}
     _set_asset(d, "targetAsset", asset)
+    if cadence is not None:
+        d["cadence"] = _enum(cadence, ["Annual","Quarterly"], "cadence")
     return Indicator(d)
 
 __all__.append("StockReport")
