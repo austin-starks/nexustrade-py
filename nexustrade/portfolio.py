@@ -3723,9 +3723,9 @@ __all__.append("backtest")
 def walk_forward(
     portfolio: Dict[str, Any],
     *,
-    global_start_date: str,
-    global_end_date: str,
     fold_count: float,
+    global_start_date: Optional[str] = None,
+    global_end_date: Optional[str] = None,
     engine_kind: Optional[Literal["ga", "sweep"]] = None,
     walk_forward_mode: Optional[Literal["anchored", "rolling"]] = None,
     oos_width_days: Optional[float] = None,
@@ -3757,9 +3757,9 @@ def walk_forward(
     genes: Optional[Sequence[Gene]] = None,
 ) -> Dict[str, Any]:
     """Submit a walk-forward study (anchored or rolling folds, GA or sweep engine).
-    global_start_date: Global calendar start for the walk-forward study (ISO date). Each Minute evaluation window cannot exceed 730 days of minute data counting minute-indicator warmup, which is the only cap; the 90-day seed first look is a default for callers who name no dates.
-    global_end_date: Global calendar end for the walk-forward study (ISO date).
     fold_count: Number of forward folds (2–8, required). Range 2..8.
+    global_start_date: Global calendar start for the walk-forward study (ISO date). Optional: defaults to six years before global_end_date, or for a Minute study to the longest window ending there that fits the cap. Each Minute evaluation window cannot exceed 730 days of minute data counting minute-indicator warmup, which is the only cap.
+    global_end_date: Global calendar end for the walk-forward study (ISO date). Optional: defaults to the last complete US equity trading session.
     engine_kind: Child optimizer engine: ga (default) or sweep. Prefer sweep for deploy certification and options rotation books; use ga for exploratory continuous mutation.
     walk_forward_mode: Anchored (default) or rolling outer window mode.
     oos_width_days: OOS window width in calendar days (default 252). Range 1..inf.
@@ -3789,9 +3789,9 @@ def walk_forward(
     genes: Typed sweep genes built with the gene* builders (deterministic; no LLM compile).
     """
     args = {
+        "fold_count": fold_count,
         "global_start_date": global_start_date,
         "global_end_date": global_end_date,
-        "fold_count": fold_count,
         "engine_kind": engine_kind,
         "walk_forward_mode": walk_forward_mode,
         "oos_width_days": oos_width_days,
