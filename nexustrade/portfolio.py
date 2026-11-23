@@ -558,6 +558,7 @@ def launch_agent(
     skip_planning: bool,
     cooldown_minutes: Optional[int] = None,
     watchlist_id: Optional[str] = None,
+    run_budget_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -571,6 +572,7 @@ def launch_agent(
             "skipPlanning": skip_planning,
             "cooldownMinutes": cooldown_minutes,
             "watchlistId": watchlist_id,
+            "runBudgetTokens": run_budget_tokens,
         }
     )
 
