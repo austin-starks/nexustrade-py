@@ -59,7 +59,6 @@ __all__: List[str] = [
     "leg",
     "options_builder",
     "against_parent",
-    "spread_strike_anchor",
     "open_option",
     "structure_template",
     "sleeve",
@@ -934,40 +933,11 @@ def against_parent(**config: Any) -> Dict[str, Any]:
     )
 
 
-def spread_strike_anchor(
-    *,
-    leg: str,
-    underlying: Optional[str] = None,
-    option_type: Optional[str] = None,
-    direction: Optional[str] = None,
-    spread_type: Optional[str] = None,
-    selection: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Measure leg strikes from a held spread's leg (exact match required).
-
-    Filter fields mean what they mean on OptionSpreadCount (direction "long" =
-    debit). For a call butterfly legged in from a debit vertical, pass
-    leg="short", option_type="call", direction="long", spread_type="vertical"
-    with credit legs at distance 0 (short) and 5 (long) dollars.
-    """
-    return _compact(
-        {
-            "underlying": underlying,
-            "optionType": option_type,
-            "direction": direction,
-            "spreadType": spread_type,
-            "leg": leg,
-            "selection": selection,
-        }
-    )
-
-
 def open_option(
     *,
     builder: Dict[str, Any],
     allocation: Optional[Dict[str, Any]] = None,
     against: Optional[Dict[str, Any]] = None,
-    strike_anchor: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return _compact(
         {
@@ -975,7 +945,6 @@ def open_option(
             "builder": builder,
             "allocation": allocation,
             "against": against,
-            "strikeAnchor": strike_anchor,
         }
     )
 
