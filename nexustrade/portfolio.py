@@ -850,8 +850,8 @@ def leg(
     direction: Literal["long", "short"],
     min_days_to_expiration: int,
     max_days_to_expiration: int,
-    distance: float,
-    distance_type: Literal["percent", "dollars", "delta"] = "percent",
+    distance: Union[float, "Indicator"],
+    distance_type: Literal["percent", "dollars", "delta", "strike"] = "percent",
     preference: str = "nearest",
     fallback_distance: Optional[float] = None,
     fallback_distance_type: Optional[Literal["percent", "dollars"]] = None,
@@ -890,7 +890,9 @@ def leg(
             },
             "strikeSelector": {
                 "distanceType": distance_type,
-                "distance": distance,
+                "distance": (
+                    distance.to_dict() if isinstance(distance, Indicator) else distance
+                ),
             },
             "fallbackStrikeSelector": fallback,
             "strikeRange": strike_range,
@@ -3088,6 +3090,33 @@ def OptionSpreadEntryPrice(
     return Indicator(d)
 
 __all__.append("OptionSpreadEntryPrice")
+
+def OptionSpreadLegStrike(
+    underlying: str,
+    option_type: Literal["call", "put"],
+    direction: Literal["long", "short"],
+    spread_type: Literal["vertical", "calendar", "diagonal", "ironCondor", "straddle", "strangle", "custom"],
+    leg: Literal["short", "long"] = "short",
+    min_or_max: Literal["min", "max"] = "min",
+) -> Indicator:
+    """Returns the strike price of one leg (short or long) of the open option spreads matching the filter. Min or Max picks across several matching spreads. Has no value when no matching spread is open. Use it as an option leg's strike, with Strike Distance Type set to strike, to trade exactly a held spread's strike, for example selling a credit vertical at the same short strike as a filled debit vertical to leg into a butterfly. Range: 0 to ∞ (strike price in dollars).
+    underlying: Filter by underlying (e.g., AAPL, SPY). Leave empty for all.
+    option_type: Filter by Call or Put. Leave empty for all.
+    direction: Filter by Long or Short. Leave empty for all.
+    spread_type: Filter by spread type. Leave empty for all.
+    leg: Which leg of each matching spread supplies the strike.
+    min_or_max: Return minimum or maximum value across matching spreads.
+    """
+    d: Dict[str, Any] = {"type": "OptionSpreadLegStrike"}
+    d["underlying"] = underlying
+    d["optionType"] = _enum(option_type, ["call","put"], "option_type")
+    d["direction"] = _enum(direction, ["long","short"], "direction")
+    d["spreadType"] = _enum(spread_type, ["vertical","calendar","diagonal","ironCondor","straddle","strangle","custom"], "spread_type")
+    d["leg"] = _enum(leg, ["short","long"], "leg")
+    d["minOrMax"] = _enum(min_or_max, ["min","max"], "min_or_max")
+    return Indicator(d)
+
+__all__.append("OptionSpreadLegStrike")
 
 def OptionUnrealizedPnL(
     underlying: str,
